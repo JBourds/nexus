@@ -1,10 +1,10 @@
-[simulation]
+[params]
 
-timestep_length = 0.01  # Seconds per timestep
-timesteps = 1000000     # Number of timesteps to run the simulation for
-seed = 42               # Random seed to use
-root = "~/simulations"  # Root directory to store simulation results into (will
-                        # create a new subdirectory each run)
+timestep_length = 0.01          # Seconds per time step
+timesteps = 1000000             # Number of time steps to run the simulation for
+seed = 42                       # Random seed to use
+root = "~/testnet/simulations"  # Root directory to store simulation results 
+                                # into (will create a new subdirectory each run)
 
 # Section describing different link configurations. Links are added under this
 # section by adding a header such as [links.<name>]. Reserved link names are:
@@ -25,9 +25,9 @@ intermediaries = 0        # Number of intermediary links. Must be 0/unspecified
                           # if "none" is used for the "next" parameter.
 packet_loss = 0           # Probability of packet loss using this link.
 packet_loss_mod = "flat"  # Modifier for packet loss based on distance. 
-trans_rate = inf          # Rate (bits/s) data leaves a node.
+trans_rate = inf          # Rate (bits/second) data leaves a node.
 
-# Delay values may be supplemented with a modifer in the following list of
+# Delay values may be supplemented with a.modifierifer in the following list of
 # values: 
 # - "flat": The value is the actual delay.
 # - "linear": The value is linear based on distance in meters.
@@ -35,40 +35,55 @@ trans_rate = inf          # Rate (bits/s) data leaves a node.
 #            provided value is the base for the logarithm.
 # - "exp": The value is exponential based on distance in meters, where the
 #            provided value is the base of the exponent.
-avg_queue_delay = 0       # Average seconds spent in intermediary queues.
-std_queue_delay = 0       # Standard deviation (s) for queue delay.
-queue_delay_mod = "flat"  # Modifier for queueing delay.
 
-avg_proc_delay = 0        # Average processing delay (s) at destination.
-std_proc_delay = 0        # Standard deviation (s) for processing delay.
-proc_delay_mod = "flat"   # Modifier for processing delay.
+# Average seconds spent in intermediary queues.
+queue_delay.avg = 0       
+# Standard deviation (seconds) for queue delay.
+queue_delay.std = 0      
+# Modifier for queuing delay.
+queue_delay.modifier = "flat"  
 
-avg_conn_delay = 0        # Average delay (s) when establishing a connection.
-std_conn_delay = 0        # Standard deviation (s) for conn delay.
-conn_delay_mod = "flat"   # Modifier for propagation delay.
+processing_delay.avg = 0   
+processing_delay.std = 0   
+processing_delay.modifier = "flat"  
 
-avg_prop_delay = inf      # Average delay (s) for propagation between links.
-std_prop_delay = 0        # Standard deviation (s) for prop delay.
-prop_delay_mod = "flat"   # Modifier for propagation delay.
+connection_delay.avg = 0       
+connection_delay.std = 0       
+connection_delay.modifier = "flat"  
+
+propagation_delay.avg = inf     
+propagation_delay.std = 0       
+propagation_delay.modifier = "flat"  
 
 # Simulate the connection from the gateway node to the backend as a single link
 # to the satellite. Assume once data has gotten to the satellite, everything
 # else is instant.
 [links.gateway_to_backend]
-next = "ideal"            # Assume ideal links after satellite receives packet.
-trans_rate = 176000       # Iridium 9603 transmission rate (176 kbps).
-avg_conn_delay = 20       # Simulate a one-time delay of 20s when connecting.
-avg_proc_delay = 60       # Simulated delay for all processing in satellite.
-packet_loss = 0.3         # 30% chance packet fails to send.
+# Assume ideal links after satellite receives packet.
+next = "ideal"            
+# Iridium 9603 transmission rate (176 kbps).
+trans_rate = 176000       
+# Simulate a one-time delay of 20s when connecting.
+connection_delay.avg = 20       
+# Simulated delay for all processing in satellite.
+processing_delay.avg = 60       
+# 30% chance packet fails to send.
+packet_loss = 0.3         
 
 [links.lora]
-next = "none"             # Lora is a radio protocol - no routing.
-packet_loss = 0.01        # Small chance of losing a packet.
-trans_rate = 1000         # lora is about 1kbps transmission rate.
+# Lora is a radio protocol - no routing.
+next = "none"             
+# Small chance of losing a packet.
+packet_loss = 0.01        
+# lora is about 1kbps transmission rate.
+trans_rate = 1000         
 
-avg_prop_delay = 0.5      # Assume about 0.5s propagation delay.
-std_prop_delay = 0.1      # Assume about 0.1s standard deviation in delay.
-prop_delay_mod = "flat"   # Assume distance independence (not realistic).
+# Assume about 0.5s propagation delay.
+propagation_delay.avg = 0.5      
+# Assume about 0.1s standard deviation in delay.
+propagation_delay.std = 0.1      
+# Assume distance independence (not realistic).
+propagation_delay.modifier = "flat"   
 
 [nodes]
 
@@ -84,11 +99,11 @@ positions = []
 # Array of internal link names which act like ideal links but cannot be
 # received from any node outside of this one. Overrides existing link names,
 # and is subject to the same naming restrictions as links.
-internal = []
+internal_names = []
 
 [nodes.gateway]
 
-internal = ["satellite"]
+internal_names = ["satellite"]
 positions = [[0, 0]]
 
 # TODO: Add power to simulation
@@ -98,11 +113,14 @@ positions = [[0, 0]]
 # ...other charging params
 
 # The gateway node's satellite communication protocol which accepts packets
-# from the TDMA protocol and then transmits them via satellite.
-[nodes.gateway.satcom]
-
-root = "~/nodes/gateway/satcom" # File system root directory for this protocol.
-runner = "make"                 # Shell command to run from root at startup.
+# from the tdma protocol and then transmits them via satellite.
+[[nodes.gateway.protocols]]
+# Name for the protocol to use as a unique identifier
+name = "satcom"
+# File system root directory for this protocol.
+root = "~/nodes/gateway/satcom" 
+# Shell command to run from root at startup.
+runner = "make"                 
 
 # Array of real or internal links this node can accept.
 accepts = ["satellite"]  # Only accept data sent over the satellite link name.
@@ -115,13 +133,13 @@ direct = [
     ["backend", "gateway_to_backend"],  # Simulate satellite uplink
 ]
 
-# This node performs the TDMA protocol of the gateway, including:
+# This node performs the tdma protocol of the gateway, including:
 #   - Pushing the time to all leaf nodes
-#   - Listening during the TDMA window for node packets
+#   - Listening during the tdma window for node packets
 #       - Buffering node packets
 #       - Writing packets to the satellite
-[nodes.gateway.tdma]
-
+[[nodes.gateway.protocols]]
+name = "tdma"
 root = "~/nodes/gateway/tdma"
 runner = "make"
 accepts = ["lora"]
@@ -130,17 +148,17 @@ direct = [
 ]
 
 # Array of tuples with the structure:
-# [[<max_range>, <modifier_offset>], <link>]
+# [<max_range>, .modifierifier_offset>, <link>]
 #   - `max_range`: The maximum range (in meters) a link will transmit data.
-#   - `modifier_offset`: An offset used when computing non-flat modifier values
+#   - .modifierifier_offset`: An offset used when computing non-flat modifier values
 #       for packet loss or delays. Must be <= `max_range` and >= 0. 
-#       Actual modifier used is equal to: `max_range` - `modifier_offset`.
+#       Actual.modifierifier used is equal to: `max_range` - `modifier_offset`.
 #   - `link`: The name of the link to use.
 indirect = [
     # 4km range maximum transmission range.
-    # Modifier computations use a distance modifier of 0 until the 2km mark.
+    # Modifier computations use a distance.modifierifier of 0 until the 2km mark.
     # Link is done over lora.
-    [[4000, 2000], "lora"]
+    [4000, 2000, "lora"]
 ]
 
 [nodes.peripheral]
@@ -152,13 +170,13 @@ positions = [
     [-1000, 0],
 ]
 
-[nodes.peripheral.tdma]
-
+[[nodes.peripheral.protocols]]
+name = "tdma"
 root = "~/nodes/peripheral/tdma"
 runner = "make"
 accepts = ["lora"]
 indirect = [
-    [[4000, 2000], "lora"]
+    [4000, 2000, "lora"]
 ]
 
 # The "backend" node is used to simulate the packaging of packets by the
@@ -167,8 +185,8 @@ indirect = [
 
 # Backend node that receives the raw satellite packets and packages them up
 # like how Cloudloop does to then send to the flask app over HTTP request.
-[nodes.backend.package]
-
+[[nodes.backend.protocols]]
+name = "package"
 root = "~/nodes/backend/flaskapp"
 runner = "make"
 accepts = ["satellite"]
@@ -176,8 +194,8 @@ accepts = ["satellite"]
 # Flask app which gets started and then idly accepts HTTP requests from the
 # other node protocol that accepts raw packets and packages them up like
 # Cloudloop does. Stores sensor packets locally.
-[nodes.backend.flaskapp]
-
+[[nodes.backend.protocols]]
+name = "flaskapp"
 root = "~/nodes/backend/flaskapp"
 runner = "make"
 accepts = []
