@@ -7,7 +7,7 @@ pub fn parse(text: String) -> Result<Simulation> {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Simulation {
     params: Params,
     links: HashMap<String, Link>,
@@ -15,7 +15,7 @@ pub struct Simulation {
 }
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Params {
     timestep_length: f32,
     timesteps: u64,
@@ -37,7 +37,7 @@ impl Default for Params {
 type Modifier = String;
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Delay {
     modifier: Modifier,
     avg: f32,
@@ -58,7 +58,7 @@ impl Default for Delay {
 pub struct LinkName(String);
 
 #[derive(Debug, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Link {
     inherit: Option<String>,
     next: Option<String>,
@@ -117,7 +117,7 @@ pub struct DirectConnection {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct Node {
     positions: Vec<Position>,
     internal_names: Vec<ProtocolName>,
@@ -125,7 +125,7 @@ pub struct Node {
 }
 
 #[derive(Debug, Default, Deserialize)]
-#[serde(default)]
+#[serde(default, deny_unknown_fields)]
 pub struct NodeProtocol {
     name: String,
     root: String,
