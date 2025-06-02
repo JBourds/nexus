@@ -9,51 +9,10 @@ root = "~/testnet/simulations"  # Root directory to store simulation results
 # Section describing different link configurations. Links are added under this
 # section by adding a header such as [links.<name>]. Reserved link names are:
 #   - "self": Refers to the link name for the definition it is used within.
-#   - "none": Lack of a link.
 #   - "direct": Link name reserved for direct outbound links between nodes.
 #   - "indirect": Link name reserved for links without explicit connections.
 #   - "ideal": Only default link name which cannot be overridden.
 [links]
-
-[links.ideal]             # Default link which links implicitly inherit from.
-inherit = "none"          # Explicitly state every required parameter
-
-# Network parameters
-next = "self"             # Name of the next link (to build composite links).
-bit_error = 0             # Probability of bit flipping in the transfer.
-intermediaries = 0        # Number of intermediary links. Must be 0/unspecified
-                          # if "none" is used for the "next" parameter.
-packet_loss = 0           # Probability of packet loss using this link.
-packet_loss_mod = "flat"  # Modifier for packet loss based on distance. 
-trans_rate = inf          # Rate (bits/second) data leaves a node.
-
-# Delay values may be supplemented with a.modifierifer in the following list of
-# values: 
-# - "flat": The value is the actual delay.
-# - "linear": The value is linear based on distance in meters.
-# - "log": The value is logarithmic based on distance in meters, where the
-#            provided value is the base for the logarithm.
-# - "exp": The value is exponential based on distance in meters, where the
-#            provided value is the base of the exponent.
-
-# Average seconds spent in intermediary queues.
-queue_delay.avg = 0       
-# Standard deviation (seconds) for queue delay.
-queue_delay.std = 0      
-# Modifier for queuing delay.
-queue_delay.modifier = "flat"  
-
-processing_delay.avg = 0   
-processing_delay.std = 0   
-processing_delay.modifier = "flat"  
-
-connection_delay.avg = 0       
-connection_delay.std = 0       
-connection_delay.modifier = "flat"  
-
-propagation_delay.avg = inf     
-propagation_delay.std = 0       
-propagation_delay.modifier = "flat"  
 
 # Simulate the connection from the gateway node to the backend as a single link
 # to the satellite. Assume once data has gotten to the satellite, everything
@@ -83,6 +42,16 @@ propagation_delay.avg = 0.5
 # Assume about 0.1s standard deviation in delay.
 propagation_delay.std = 0.1      
 # Assume distance independence (not realistic).
+propagation_delay.modifier = "flat"   
+
+[links.lora_bad]
+inherit = "lora"
+next = "none"             
+packet_loss = 0.05        
+trans_rate = 1000
+
+propagation_delay.avg = 1
+propagation_delay.std = 0.25      
 propagation_delay.modifier = "flat"   
 
 [nodes]
@@ -121,6 +90,7 @@ name = "satcom"
 root = "~/nodes/gateway/satcom" 
 # Shell command to run from root at startup.
 runner = "make"                 
+runner_args = []
 
 # Array of real or internal links this node can accept.
 accepts = ["satellite"]  # Only accept data sent over the satellite link name.
@@ -142,6 +112,7 @@ direct = [
 name = "tdma"
 root = "~/nodes/gateway/tdma"
 runner = "make"
+runner_args = []
 accepts = ["lora"]
 direct = [
     ["self", "satellite"],
@@ -174,6 +145,7 @@ positions = [
 name = "tdma"
 root = "~/nodes/peripheral/tdma"
 runner = "make"
+runner_args = []
 accepts = ["lora"]
 indirect = [
     [4000, 2000, "lora"]
@@ -189,7 +161,8 @@ indirect = [
 name = "package"
 root = "~/nodes/backend/flaskapp"
 runner = "make"
-accepts = ["satellite"]
+runner_args = []
+accepts = ["gateway_to_backend"]
 
 # Flask app which gets started and then idly accepts HTTP requests from the
 # other node protocol that accepts raw packets and packages them up like
@@ -198,6 +171,7 @@ accepts = ["satellite"]
 name = "flaskapp"
 root = "~/nodes/backend/flaskapp"
 runner = "make"
+runner_args = []
 accepts = []
 direct = []
 indirect = []
