@@ -550,7 +550,7 @@ mod raw {
         pub(super) timestep: Option<TimestepConfig>,
         pub(super) intermediary_link_threshold: Option<u32>,
         pub(super) seed: Option<u16>,
-        pub(super) root: Option<String>,
+        pub(super) root: String,
     }
 
     #[derive(Debug, Default, Deserialize)]
@@ -559,7 +559,7 @@ mod raw {
     #[derive(Debug, Default, Deserialize)]
     #[serde(default, deny_unknown_fields)]
     pub struct TimestepConfig {
-        pub(super) length: Option<f32>,
+        pub(super) length: Option<f64>,
         pub(super) unit: Option<Unit>,
         pub(super) count: Option<u64>,
     }
@@ -571,8 +571,8 @@ mod raw {
     #[serde(default, deny_unknown_fields)]
     pub struct DistanceVar {
         pub(super) modifier: Option<Modifier>,
-        pub(super) avg: Option<f32>,
-        pub(super) std: Option<f32>,
+        pub(super) avg: Option<f64>,
+        pub(super) std: Option<f64>,
         pub(super) unit: Option<Unit>,
     }
 
@@ -604,11 +604,14 @@ mod raw {
     }
 
     #[derive(Debug, Default, Deserialize)]
+    pub struct SignalShape(pub String);
+
+    #[derive(Debug, Default, Deserialize)]
     #[serde(default, deny_unknown_fields)]
     pub struct Signal {
         pub(super) max_range: Option<f64>,
         pub(super) offset: Option<f64>,
-        pub(super) shape: Option<String>,
+        pub(super) shape: Option<SignalShape>,
         pub(super) unit: Option<Unit>,
     }
 
@@ -630,7 +633,7 @@ mod raw {
     pub struct Coordinate {
         pub(super) x: Option<i64>,
         pub(super) y: Option<i64>,
-        pub(super) theta: Option<f32>,
+        pub(super) theta: Option<f64>,
     }
 
     #[derive(Debug, Default, Deserialize)]
