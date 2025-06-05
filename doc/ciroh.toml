@@ -1,7 +1,7 @@
 [params]
 
-timestep_length = 0.01          # Seconds per time step
-timesteps = 1000000             # Number of time steps to run the simulation for
+timestep.length = 0.01          # Seconds per time step
+timestep.count = 1000000        # Number of time steps to run the simulation for
 seed = 42                       # Random seed to use
 root = "~/testnet/simulations"  # Root directory to store simulation results 
                                 # into (will create a new subdirectory each run)
@@ -18,7 +18,7 @@ next = "ideal"
 # This is not accurate to the true satellite as it communicates over
 # the air, but is more accurate in terms of how we use it (only the
 # gateway can send messages since it is the only satellite-enabled node)
-signal.distance.shape = "direct"
+signal.shape = "direct"
 
 # Iridium 9603 transmission rate (176 kbps).
 transmission.rate = 176
@@ -29,7 +29,7 @@ connection_delay.avg = 20
 connection_delay.std = 5
 
 processing_delay.avg = 60       
-processing_delay.avg = 1       
+processing_delay.std = 1       
 
 packet_loss.avg = 0.3
 packet_loss.std = 0.05
@@ -40,11 +40,12 @@ next = "none"
 
 packet_loss.avg = 0.01
 transmission.rate = 1         
-transmission.units = "kb"
+transmission.data_unit = "kb"
 
-signal.distance.max = 4
-signal.distance.unit = "km"
-signal.distance.shape = "omni"
+signal.max_range = 4
+signal.offset = 2
+signal.unit = "km"
+signal.shape = "omni"
 
 propagation_delay.avg = 0.5      
 propagation_delay.std = 0.1      
@@ -60,7 +61,7 @@ propagation_delay.std = 0.25
 [nodes.gateway]
 
 internal_names = ["satellite"]
-positions = [[0, 0, 0]]
+position.coordinates = [[0, 0, 0]]
 
 # The gateway node's satellite communication protocol which accepts packets
 # from the TDMA protocol and then transmits them via satellite.
@@ -111,13 +112,13 @@ indirect = ["lora"]
 [nodes.peripheral]
 
 # Place a peripheral 1km away in each direction
-positions.coordinates = [
+position.coordinates = [
     [0, 1, 0],
     [1, 0, 0],
     [0, -1, 0],
     [-1, 0, 0],
 ]
-positions.units = "km"
+position.units = "km"
 
 [[nodes.peripheral.protocols]]
 name = "tdma"

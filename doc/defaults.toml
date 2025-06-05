@@ -47,13 +47,14 @@ seed = 42
 # into (will create a new subdirectory each run)
 root = "~/testnet/simulations" 
 
-[links]
-
 # Conservative threshold for the simulation to provide a warning
 # (while still allowing the simulation to run) when it detects 
 # more than this number of links between any two nodes after
 # unrolling recursive link relationships.
-warning_threshold = 100
+intermediary_link_threshold = 100
+
+
+[links]
 
 # Default link which links implicitly inherit from
 # This cannot be overrode, and does not get sourced from
@@ -78,7 +79,7 @@ next = "self"
 # the total number of links the packet will be passed through is `N` * `K`.
 # The simulation will warn you of any cycles and refuse the configuration.
 # It will also provide warnings when the calculated number of intermediaries
-# is >= to the value of `warning_threshold`.
+# is >= to the value of `intermediary_link_threshold`.
 
 # Number of intermediary links. 
 # This allows for links to be recursively composed.
@@ -89,17 +90,18 @@ intermediaries = 0
 #   - "max": Maximum distance packets can possible be delivered to.
 #   - "offset": Offset to use when performing distance degradation
 #   calculations (effective distance is equal to Max {0, Distance - Offset}).
-signal.distance.max = inf
-signal.distance.offset = inf
+signal.max_range = inf
+signal.offset = inf
 
 # Signal shape can be any of the following:
 #   - "omni": Circle around node location
 #   - "cone": TODO
 #   - "direct": Link can only communicate via a direct link to another node.
-signal.distance.shape = "omni"
+signal.shape = "omni"
 
 # Uses the same units as in `Error Rates` and `Network Delays` section
-signal.distance.unit = "meters"
+# Unit for distance
+signal.unit = "meters"
 
 # Node transmission rate
 transmission.rate = inf          
