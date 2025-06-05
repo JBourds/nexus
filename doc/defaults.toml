@@ -121,46 +121,16 @@ transmission.time_unit = "s"
 # Error Rates
 
 # Probability of bit flipping in the transfer.
-bit_error = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "m"
-}          
+bit_error = { avg = 0, std = 0, modifier = "flat", unit = "m" }          
 
-packet_loss = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "feet"
-}
+packet_loss = { avg = 0, std = 0, modifier = "flat", unit = "feet" }
 
 # Network Delays
 
-queue_delay.avg = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "meters"
-}      
-processing_delay = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "kilometers"
-}
-connection_delay = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "mi"
-}
-propagation_delay.avg = {
-    avg = 0,
-    std = 0,
-    modifier = "flat",
-    unit = "yards"
-}
+queue_delay = { avg = 0, std = 0, modifier = "flat", unit = "meters" }      
+processing_delay = { avg = 0, std = 0, modifier = "flat", unit = "kilometers" }
+connection_delay = { avg = 0, std = 0, modifier = "flat", unit = "mi" }
+propagation_delay = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 
 [nodes]
 
@@ -178,8 +148,8 @@ propagation_delay.avg = {
 # assigned index as a unique id which will be used to uniquely identify its 
 # output in the simulation folder.
 
-positions.coordinates = []
-positions.units = "meters"
+position.coordinates = []
+position.units = "meters"
 
 # Array of internal link names which act like ideal links but cannot be
 # received from any node outside of this one. Overrides existing link names,
