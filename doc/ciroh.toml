@@ -6,12 +6,6 @@ seed = 42                       # Random seed to use
 root = "~/testnet/simulations"  # Root directory to store simulation results 
                                 # into (will create a new subdirectory each run)
 
-# Section describing different link configurations. Links are added under this
-# section by adding a header such as [links.<name>]. Reserved link names are:
-#   - "self": Refers to the link name for the definition it is used within.
-#   - "direct": Link name reserved for direct outbound links between nodes.
-#   - "indirect": Link name reserved for links without explicit connections.
-#   - "ideal": Only default link name which cannot be overridden.
 [links]
 
 # Simulate the connection from the gateway node to the backend as a single link
@@ -20,92 +14,84 @@ root = "~/testnet/simulations"  # Root directory to store simulation results
 [links.gateway_to_backend]
 # Assume ideal links after satellite receives packet.
 next = "ideal"            
+
+# This is not accurate to the true satellite as it communicates over
+# the air, but is more accurate in terms of how we use it (only the
+# gateway can send messages since it is the only satellite-enabled node)
+signal.distance.shape = "direct"
+
 # Iridium 9603 transmission rate (176 kbps).
-trans_rate = 176000       
-# Simulate a one-time delay of 20s when connecting.
+transmission.rate = 176
+transmission.data_unit = "kb"
+transmission.time_unit = "seconds"
+
 connection_delay.avg = 20       
-# Simulated delay for all processing in satellite.
+connection_delay.std = 5
+
 processing_delay.avg = 60       
-# 30% chance packet fails to send.
-packet_loss = 0.3         
+processing_delay.avg = 1       
+
+packet_loss.avg = 0.3
+packet_loss.std = 0.05
 
 [links.lora]
 # Lora is a radio protocol - no routing.
-next = "none"             
-# Small chance of losing a packet.
-packet_loss = 0.01        
-# lora is about 1kbps transmission rate.
-trans_rate = 1000         
+next = "none"
 
-# Assume about 0.5s propagation delay.
+packet_loss.avg = 0.01
+transmission.rate = 1         
+transmission.units = "kb"
+
+signal.distance.max = 4
+signal.distance.unit = "km"
+signal.distance.shape = "omni"
+
 propagation_delay.avg = 0.5      
-# Assume about 0.1s standard deviation in delay.
 propagation_delay.std = 0.1      
-# Assume distance independence (not realistic).
-propagation_delay.modifier = "flat"   
 
 [links.lora_bad]
 inherit = "lora"
-next = "none"             
-packet_loss = 0.05        
-trans_rate = 1000
+packet_loss.avg = 0.05        
 
 propagation_delay.avg = 1
 propagation_delay.std = 0.25      
-propagation_delay.modifier = "flat"   
 
 [nodes]
-
-# The default node which all other nodes inherit from
-[nodes.default]
-
-# Array of [X, Y] coordinates for all the locations which this class of node is
-# deployed. At build time, each instance of the node protocols will be assigned
-# its index as a unique id which will be used to uniquely identify its output
-# in the simulation folder.
-positions = []
-
-# Array of internal link names which act like ideal links but cannot be
-# received from any node outside of this one. Overrides existing link names,
-# and is subject to the same naming restrictions as links.
-internal_names = []
-
 [nodes.gateway]
 
 internal_names = ["satellite"]
-positions = [[0, 0]]
-
-# TODO: Add power to simulation
-# default_charge = 1.0    # Start fully charged
-# idle_power = 0.001      # Percentage of charge used per second
-# idle_charging = 0.005   # Percentage of charge recovered per second
-# ...other charging params
+positions = [[0, 0, 0]]
 
 # The gateway node's satellite communication protocol which accepts packets
-# from the tdma protocol and then transmits them via satellite.
+# from the TDMA protocol and then transmits them via satellite.
 [[nodes.gateway.protocols]]
+
 # Name for the protocol to use as a unique identifier
 name = "satcom"
+
 # File system root directory for this protocol.
 root = "~/nodes/gateway/satcom" 
+
 # Shell command to run from root at startup.
 runner = "make"                 
 runner_args = []
 
 # Array of real or internal links this node can accept.
-accepts = ["satellite"]  # Only accept data sent over the satellite link name.
+# Only accept data sent over the satellite link name.
+accepts = ["satellite"] 
 
 # Array signalling all the outgoing direct link connections.
 # [<node>, <link>]
 #   - `node`: The name of the node for the direct connection.
 #   - `link`: The name of the link to use.
 direct = [ 
-    ["backend", "gateway_to_backend"],  # Simulate satellite uplink
+    # Simulate satellite uplink
+    ["backend", "gateway_to_backend"],  
 ]
 
-# This node performs the tdma protocol of the gateway, including:
+# This node performs the TDMA protocol of the gateway, including:
 #   - Pushing the time to all leaf nodes
-#   - Listening during the tdma window for node packets
+#   - Listening during the TDMA window for node packets
 #       - Buffering node packets
 #       - Writing packets to the satellite
 [[nodes.gateway.protocols]]
@@ -118,28 +104,20 @@ direct = [
     ["self", "satellite"],
 ]
 
-# Array of tuples with the structure:
-# [<max_range>, .modifierifier_offset>, <link>]
-#   - `max_range`: The maximum range (in meters) a link will transmit data.
-#   - .modifierifier_offset`: An offset used when computing non-flat modifier values
-#       for packet loss or delays. Must be <= `max_range` and >= 0. 
-#       Actual.modifierifier used is equal to: `max_range` - `modifier_offset`.
-#   - `link`: The name of the link to use.
-indirect = [
-    # 4km range maximum transmission range.
-    # Modifier computations use a distance.modifierifier of 0 until the 2km mark.
-    # Link is done over lora.
-    [4000, 2000, "lora"]
-]
+# Array of links to transmis indirectly to other nodes in range
+# listening for them
+indirect = ["lora"]
 
 [nodes.peripheral]
 
-positions = [
-    [0, 1000],
-    [1000, 0],
-    [0, -1000],
-    [-1000, 0],
+# Place a peripheral 1km away in each direction
+positions.coordinates = [
+    [0, 1, 0],
+    [1, 0, 0],
+    [0, -1, 0],
+    [-1, 0, 0],
 ]
+positions.units = "km"
 
 [[nodes.peripheral.protocols]]
 name = "tdma"
@@ -147,9 +125,7 @@ root = "~/nodes/peripheral/tdma"
 runner = "make"
 runner_args = []
 accepts = ["lora"]
-indirect = [
-    [4000, 2000, "lora"]
-]
+indirect = ["lora"]
 
 # The "backend" node is used to simulate the packaging of packets by the
 # Cloudloop server and storing the data in a Flask web server.

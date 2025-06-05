@@ -1,0 +1,192 @@
+# Units are specified in string form for each of the following:
+
+# Data Units
+
+# - "bit" ("b")
+# - "kilobit" ("Kb")
+# - "megabit" ("Mb")
+# - "gigabit" ("Gb")
+# - "byte" ("B")
+# - "kilobyte" ("KB")
+# - "megabyte" ("MB")
+# - "gigabyte" ("GB")
+
+# Time Units
+
+# - "hours" ("m")
+# - "minutes" ("m")
+# - "seconds" ("s")
+# - "milliseconds" ("ms")
+# - "microseconds" ("us")
+# - "nanoseconds" ("ns")
+
+# Distance Units
+
+#   - "meters" (or "m")
+#   - "kilometers" (or "km")
+#   - "feet"
+#   - "yards"
+#   - "miles" ("mi")
+
+[params]
+
+# Proportion of the timestep unit for each step
+timestep.length = 0.01
+
+# NOTE: Simulation timestep unit should be set carefully
+# based on other simulation parameters.
+timestep.unit = "seconds"
+
+# Total number of timesteps to take
+timestep.count = 1000000
+
+# Random seed for simulation
+seed = 42
+
+# Root directory to store simulation results 
+# into (will create a new subdirectory each run)
+root = "~/testnet/simulations" 
+
+[links]
+
+# Conservative threshold for the simulation to provide a warning
+# (while still allowing the simulation to run) when it detects 
+# more than this number of links between any two nodes after
+# unrolling recursive link relationships.
+warning_threshold = 100
+
+# Default link which links implicitly inherit from
+# This cannot be overrode, and does not get sourced from
+# a config TOML like other links. It is provided purely
+# for example purposes and to show what the default
+# behavior is.
+[links.ideal]
+
+# Network Parameters
+
+# Name of the next link (to build composite links).
+# Section describing different link configurations. Links are added under this
+# section by adding a header such as [links.<name>]. Reserved link names are:
+#   - "self": Refers to the link name for the definition it is used within.
+#   - "direct": Link name reserved for direct outbound links between nodes.
+#   - "indirect": Link name reserved for links without explicit connections.
+#   - "ideal": Only default link name which cannot be overridden.
+next = "self"             
+
+# NOTE: If a given link has `N` intermediaries and its "next"
+# parameter has `K` intermediaries with a next parameter of "none",
+# the total number of links the packet will be passed through is `N` * `K`.
+# The simulation will warn you of any cycles and refuse the configuration.
+# It will also provide warnings when the calculated number of intermediaries
+# is >= to the value of `warning_threshold`.
+
+# Number of intermediary links. 
+# This allows for links to be recursively composed.
+# Must be 0/unspecified if the `next` parameter is set to "none".
+intermediaries = 0        
+
+# Control how far the signal can reach.
+#   - "max": Maximum distance packets can possible be delivered to.
+#   - "offset": Offset to use when performing distance degradation
+#   calculations (effective distance is equal to Max {0, Distance - Offset}).
+signal.distance.max = inf
+signal.distance.offset = inf
+
+# Signal shape can be any of the following:
+#   - "omni": Circle around node location
+#   - "cone": TODO
+#   - "direct": Link can only communicate via a direct link to another node.
+signal.distance.shape = "omni"
+
+# Uses the same units as in `Error Rates` and `Network Delays` section
+signal.distance.unit = "meters"
+
+# Node transmission rate
+transmission.rate = inf          
+transmission.data_unit = "bit"
+transmission.time_unit = "s"
+
+# Each value which depends on distance is characterized by its average value
+# and standard deviation, as well as a type of decay and the unit of distance. 
+# Decays:
+# - "flat": The value is the actual delay.
+# - "linear": The value is linear based on distance.
+# - "log": The value is logarithmic based on distance, where the
+#            provided value is the base for the logarithm.
+# - "exp": The value is exponential based on distance, where the
+#            provided value is the base of the exponent.
+
+# Error Rates
+
+# Probability of bit flipping in the transfer.
+bit_error = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "m"
+}          
+
+packet_loss = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "feet"
+}
+
+# Network Delays
+
+queue_delay.avg = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "meters"
+}      
+processing_delay = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "kilometers"
+}
+connection_delay = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "mi"
+}
+propagation_delay.avg = {
+    avg = 0,
+    std = 0,
+    modifier = "flat",
+    unit = "yards"
+}
+
+[nodes]
+
+# The default node which all other nodes inherit from
+[nodes.default]
+
+# Array of [X, Y, theta] coordinates for all the locations which this class of 
+# node is # deployed. Nodes are laid out on a cartesian grid and placed
+# according to their [X, Y] coordinates. For links that are not restricted to
+# guided media or transmit omnidirectionally, the theta parameter is used to
+# orient the way they "face". Theta is specified in degrees with a standard
+# unit circle orientation.
+
+# At build time, each instance of the node protocols will be 
+# assigned index as a unique id which will be used to uniquely identify its 
+# output in the simulation folder.
+
+positions.coordinates = []
+positions.units = "meters"
+
+# Array of internal link names which act like ideal links but cannot be
+# received from any node outside of this one. Overrides existing link names,
+# and is subject to the same naming restrictions as links.
+internal_names = []
+
+# TODO: Add power to simulation
+# default_charge = 1.0    # Start fully charged
+# idle_power = 0.001      # Percentage of charge used per second
+# idle_charging = 0.005   # Percentage of charge recovered per second
+# ...other charging params
+
