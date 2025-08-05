@@ -1,0 +1,35 @@
+# This configuration file is a simple example of two nodes, each running a
+# single protocol used to communicate with each other via a direct connection.
+
+[params]
+timestep.length = 0.01          
+timestep.count = 1000000        
+seed = 42                       
+root = "~/testnet/simulations"  
+
+[nodes]
+
+[nodes.client]
+position.coordinates = [ {} ]
+
+[[nodes.client.protocols]]
+
+name = "client"
+root = "./"
+runner = "python3"
+runner_args = ["client.py"]
+direct = [["server", "ideal"]]
+accepts = ["ideal"]
+
+
+[nodes.server]
+position.coordinates = [ {} ]
+
+[[nodes.server.protocols]]
+
+name = "server"
+root = "./"
+runner = "python3"
+runner_args = []
+direct = [["client", "ideal"]]
+accepts = ["ideal"]
