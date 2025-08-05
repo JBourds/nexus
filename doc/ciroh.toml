@@ -61,7 +61,7 @@ propagation_delay.std = 0.25
 [nodes.gateway]
 
 internal_names = ["satellite"]
-position.coordinates = [[0, 0, 0]]
+position.coordinates = [{}]     # Defaults to all zeroes for position
 
 # The gateway node's satellite communication protocol which accepts packets
 # from the TDMA protocol and then transmits them via satellite.
@@ -113,10 +113,12 @@ indirect = ["lora"]
 
 # Place a peripheral 1km away in each direction
 position.coordinates = [
-    [0, 1, 0],
-    [1, 0, 0],
-    [0, -1, 0],
-    [-1, 0, 0],
+    # These two declarations are equivalent
+    { point = [0, 1, 0], orientation = [20, 30, 40]},
+    { point = [1, 0, 0], orientation = { az = 20, el = 30, roll = 40}},
+    # These two declarations are equivalent. Omit orientation.
+    { point = { x = 0, y = -1, z = 0}},
+    [[-1, 0, 0]],
 ]
 position.units = "km"
 

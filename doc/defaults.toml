@@ -137,12 +137,11 @@ propagation_delay = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 # The default node which all other nodes inherit from
 [nodes.default]
 
-# Array of [X, Y, theta] coordinates for all the locations which this class of 
-# node is # deployed. Nodes are laid out on a cartesian grid and placed
-# according to their [X, Y] coordinates. For links that are not restricted to
-# guided media or transmit omnidirectionally, the theta parameter is used to
-# orient the way they "face". Theta is specified in degrees with a standard
-# unit circle orientation.
+# Instances of node classes have their positions specified by a pair of numbers.
+# These correspond to the x, y, z point of the node on a 3D cartesian space
+# along with the azimuth, elevation, and roll of the nodes. All these values
+# default to 0 when omitted. Coordinates can be specifed as a tuple of values
+# (ex. `[<x>, <y>, <z>]`) or in object form (ex. `{x = <x>, y = <y>, z = <z>}`).
 
 # At build time, each instance of the node protocols will be 
 # assigned index as a unique id which will be used to uniquely identify its 

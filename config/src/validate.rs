@@ -563,9 +563,8 @@ impl Position {
             .unwrap_or_default()
             .into_iter()
             .map(|c| Coordinate {
-                x: c.x.unwrap_or_default(),
-                y: c.y.unwrap_or_default(),
-                theta: c.theta.unwrap_or_default(),
+                point: c.point.map(Point::validate).unwrap_or_default(),
+                orientation: c.orientation.map(Orientation::validate).unwrap_or_default(),
             })
             .collect();
 
@@ -579,10 +578,43 @@ impl Position {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+impl Point {
+    fn validate(val: parse::Point) -> Self {
+        Self {
+            x: val.x.unwrap_or_default(),
+            y: val.y.unwrap_or_default(),
+            z: val.z.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Orientation {
+    pub az: f64,
+    pub el: f64,
+    pub roll: f64,
+}
+
+impl Orientation {
+    fn validate(val: parse::Orientation) -> Self {
+        Self {
+            az: val.az.unwrap_or_default(),
+            el: val.el.unwrap_or_default(),
+            roll: val.roll.unwrap_or_default(),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
 pub struct Coordinate {
-    pub x: i64,
-    pub y: i64,
-    pub theta: f64,
+    pub point: Point,
+    pub orientation: Orientation,
 }
 
 #[derive(Clone, Debug)]

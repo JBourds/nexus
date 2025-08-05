@@ -94,10 +94,25 @@ pub struct Position {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct Point {
+    pub(super) x: Option<f64>,
+    pub(super) y: Option<f64>,
+    pub(super) z: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Orientation {
+    pub(super) az: Option<f64>,
+    pub(super) el: Option<f64>,
+    pub(super) roll: Option<f64>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Coordinate {
-    pub(super) x: Option<i64>,
-    pub(super) y: Option<i64>,
-    pub(super) theta: Option<f64>,
+    pub(super) point: Option<Point>,
+    pub(super) orientation: Option<Orientation>,
 }
 
 #[derive(Debug, Default, Deserialize)]
