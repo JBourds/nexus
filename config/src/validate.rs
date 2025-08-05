@@ -289,7 +289,7 @@ impl Simulation {
         // Check for a cycle - look for any inheritance chains that aren't in
         // the topological ordering since it means they had no common ancestor
         // to the "ideal" or "none" chain.
-        if link_dependencies.len() != ordering.len() {
+        if link_dependencies.len() != ordering.len() && !link_dependencies.is_empty() {
             for entry in ordering.iter() {
                 let _ = link_dependencies
                     .remove(entry)
