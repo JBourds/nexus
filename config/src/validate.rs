@@ -1,17 +1,18 @@
 use super::parse;
 use anyhow::{Context, Result, bail, ensure};
+use std::path::{Path, PathBuf};
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
 };
 
-fn expand_home(path: &str) -> std::path::PathBuf {
-    if let Some(stripped) = path.strip_prefix("~/") {
+fn expand_home(path: &PathBuf) -> PathBuf {
+    if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/") {
         if let Some(home_dir) = home::home_dir() {
             return home_dir.join(stripped);
         }
     }
-    std::path::PathBuf::from(path)
+    PathBuf::from(path)
 }
 
 fn verify_nonnegative(val: f64) -> Result<f64> {
@@ -19,6 +20,37 @@ fn verify_nonnegative(val: f64) -> Result<f64> {
         bail!("Value must be positive")
     } else {
         Ok(val)
+    }
+}
+
+fn resolve_directory(config_root: &PathBuf, path: &PathBuf) -> Result<PathBuf> {
+    let root = expand_home(path);
+    let root = if root.is_relative() {
+        std::fs::canonicalize(Path::new(config_root).join(root))?
+    } else {
+        root
+    };
+    println!("config_root: {config_root:#?}\npath: {path:#?}");
+    println!("Root: {root:#?}");
+    match root.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            bail!(
+                "Unable to find directory at path \"{}\"",
+                path.to_string_lossy()
+            );
+        }
+        err => {
+            err.context(format!(
+                "Could not verify whether root exists at path \"{:?}\"",
+                root.to_string_lossy()
+            ))?;
+        }
+    }
+    if !root.is_dir() {
+        bail!("Protocol root at \"{}\" is not a directory", root.display());
+    } else {
+        Ok(root)
     }
 }
 
@@ -207,9 +239,9 @@ impl Default for Rate {
 
 #[derive(Clone, Debug)]
 pub struct Simulation {
-    params: Params,
-    links: HashMap<LinkHandle, Link>,
-    nodes: HashMap<NodeHandle, Node>,
+    pub params: Params,
+    pub links: HashMap<LinkHandle, Link>,
+    pub nodes: HashMap<NodeHandle, Node>,
 }
 impl Simulation {
     /// Guaranteed to not have a cycle because it only traces links with a
@@ -227,9 +259,9 @@ impl Simulation {
         }
     }
 
-    pub(crate) fn validate(val: parse::Simulation) -> Result<Self> {
-        let params =
-            Params::validate(val.params).context("Unable to validate simulation parameters")?;
+    pub(crate) fn validate(config_root: &PathBuf, val: parse::Simulation) -> Result<Self> {
+        let params = Params::validate(config_root, val.params)
+            .context("Unable to validate simulation parameters")?;
 
         // Convert all the links to lowercase
         let mut links =
@@ -318,7 +350,8 @@ impl Simulation {
             .nodes
             .into_iter()
             .map(|(key, node)| {
-                Node::validate(node, &node_handles, &link_handles).map(|node| (key, node))
+                Node::validate(config_root, node, &node_handles, &link_handles)
+                    .map(|node| (key, node))
             })
             .collect::<Result<HashMap<NodeHandle, Node>>>()
             .context("Failed to validate nodes")?;
@@ -333,9 +366,9 @@ impl Simulation {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimestepConfig {
-    pub(super) length: f64,
-    pub(super) unit: TimeUnit,
-    pub(super) count: NonZeroU64,
+    pub length: f64,
+    pub unit: TimeUnit,
+    pub count: NonZeroU64,
 }
 
 impl Default for TimestepConfig {
@@ -378,34 +411,15 @@ impl TimestepConfig {
 
 #[derive(Clone, Debug)]
 pub struct Params {
-    timestep: TimestepConfig,
-    intermediary_link_threshold: u32,
-    seed: u16,
-    root: std::path::PathBuf,
+    pub timestep: TimestepConfig,
+    pub intermediary_link_threshold: u32,
+    pub seed: u16,
+    pub root: PathBuf,
 }
 impl Params {
     const INTERMEDIARY_LINK_THRESHOLD_DEFAULT: u32 = 100;
-    fn validate(val: parse::Params) -> Result<Self> {
-        let root = expand_home(val.root.as_str());
-
-        match root.try_exists() {
-            Ok(true) => {}
-            Ok(false) => {
-                bail!(
-                    "Unable to find root for simulation at path \"{}\"",
-                    root.display()
-                );
-            }
-            err => {
-                err.context(format!(
-                    "Could not verify whether root for simulation exists or not at path \"{:?}\"",
-                    root
-                ))?;
-            }
-        }
-        if !root.is_dir() {
-            bail!("Protocol root at \"{}\" is not a directory", root.display());
-        }
+    fn validate(config_root: &PathBuf, val: parse::Params) -> Result<Self> {
+        let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
         let timestep = val
             .timestep
             .map(TimestepConfig::validate)
@@ -424,10 +438,10 @@ impl Params {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DistanceVar {
-    avg: f64,
-    std: f64,
-    modifier: Modifier,
-    unit: DistanceUnit,
+    pub avg: f64,
+    pub std: f64,
+    pub modifier: Modifier,
+    pub unit: DistanceUnit,
 }
 impl DistanceVar {
     fn validate(val: parse::DistanceVar) -> Result<Self> {
@@ -455,16 +469,16 @@ impl DistanceVar {
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Link {
-    next: Option<LinkHandle>,
-    intermediaries: u32,
-    signal: Signal,
-    transmission: Rate,
-    bit_error: DistanceVar,
-    packet_loss: DistanceVar,
-    queue_delay: DistanceVar,
-    processing_delay: DistanceVar,
-    connection_delay: DistanceVar,
-    propagation_delay: DistanceVar,
+    pub next: Option<LinkHandle>,
+    pub intermediaries: u32,
+    pub signal: Signal,
+    pub transmission: Rate,
+    pub bit_error: DistanceVar,
+    pub packet_loss: DistanceVar,
+    pub queue_delay: DistanceVar,
+    pub processing_delay: DistanceVar,
+    pub connection_delay: DistanceVar,
+    pub propagation_delay: DistanceVar,
 }
 impl Link {
     const DEFAULT: &'static str = "ideal";
@@ -627,13 +641,14 @@ pub struct Coordinate {
 
 #[derive(Clone, Debug)]
 pub struct Node {
-    position: Position,
-    protocols: HashMap<ProtocolHandle, NodeProtocol>,
+    pub position: Position,
+    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
 }
 
 impl Node {
     const SELF: &'static str = "self";
     fn validate(
+        config_root: &PathBuf,
         val: parse::Node,
         node_handles: &HashSet<NodeHandle>,
         link_handles: &HashSet<LinkHandle>,
@@ -671,7 +686,7 @@ impl Node {
             .into_iter()
             .map(|protocol| {
                 let name = protocol.name.clone();
-                NodeProtocol::validate(protocol, node_handles, &links)
+                NodeProtocol::validate(config_root, protocol, node_handles, &links)
                     .map(|validated| (name, validated))
             })
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
@@ -685,9 +700,9 @@ impl Node {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Signal {
-    range: ConnectionRange,
-    shape: SignalShape,
-    unit: DistanceUnit,
+    pub range: ConnectionRange,
+    pub shape: SignalShape,
+    pub unit: DistanceUnit,
 }
 
 impl Signal {
@@ -712,8 +727,8 @@ impl Signal {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConnectionRange {
-    maximum: Option<u64>,
-    offset: Option<u64>,
+    pub maximum: Option<u64>,
+    pub offset: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -746,41 +761,32 @@ impl Default for SignalShape {
 
 #[derive(Clone, Debug)]
 pub struct Cmd {
-    cmd: String,
-    args: Vec<String>,
+    pub cmd: String,
+    pub args: Vec<String>,
+}
+
+impl std::fmt::Display for Cmd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} {}", self.cmd, self.args.join(" "))
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct NodeProtocol {
-    root: std::path::PathBuf,
-    runner: Cmd,
-    accepts: HashSet<LinkHandle>,
-    direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
-    indirect: HashSet<LinkHandle>,
+    pub root: PathBuf,
+    pub runner: Cmd,
+    pub accepts: HashSet<LinkHandle>,
+    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
+    pub indirect: HashSet<LinkHandle>,
 }
 impl NodeProtocol {
     fn validate(
+        config_root: &PathBuf,
         val: parse::NodeProtocol,
         node_handles: &HashSet<NodeHandle>,
         link_handles: &HashSet<LinkHandle>,
     ) -> Result<Self> {
-        let root = expand_home(val.root.as_str());
-        match root.try_exists() {
-            Ok(true) => {}
-            Ok(false) => {
-                bail!(
-                    "Unable to find root for node protocol \"{}\" at path \"{}\"",
-                    val.name,
-                    root.display()
-                );
-            }
-            err => {
-                err.context(format!("Could not verify whether root for node protocol \"{}\" exists or not at path \"{:?}\"", val.name, root))?;
-            }
-        }
-        if !root.is_dir() {
-            bail!("Protocol root at \"{}\" is not a directory", root.display());
-        }
+        let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
         let runner = Cmd {
             cmd: val.runner,
             args: val.runner_args.unwrap_or_default(),
