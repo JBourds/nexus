@@ -1,13 +1,9 @@
+use super::parse;
 use anyhow::{Context, Result, bail, ensure};
 use std::collections::{HashMap, HashSet};
 
-pub fn parse(text: String) -> Result<Simulation> {
-    let parsed: raw::Simulation = toml::from_str(text.as_str())
-        .context("Failed to parse simulation parameters from config file.")?;
-    let validated = Simulation::validate(parsed)
-        .context("Failed to validate simulation parameters from config file.")?;
-    println!("{validated:#?}");
-    Ok(validated)
+pub fn validate(raw_sim: parse::Simulation) -> Result<Simulation> {
+    Simulation::validate(raw_sim)
 }
 
 fn expand_home(path: &str) -> std::path::PathBuf {
@@ -21,11 +17,11 @@ fn expand_home(path: &str) -> std::path::PathBuf {
 
 // Just use the string names as handles here since they will be small
 // strings and the overhead of cloning a Rc is likely slower
-type NodeHandle = String;
-type LinkHandle = String;
-type ProtocolHandle = String;
+pub type NodeHandle = String;
+pub type LinkHandle = String;
+pub type ProtocolHandle = String;
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DataUnit {
     Bit,
     Kilobit,
@@ -38,7 +34,7 @@ pub enum DataUnit {
 }
 
 impl DataUnit {
-    fn validate(mut val: raw::Unit) -> Result<Self> {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
         let case_insensitive_len = val.0.len() - 1;
         val.0[..case_insensitive_len].make_ascii_lowercase();
         let variant = match val.0.as_str() {
@@ -64,7 +60,7 @@ impl Default for DataUnit {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeUnit {
     Hours,
     Minutes,
@@ -75,7 +71,7 @@ pub enum TimeUnit {
 }
 
 impl TimeUnit {
-    fn validate(mut val: raw::Unit) -> Result<Self> {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
             "seconds" | "s" => Self::Seconds,
@@ -98,7 +94,7 @@ impl Default for TimeUnit {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DistanceUnit {
     Meters,
     Kilometers,
@@ -108,7 +104,7 @@ pub enum DistanceUnit {
 }
 
 impl DistanceUnit {
-    fn validate(mut val: raw::Unit) -> Result<Self> {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
             "meters" | "m" => Self::Meters,
@@ -130,7 +126,7 @@ impl Default for DistanceUnit {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Modifier {
     Flat,
     Linear,
@@ -139,7 +135,7 @@ pub enum Modifier {
 }
 
 impl Modifier {
-    fn validate(mut val: raw::Modifier) -> Result<Self> {
+    fn validate(mut val: parse::Modifier) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
             "flat" => Self::Flat,
@@ -160,7 +156,7 @@ impl Default for Modifier {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SignalShape {
     Omnidirectional,
     Cone,
@@ -168,7 +164,7 @@ pub enum SignalShape {
 }
 
 impl SignalShape {
-    fn validate(mut val: raw::SignalShape) -> Result<Self> {
+    fn validate(mut val: parse::SignalShape) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
             "omni" => Self::Omnidirectional,
@@ -188,7 +184,7 @@ impl Default for SignalShape {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rate {
     pub rate: f64,
     pub data_unit: DataUnit,
@@ -196,7 +192,7 @@ pub struct Rate {
 }
 
 impl Rate {
-    fn validate(val: raw::Rate) -> Result<Self> {
+    fn validate(val: parse::Rate) -> Result<Self> {
         let data_unit = val
             .data_unit
             .map(DataUnit::validate)
@@ -248,7 +244,7 @@ impl Simulation {
         }
     }
 
-    fn validate(val: raw::Simulation) -> Result<Self> {
+    fn validate(val: parse::Simulation) -> Result<Self> {
         let params =
             Params::validate(val.params).context("Unable to validate simulation parameters")?;
 
@@ -352,7 +348,7 @@ impl Simulation {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimestepConfig {
     pub(super) length: f64,
     pub(super) unit: TimeUnit,
@@ -370,7 +366,7 @@ impl Default for TimestepConfig {
 }
 
 impl TimestepConfig {
-    fn validate(val: raw::TimestepConfig) -> Result<Self> {
+    fn validate(val: parse::TimestepConfig) -> Result<Self> {
         let unit = val
             .unit
             .map(TimeUnit::validate)
@@ -393,7 +389,7 @@ pub struct Params {
 }
 impl Params {
     const INTERMEDIARY_LINK_THRESHOLD_DEFAULT: u32 = 100;
-    fn validate(val: raw::Params) -> Result<Self> {
+    fn validate(val: parse::Params) -> Result<Self> {
         let root = expand_home(val.root.as_str());
 
         match root.try_exists() {
@@ -438,7 +434,7 @@ pub struct DistanceVar {
     unit: DistanceUnit,
 }
 impl DistanceVar {
-    fn validate(val: raw::DistanceVar) -> Result<Self> {
+    fn validate(val: parse::DistanceVar) -> Result<Self> {
         let def = Self::default();
         let avg = val.avg.unwrap_or(def.avg);
         let std = val.std.unwrap_or(def.std);
@@ -483,7 +479,7 @@ impl Link {
     /// Ensure provided values for links are valid and
     /// resolve inheritance.
     fn validate(
-        val: raw::Link,
+        val: parse::Link,
         link_handles: &HashSet<LinkHandle>,
         processed: &HashMap<LinkHandle, Self>,
     ) -> Result<Self> {
@@ -565,7 +561,7 @@ pub struct Position {
 }
 
 impl Position {
-    fn validate(val: raw::Position) -> Result<Self> {
+    fn validate(val: parse::Position) -> Result<Self> {
         let coordinates = val
             .coordinates
             .unwrap_or_default()
@@ -602,7 +598,7 @@ pub struct Node {
 impl Node {
     const SELF: &'static str = "self";
     fn validate(
-        val: raw::Node,
+        val: parse::Node,
         node_handles: &HashSet<NodeHandle>,
         link_handles: &HashSet<LinkHandle>,
     ) -> Result<Self> {
@@ -651,7 +647,7 @@ impl Node {
     }
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ConnectionRange {
     maximum: u64,
     offset: u64,
@@ -673,7 +669,7 @@ pub struct NodeProtocol {
 }
 impl NodeProtocol {
     fn validate(
-        val: raw::NodeProtocol,
+        val: parse::NodeProtocol,
         node_handles: &HashSet<NodeHandle>,
         link_handles: &HashSet<LinkHandle>,
     ) -> Result<Self> {
@@ -766,138 +762,5 @@ impl NodeProtocol {
             direct,
             indirect,
         })
-    }
-}
-
-mod raw {
-    use serde::Deserialize;
-    use std::collections::HashMap;
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Simulation {
-        pub(super) params: Params,
-        pub(super) links: HashMap<String, Link>,
-        pub(super) nodes: HashMap<String, Node>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Params {
-        pub(super) timestep: Option<TimestepConfig>,
-        pub(super) intermediary_link_threshold: Option<u32>,
-        pub(super) seed: Option<u16>,
-        pub(super) root: String,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct Unit(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct TimestepConfig {
-        pub(super) length: Option<f64>,
-        pub(super) unit: Option<Unit>,
-        pub(super) count: Option<u64>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct Modifier(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct DistanceVar {
-        pub(super) modifier: Option<Modifier>,
-        pub(super) avg: Option<f64>,
-        pub(super) std: Option<f64>,
-        pub(super) unit: Option<Unit>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Rate {
-        pub(super) rate: Option<f64>,
-        pub(super) data_unit: Option<Unit>,
-        pub(super) time_unit: Option<Unit>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct LinkName(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Link {
-        pub(super) inherit: Option<String>,
-        pub(super) next: Option<String>,
-        pub(super) intermediaries: Option<u32>,
-        pub(super) signal: Option<Signal>,
-        pub(super) transmission: Option<Rate>,
-        pub(super) packet_loss: Option<DistanceVar>,
-        pub(super) bit_error: Option<DistanceVar>,
-        pub(super) queue_delay: Option<DistanceVar>,
-        pub(super) processing_delay: Option<DistanceVar>,
-        pub(super) connection_delay: Option<DistanceVar>,
-        pub(super) propagation_delay: Option<DistanceVar>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct SignalShape(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Signal {
-        pub(super) max_range: Option<f64>,
-        pub(super) offset: Option<f64>,
-        pub(super) shape: Option<SignalShape>,
-        pub(super) unit: Option<Unit>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct NodeName(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct ProtocolName(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Position {
-        pub(super) coordinates: Option<Vec<Coordinate>>,
-        pub(super) units: Option<Unit>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Coordinate {
-        pub(super) x: Option<i64>,
-        pub(super) y: Option<i64>,
-        pub(super) theta: Option<f64>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct DirectConnection {
-        pub(super) node: NodeName,
-        pub(super) link: LinkName,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    pub struct IndirectConnection(pub String);
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct Node {
-        pub(super) position: Option<Position>,
-        pub(super) internal_names: Option<Vec<ProtocolName>>,
-        pub(super) protocols: Option<Vec<NodeProtocol>>,
-    }
-
-    #[derive(Debug, Default, Deserialize)]
-    #[serde(default, deny_unknown_fields)]
-    pub struct NodeProtocol {
-        pub(super) name: String,
-        pub(super) root: String,
-        pub(super) runner: String,
-        pub(super) runner_args: Option<Vec<String>>,
-        pub(super) accepts: Option<Vec<LinkName>>,
-        pub(super) direct: Option<Vec<DirectConnection>>,
-        pub(super) indirect: Option<Vec<LinkName>>,
     }
 }

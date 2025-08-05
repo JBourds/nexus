@@ -1,7 +1,5 @@
 use anyhow::{Context, Result};
-mod config;
 use clap::Parser;
-use toml::from_str;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
