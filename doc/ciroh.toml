@@ -45,7 +45,7 @@ transmission.data_unit = "kb"
 signal.max_range = 4
 signal.offset = 2
 signal.unit = "km"
-signal.shape = "omni"
+signal.shape = "cone"
 
 propagation_delay.avg = 0.5      
 propagation_delay.std = 0.1      
