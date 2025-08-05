@@ -164,34 +164,6 @@ impl Default for Modifier {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SignalShape {
-    Omnidirectional,
-    Cone,
-    Direct,
-}
-
-impl SignalShape {
-    fn validate(mut val: parse::SignalShape) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "omni" => Self::Omnidirectional,
-            "cone" => Self::Cone,
-            "direct" => Self::Direct,
-            s => {
-                bail!("Expected to find (\"omni\" | \"cone\" | \"direct\") but found {s}");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl Default for SignalShape {
-    fn default() -> Self {
-        Self::Omnidirectional
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rate {
     pub rate: f64,
     pub data_unit: DataUnit,
@@ -450,7 +422,7 @@ impl Params {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct DistanceVar {
     avg: f64,
     std: f64,
@@ -481,10 +453,11 @@ impl DistanceVar {
     }
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Link {
     next: Option<LinkHandle>,
     intermediaries: u32,
+    signal: Signal,
     transmission: Rate,
     bit_error: DistanceVar,
     packet_loss: DistanceVar,
@@ -529,6 +502,12 @@ impl Link {
             "Cannot have a next link of \"none\" with nonzero intermediary links (found {intermediaries})"
         );
 
+        let signal = val
+            .signal
+            .map(Signal::validate)
+            .unwrap_or(Ok(ancestor.signal))
+            .context("Unable to validate link signal")?;
+
         let transmission = val
             .transmission
             .map(Rate::validate)
@@ -567,6 +546,7 @@ impl Link {
         Ok(Self {
             next,
             intermediaries,
+            signal,
             transmission,
             bit_error,
             packet_loss,
@@ -703,10 +683,65 @@ impl Node {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Signal {
+    range: ConnectionRange,
+    shape: SignalShape,
+    unit: DistanceUnit,
+}
+
+impl Signal {
+    fn validate(val: parse::Signal) -> Result<Self> {
+        let range = ConnectionRange {
+            maximum: val.max_range,
+            offset: val.offset,
+        };
+        let shape = val
+            .shape
+            .map(SignalShape::validate)
+            .unwrap_or(Ok(SignalShape::default()))
+            .context("Unable to validate signal shape.")?;
+        let unit = val
+            .unit
+            .map(DistanceUnit::validate)
+            .unwrap_or(Ok(DistanceUnit::default()))
+            .context("Unable to validate distance unit.")?;
+        Ok(Self { range, shape, unit })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConnectionRange {
-    maximum: u64,
-    offset: u64,
+    maximum: Option<u64>,
+    offset: Option<u64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SignalShape {
+    Omnidirectional,
+    Cone,
+    Direct,
+}
+
+impl SignalShape {
+    fn validate(mut val: parse::SignalShape) -> Result<Self> {
+        val.0.make_ascii_lowercase();
+        let variant = match val.0.as_str() {
+            "omni" => Self::Omnidirectional,
+            "cone" => Self::Cone,
+            "direct" => Self::Direct,
+            s => {
+                bail!("Expected to find (\"omni\" | \"cone\" | \"direct\") but found {s}");
+            }
+        };
+        Ok(variant)
+    }
+}
+
+impl Default for SignalShape {
+    fn default() -> Self {
+        Self::Omnidirectional
+    }
 }
 
 #[derive(Clone, Debug)]

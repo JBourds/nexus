@@ -73,8 +73,8 @@ pub struct SignalShape(pub String);
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Signal {
-    pub(super) max_range: Option<f64>,
-    pub(super) offset: Option<f64>,
+    pub(super) max_range: Option<u64>,
+    pub(super) offset: Option<u64>,
     pub(super) shape: Option<SignalShape>,
     pub(super) unit: Option<Unit>,
 }
