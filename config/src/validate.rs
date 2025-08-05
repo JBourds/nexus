@@ -1,6 +1,9 @@
 use super::parse;
 use anyhow::{Context, Result, bail, ensure};
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    num::NonZeroU64,
+};
 
 fn expand_home(path: &str) -> std::path::PathBuf {
     if let Some(stripped) = path.strip_prefix("~/") {
@@ -9,6 +12,14 @@ fn expand_home(path: &str) -> std::path::PathBuf {
         }
     }
     std::path::PathBuf::from(path)
+}
+
+fn verify_nonnegative(val: f64) -> Result<f64> {
+    if val.is_sign_negative() {
+        bail!("Value must be positive")
+    } else {
+        Ok(val)
+    }
 }
 
 // Just use the string names as handles here since they will be small
@@ -199,7 +210,11 @@ impl Rate {
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate rate's time unit")?;
-        let rate = val.rate.unwrap_or_default();
+        let rate = val
+            .rate
+            .map(verify_nonnegative)
+            .unwrap_or(Ok(f64::default()))
+            .context("Unable to validate rate's value.")?;
         Ok(Self {
             rate,
             data_unit,
@@ -348,29 +363,42 @@ impl Simulation {
 pub struct TimestepConfig {
     pub(super) length: f64,
     pub(super) unit: TimeUnit,
-    pub(super) count: u64,
+    pub(super) count: NonZeroU64,
 }
 
 impl Default for TimestepConfig {
     fn default() -> Self {
         Self {
-            length: 0.1,
+            length: Self::DEFAULT_TIMESTEP_LEN,
             unit: TimeUnit::default(),
-            count: 1_000_000,
+            count: Self::DEFAULT_TIMESTEP_COUNT,
         }
     }
 }
 
 impl TimestepConfig {
+    const DEFAULT_TIMESTEP_LEN: f64 = 0.1;
+    const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
+
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
         let unit = val
             .unit
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate time unit in timestep config")?;
+        let count = val
+            .count
+            .map(NonZeroU64::new)
+            .unwrap_or_default()
+            .context("Unable to validate time unit in timestep config")?;
+        let length = val
+            .length
+            .map(verify_nonnegative)
+            .unwrap_or(Ok(Self::DEFAULT_TIMESTEP_LEN))
+            .context("Unable to validate length in timestep config")?;
         Ok(Self {
-            length: val.length.unwrap_or_default(),
-            count: val.count.unwrap_or_default(),
+            length,
+            count,
             unit,
         })
     }
