@@ -2,10 +2,6 @@ use super::parse;
 use anyhow::{Context, Result, bail, ensure};
 use std::collections::{HashMap, HashSet};
 
-pub fn validate(raw_sim: parse::Simulation) -> Result<Simulation> {
-    Simulation::validate(raw_sim)
-}
-
 fn expand_home(path: &str) -> std::path::PathBuf {
     if let Some(stripped) = path.strip_prefix("~/") {
         if let Some(home_dir) = home::home_dir() {
@@ -244,7 +240,7 @@ impl Simulation {
         }
     }
 
-    fn validate(val: parse::Simulation) -> Result<Self> {
+    pub(crate) fn validate(val: parse::Simulation) -> Result<Self> {
         let params =
             Params::validate(val.params).context("Unable to validate simulation parameters")?;
 
