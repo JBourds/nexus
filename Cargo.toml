@@ -1,9 +1,10 @@
 [workspace]
-members = [ "cli", "config" , "runner"]
+members = [ "cli", "config" , "fuse", "runner"]
 resolver = "3"
 
 [workspace.dependencies]
 anyhow = "1.0.98"
 toml = "0.8.22"
+thiserror = "2.0.12"
 clap = { version = "4.5.39", features = ["derive"] }
 serde = { version = "1.0.219", features = ["derive"] }

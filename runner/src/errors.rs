@@ -1,6 +1,5 @@
 use std::{fmt::Display, os};
 
-use config::ast;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
