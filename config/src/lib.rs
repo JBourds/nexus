@@ -19,6 +19,5 @@ pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
     config_root.pop();
     let validated = ast::Simulation::validate(&config_root, parsed)
         .context("Failed to validate simulation parameters from config file.")?;
-    println!("{validated:#?}");
     Ok(validated)
 }

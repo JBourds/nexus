@@ -30,8 +30,6 @@ fn resolve_directory(config_root: &PathBuf, path: &PathBuf) -> Result<PathBuf> {
     } else {
         root
     };
-    println!("config_root: {config_root:#?}\npath: {path:#?}");
-    println!("Root: {root:#?}");
     match root.try_exists() {
         Ok(true) => {}
         Ok(false) => {
