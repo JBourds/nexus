@@ -26,7 +26,7 @@ fn main() -> Result<()> {
         protocol_links.extend(links.into_iter().map(|link| (pid, link)));
     }
 
-    let (_, kernel_links) = fuse::NexusFs::default()
+    let (sess, mut kernel_links) = fuse::NexusFs::default()
         .with_files(files)
         .with_links(protocol_links)?
         .mount()?;

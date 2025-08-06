@@ -100,10 +100,9 @@ impl NexusFs {
         Ok(self)
     }
 
-    pub fn root(&self) -> &PathBuf {
-        &self.root
-    }
-
+    /// Mount the filesystem without blocking, yield the background session it
+    /// is mounted in, and return the hash map with one side of the underlying
+    /// sockets for the kernel to use.
     pub fn mount(mut self) -> Result<(BackgroundSession, HashMap<LinkId, UnixDatagram>), FsError> {
         let options = vec![
             MountOption::FSName("nexus".to_string()),
@@ -135,16 +134,67 @@ impl Default for NexusFs {
 
 impl Filesystem for NexusFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        if parent == FUSE_ROOT_ID && self.files.contains(name.to_str().unwrap()) {
-            reply.entry(&TTL, &self.attr, 0);
+        if parent != FUSE_ROOT_ID {
+            reply.error(ENOENT);
+            return;
+        }
+
+        let name_str = name.to_str().unwrap_or("");
+        if let Some((i, _)) = self
+            .files
+            .iter()
+            .enumerate()
+            .find(|(_, fname)| *fname == &name_str.to_string())
+        {
+            let ino = (i + 2) as u64;
+            let now = SystemTime::now();
+            let attr = FileAttr {
+                ino,
+                size: 0,
+                blocks: 0,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                crtime: now,
+                kind: FileType::Socket,
+                perm: 0o666,
+                nlink: 1,
+                uid: 501,
+                gid: 20,
+                rdev: 0,
+                flags: 0,
+                blksize: 512,
+            };
+            reply.entry(&TTL, &attr, 0);
         } else {
             reply.error(ENOENT);
         }
     }
 
     fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+        let now = SystemTime::now();
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
+            _ if ino < (self.fs_links.len() + 2) as u64 => reply.attr(
+                &TTL,
+                &FileAttr {
+                    ino,
+                    size: 0,
+                    blocks: 0,
+                    atime: now,
+                    mtime: now,
+                    ctime: now,
+                    crtime: now,
+                    kind: FileType::RegularFile,
+                    perm: 0o755,
+                    nlink: 1,
+                    uid: 501,
+                    gid: 20,
+                    rdev: 0,
+                    flags: 0,
+                    blksize: 512,
+                },
+            ),
             _ => reply.error(ENOENT),
         }
     }
@@ -177,30 +227,32 @@ impl Filesystem for NexusFs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        if ino != 1 {
+        if ino != FUSE_ROOT_ID {
             reply.error(ENOENT);
             return;
         }
 
-        let mut entries = vec![
-            (FUSE_ROOT_ID, FileType::Directory, "."),
-            (FUSE_ROOT_ID, FileType::Directory, ".."),
+        // Build full directory listing (static + dynamic entries)
+        let mut entries: Vec<(u64, FileType, String)> = vec![
+            (FUSE_ROOT_ID, FileType::Directory, ".".to_string()),
+            (FUSE_ROOT_ID, FileType::Directory, "..".to_string()),
         ];
-        for entry in self
-            .files
-            .iter()
-            .enumerate()
-            .map(|(inode, s)| ((inode + 2) as u64, FileType::RegularFile, s.as_str()))
-        {
-            entries.push(entry);
+
+        // Dynamically add entries from self.files
+        for (i, name) in self.files.iter().enumerate() {
+            let inode = (i + 2) as u64;
+            entries.push((inode, FileType::RegularFile, name.clone()));
         }
 
-        for (i, entry) in entries.into_iter().enumerate().skip(offset as usize) {
-            // i + 1 means the index of the next entry
-            if reply.add(entry.0, (i + 1) as i64, entry.1, entry.2) {
+        // Serve entries starting from the given offset
+        for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
+            let next_offset = (i + 1) as i64;
+            if reply.add(inode, next_offset, file_type, name) {
+                println!("Break: {i}");
                 break;
             }
         }
+
         reply.ok();
     }
 }
