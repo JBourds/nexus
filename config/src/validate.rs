@@ -777,7 +777,27 @@ pub struct NodeProtocol {
     pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
     pub indirect: HashSet<LinkHandle>,
 }
+
 impl NodeProtocol {
+    pub fn links(&self) -> HashSet<LinkHandle> {
+        let mut links = self.outbound_links();
+        links.extend(self.inbound_links());
+        links
+    }
+
+    pub fn outbound_links(&self) -> HashSet<LinkHandle> {
+        let mut links = HashSet::new();
+        for link_set in self.direct.values() {
+            links.extend(link_set.iter().cloned());
+        }
+        links.extend(self.indirect.iter().cloned());
+        links
+    }
+
+    pub fn inbound_links(&self) -> HashSet<LinkHandle> {
+        self.accepts.clone()
+    }
+
     fn validate(
         config_root: &PathBuf,
         val: parse::NodeProtocol,
