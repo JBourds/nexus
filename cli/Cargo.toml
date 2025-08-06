@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 config = { path = "../config" }
+fuse = { path = "../fuse" }
 runner = { path = "../runner" }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
