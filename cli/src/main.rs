@@ -1,7 +1,9 @@
 use anyhow::{Context, Result};
 use clap::Parser;
+use config::ast;
 use fuse;
 use runner;
+use std::collections::HashMap;
 use std::os::unix::net::SocketAddr;
 
 #[derive(Parser, Debug)]
@@ -17,11 +19,7 @@ fn main() -> Result<()> {
     let sim = config::parse(args.config.into())?;
     let fuse = fuse::NexusFs::default();
     let root = fuse.root();
-    let files = sim
-        .links
-        .keys()
-        .map(|link_name| SocketAddr::from_pathname(root.join(link_name)))
-        .collect::<std::io::Result<Vec<_>>>()?;
+    let files = sim.links.keys().map(ToString::to_string);
     let fuse = fuse.with_files(files);
     runner::run(sim)?;
     Ok(())

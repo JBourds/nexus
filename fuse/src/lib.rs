@@ -1,6 +1,14 @@
 mod errors;
 use errors::*;
+use fuser::{
+    FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry,
+    Request,
+};
+use libc::ENOENT;
+use std::collections::HashSet;
+use std::ffi::OsStr;
 use std::os::unix::net::{SocketAddr, UnixDatagram};
+use std::time::{Duration, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
 
 use config::ast;
@@ -13,7 +21,7 @@ pub type PID = u32;
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
-    files: Vec<SocketAddr>,
+    files: HashSet<ast::LinkHandle>,
     links: HashMap<(PID, ast::LinkHandle), NexusLink>,
 }
 
@@ -27,7 +35,7 @@ impl NexusFs {
     }
 
     /// Builder method to add files to the nexus file system.
-    pub fn with_files(mut self, files: impl IntoIterator<Item = SocketAddr>) -> Self {
+    pub fn with_files(mut self, files: impl IntoIterator<Item = ast::LinkHandle>) -> Self {
         self.files.extend(files);
         self
     }
@@ -55,7 +63,7 @@ impl Default for NexusFs {
     fn default() -> Self {
         Self {
             root: PathBuf::from("/nexus"),
-            files: Vec::default(),
+            files: HashSet::default(),
             links: HashMap::default(),
         }
     }
