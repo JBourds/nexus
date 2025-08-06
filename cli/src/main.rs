@@ -21,6 +21,8 @@ fn main() -> Result<()> {
     let root = fuse.root();
     let files = sim.links.keys().map(ToString::to_string);
     let fuse = fuse.with_files(files);
+    fuse.mount()?;
+    loop {}
     runner::run(sim)?;
     Ok(())
 }

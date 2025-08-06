@@ -1,4 +1,4 @@
-use std::{fmt::Display, os};
+use std::path::PathBuf;
 
 use thiserror::Error;
 
@@ -8,4 +8,12 @@ pub enum LinkError {
     DatagramCreation,
     #[error("Duplicate link mapping.")]
     DuplicateLink,
+}
+
+#[derive(Error, Debug)]
+pub enum FsError {
+    #[error("Failed to mount at \"`{0}`\"")]
+    MountError(PathBuf),
+    #[error("Failed to create directory at \"`{0}`\"")]
+    CreateDirError(PathBuf),
 }
