@@ -10,6 +10,7 @@ pub type PID = u32;
 /// Nexus FUSE FS which intercepts the requests from processes to links
 /// (implemented as virtual files). Reads/writes to the link files are mapped
 /// to unix datagram domain sockets managed by the simulation kernel.
+#[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
     files: Vec<SocketAddr>,
@@ -44,15 +45,24 @@ impl NexusFs {
         }
         Ok(self)
     }
+
+    pub fn root(&self) -> &PathBuf {
+        &self.root
+    }
 }
 
 impl Default for NexusFs {
     fn default() -> Self {
-        Self::new(PathBuf::from("/nexus"))
+        Self {
+            root: PathBuf::from("/nexus"),
+            files: Vec::default(),
+            links: HashMap::default(),
+        }
     }
 }
 
 /// Datagram pipe which links the sending/receiving ends together.
+#[derive(Debug)]
 struct DatagramPipe {
     tx: UnixDatagram,
     rx: UnixDatagram,
@@ -69,6 +79,7 @@ impl DatagramPipe {
 ///
 /// rx: Messages sent by the simulation kernel to be received by client.
 /// tx: Messages sent by the client to be managed by simulation kernel.
+#[derive(Debug)]
 struct NexusLink {
     tx: DatagramPipe,
     rx: DatagramPipe,
