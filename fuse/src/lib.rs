@@ -1,14 +1,14 @@
 mod errors;
 use errors::*;
 use fuser::{
-    FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr, ReplyData,
-    ReplyDirectory, ReplyEntry, Request,
+    BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
+    ReplyData, ReplyDirectory, ReplyEntry, Request,
 };
 use libc::ENOENT;
 use std::collections::HashSet;
 use std::ffi::OsStr;
 use std::fs;
-use std::os::unix::net::{SocketAddr, UnixDatagram};
+use std::os::unix::net::UnixDatagram;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -24,6 +24,7 @@ fn expand_home(path: &PathBuf) -> PathBuf {
 }
 
 pub type PID = u32;
+pub type LinkId = (PID, ast::LinkHandle);
 
 /// Nexus FUSE FS which intercepts the requests from processes to links
 /// (implemented as virtual files). Reads/writes to the link files are mapped
@@ -33,7 +34,8 @@ pub struct NexusFs {
     root: PathBuf,
     attr: FileAttr,
     files: HashSet<ast::LinkHandle>,
-    links: HashMap<(PID, ast::LinkHandle), NexusLink>,
+    fs_links: HashMap<LinkId, UnixDatagram>,
+    kernel_links: HashMap<LinkId, UnixDatagram>,
 }
 
 const TTL: Duration = Duration::from_secs(1);
@@ -86,8 +88,12 @@ impl NexusFs {
         links: impl IntoIterator<Item = (PID, ast::LinkHandle)>,
     ) -> Result<Self, LinkError> {
         for key in links {
-            let link = NexusLink::new()?;
-            if self.links.insert(key, link).is_some() {
+            let (link_side, kernel_side) =
+                UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
+            if self.fs_links.insert(key.clone(), link_side).is_some() {
+                return Err(LinkError::DuplicateLink);
+            }
+            if self.kernel_links.insert(key, kernel_side).is_some() {
                 return Err(LinkError::DuplicateLink);
             }
         }
@@ -98,7 +104,7 @@ impl NexusFs {
         &self.root
     }
 
-    pub fn mount(self) -> Result<(), FsError> {
+    pub fn mount(mut self) -> Result<(BackgroundSession, HashMap<LinkId, UnixDatagram>), FsError> {
         let options = vec![
             MountOption::FSName("nexus".to_string()),
             MountOption::AutoUnmount,
@@ -107,7 +113,10 @@ impl NexusFs {
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|_| FsError::CreateDirError(root.clone()))?;
         }
-        fuser::mount2(self, &root, &options).map_err(|_| FsError::MountError(root))
+        let kernel_links = core::mem::take(&mut self.kernel_links);
+        let sess =
+            fuser::spawn_mount2(self, &root, &options).map_err(|_| FsError::MountError(root))?;
+        Ok((sess, kernel_links))
     }
 }
 
@@ -118,7 +127,8 @@ impl Default for NexusFs {
             root,
             attr: Self::ROOT_ATTR,
             files: HashSet::default(),
-            links: HashMap::default(),
+            fs_links: HashMap::default(),
+            kernel_links: HashMap::default(),
         }
     }
 }
@@ -126,8 +136,7 @@ impl Default for NexusFs {
 impl Filesystem for NexusFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent == FUSE_ROOT_ID && self.files.contains(name.to_str().unwrap()) {
-            println!("File \"{name:?}\" is in the directory!");
-            reply.error(ENOENT);
+            reply.entry(&TTL, &self.attr, 0);
         } else {
             reply.error(ENOENT);
         }
@@ -193,41 +202,5 @@ impl Filesystem for NexusFs {
             }
         }
         reply.ok();
-    }
-}
-
-/// Datagram pipe which links the sending/receiving ends together.
-#[derive(Debug)]
-struct DatagramPipe {
-    tx: UnixDatagram,
-    rx: UnixDatagram,
-}
-
-impl DatagramPipe {
-    fn new(tx: UnixDatagram, rx: UnixDatagram) -> Self {
-        Self { tx, rx }
-    }
-}
-
-/// The underlying representation of a single link with a tx/rx datagram socket
-/// managed by the simulation kernel.
-///
-/// rx: Messages sent by the simulation kernel to be received by client.
-/// tx: Messages sent by the client to be managed by simulation kernel.
-#[derive(Debug)]
-struct NexusLink {
-    tx: DatagramPipe,
-    rx: DatagramPipe,
-}
-
-impl NexusLink {
-    fn new() -> Result<Self, LinkError> {
-        let tx = UnixDatagram::pair()
-            .map_err(|_| LinkError::DatagramCreation)
-            .map(|(tx, rx)| DatagramPipe::new(tx, rx))?;
-        let rx = UnixDatagram::pair()
-            .map_err(|_| LinkError::DatagramCreation)
-            .map(|(tx, rx)| DatagramPipe::new(tx, rx))?;
-        Ok(Self { tx, rx })
     }
 }

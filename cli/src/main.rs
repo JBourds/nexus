@@ -1,10 +1,7 @@
-use anyhow::{Context, Result};
+use anyhow::Result;
 use clap::Parser;
-use config::ast;
 use fuse;
 use runner;
-use std::collections::HashMap;
-use std::os::unix::net::SocketAddr;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -17,12 +14,23 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let sim = config::parse(args.config.into())?;
-    let fuse = fuse::NexusFs::default();
-    let root = fuse.root();
     let files = sim.links.keys().map(ToString::to_string);
-    let fuse = fuse.with_files(files);
-    fuse.mount()?;
+
+    let processes = runner::run(&sim)?;
+    let mut protocol_links = vec![];
+    for (node_handle, protocol_handle, process) in &processes {
+        let node = sim.nodes.get(node_handle).unwrap();
+        let protocol = node.protocols.get(protocol_handle).unwrap();
+        let links = protocol.links();
+        let pid = process.id();
+        protocol_links.extend(links.into_iter().map(|link| (pid, link)));
+    }
+
+    let (_, kernel_links) = fuse::NexusFs::default()
+        .with_files(files)
+        .with_links(protocol_links)?
+        .mount()?;
+    println!("{kernel_links:#?}");
     loop {}
-    runner::run(sim)?;
     Ok(())
 }
