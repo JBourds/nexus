@@ -8,6 +8,8 @@ pub enum LinkError {
     DatagramCreation,
     #[error("Duplicate link mapping.")]
     DuplicateLink,
+    #[error("Invalid link mode `{0}`.")]
+    InvalidMode(i32),
 }
 
 #[derive(Error, Debug)]

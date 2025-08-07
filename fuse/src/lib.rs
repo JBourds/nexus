@@ -1,4 +1,4 @@
-mod errors;
+pub mod errors;
 use errors::*;
 use fuser::ReplyWrite;
 use fuser::{
@@ -27,6 +27,27 @@ pub type PID = u32;
 pub type Inode = u64;
 pub type LinkId = (PID, ast::LinkHandle);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum LinkMode {
+    ReadOnly,
+    WriteOnly,
+    ReadWrite,
+    PlaybackWrites,
+}
+
+impl TryFrom<i32> for LinkMode {
+    type Error = errors::LinkError;
+
+    fn try_from(value: i32) -> Result<Self, Self::Error> {
+        match value {
+            O_RDONLY => Ok(Self::ReadOnly),
+            O_WRONLY => Ok(Self::WriteOnly),
+            O_RDWR => Ok(Self::ReadWrite),
+            _ => Err(Self::Error::InvalidMode(value)),
+        }
+    }
+}
+
 /// Nexus FUSE FS which intercepts the requests from processes to links
 /// (implemented as virtual files). Reads/writes to the link files are mapped
 /// to unix datagram domain sockets managed by the simulation kernel.
@@ -43,7 +64,7 @@ pub struct NexusFs {
 
 #[derive(Debug)]
 pub struct NexusFile {
-    mode: Mode,
+    mode: LinkMode,
     attr: FileAttr,
     sock: UnixDatagram,
     unread_msg: Option<(usize, Vec<u8>)>,
@@ -53,7 +74,7 @@ pub struct NexusFile {
 pub struct NexusLink {
     pub pid: PID,
     pub link: ast::LinkHandle,
-    pub mode: Mode,
+    pub mode: LinkMode,
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
@@ -78,7 +99,7 @@ fn next_inode() -> u64 {
 }
 
 impl NexusFile {
-    fn new(sock: UnixDatagram, mode: Mode, ino: u64) -> Self {
+    fn new(sock: UnixDatagram, mode: LinkMode, ino: u64) -> Self {
         let now = SystemTime::now();
         Self {
             mode,
@@ -274,7 +295,10 @@ impl Filesystem for NexusFs {
             return;
         }
         match (file.mode, flags & O_ACCMODE) {
-            (O_RDWR, _) | (O_RDONLY, O_RDONLY) | (O_WRONLY, O_WRONLY) => {}
+            (LinkMode::ReadWrite, _)
+            | (LinkMode::PlaybackWrites, _)
+            | (LinkMode::ReadOnly, O_RDONLY)
+            | (LinkMode::WriteOnly, O_WRONLY) => {}
             _ => {
                 reply.error(EACCES);
                 return;

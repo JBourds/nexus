@@ -1,36 +1,24 @@
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::{
     collections::{HashMap, HashSet},
-    path::PathBuf,
     rc::Rc,
     sync::mpsc,
 };
 
 use anyhow::Result;
-use clap::Parser;
 use config::ast;
+mod args;
+use args::{Args, RunMode};
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-struct Args {
-    /// Configuration toml file for the simulation
-    #[arg(short, long)]
-    config: String,
-
-    /// Location where the NexusFS should be mounted during simulation
-    #[arg(short, long)]
-    nexus_root: Option<PathBuf>,
-}
-
+use clap::Parser;
 fn main() -> Result<()> {
     let args = Args::parse();
     let sim = config::parse(args.config.into())?;
     let run_handles = runner::run(&sim)?;
-    let protocol_links = get_fs_links(&sim, &run_handles);
+    let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
 
     let (tx, rx) = mpsc::channel();
     let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
-    let root = fs.root().clone();
     #[allow(unused_variables)]
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
 
@@ -108,7 +96,11 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_fs_links(sim: &ast::Simulation, handles: &[runner::RunHandle]) -> Vec<fuse::NexusLink> {
+fn get_fs_links(
+    sim: &ast::Simulation,
+    handles: &[runner::RunHandle],
+    run_mode: RunMode,
+) -> Result<Vec<fuse::NexusLink>, fuse::errors::LinkError> {
     let mut links = vec![];
     for runner::RunHandle {
         node: node_handle,
@@ -121,26 +113,32 @@ fn get_fs_links(sim: &ast::Simulation, handles: &[runner::RunHandle]) -> Vec<fus
         let pid = process.id();
         let inbound = protocol.inbound_links();
         let outbound = protocol.outbound_links();
-        links.extend(
-            inbound
-                .iter()
-                .chain(outbound.iter())
-                .collect::<HashSet<&ast::LinkHandle>>()
-                .into_iter()
-                .map(|link| {
-                    let mode = match (inbound.contains(link), outbound.contains(link)) {
+
+        for link in inbound
+            .iter()
+            .chain(outbound.iter())
+            .collect::<HashSet<&ast::LinkHandle>>()
+            .into_iter()
+        {
+            let mode = match run_mode {
+                RunMode::Simulate => {
+                    let file_mode = match (inbound.contains(link), outbound.contains(link)) {
                         (true, true) => O_RDWR,
                         (true, _) => O_RDONLY,
                         (_, true) => O_WRONLY,
                         _ => unreachable!(),
                     };
-                    fuse::NexusLink {
-                        pid,
-                        link: link.clone(),
-                        mode,
-                    }
-                }),
-        );
+                    fuse::LinkMode::try_from(file_mode)?
+                }
+                RunMode::Playback => fuse::LinkMode::PlaybackWrites,
+            };
+
+            links.push(fuse::NexusLink {
+                pid,
+                link: link.clone(),
+                mode,
+            });
+        }
     }
-    links
+    Ok(links)
 }
