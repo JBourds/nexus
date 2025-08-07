@@ -4,7 +4,7 @@ use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
     ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::{EACCES, EAGAIN, EBADMSG, EBUSY, EISDIR, ENOENT};
+use libc::{EACCES, EAGAIN, EBADMSG, EBUSY, EISDIR, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
 use std::cmp::min;
 use std::ffi::OsStr;
@@ -272,14 +272,23 @@ impl Filesystem for NexusFs {
             return;
         };
         let key = (req.pid(), file.clone());
-        if !self.fs_links.contains_key(&key) {
+        let Some(file) = self.fs_links.get(&key) else {
             let _ = self.log("EACCES!".to_string());
             reply.error(EACCES);
             return;
         };
 
-        // TODO: Permission checking based on declared link status
-        let access_mode = flags & O_ACCMODE;
+        if flags & O_APPEND == O_APPEND {
+            reply.error(EACCES);
+            return;
+        }
+        match (file.mode, flags & O_ACCMODE) {
+            (O_RDWR, _) | (O_RDONLY, O_RDONLY) | (O_WRONLY, O_WRONLY) => {}
+            _ => {
+                reply.error(EACCES);
+                return;
+            }
+        }
 
         reply.opened(index as u64, FOPEN_DIRECT_IO);
     }
