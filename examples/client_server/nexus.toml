@@ -30,6 +30,6 @@ position.coordinates = [ {} ]
 name = "server"
 root = "./"
 runner = "python3"
-runner_args = []
+runner_args = ["server.py"]
 direct = [["client", "ideal"]]
 accepts = ["ideal"]
