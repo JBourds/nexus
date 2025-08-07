@@ -211,6 +211,26 @@ impl Filesystem for NexusFs {
         }
     }
 
+    fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
+        let _ = self.log(format!("Open: Inode: {ino}, PID: {}", req.pid()));
+
+        let idx = inode_to_index(ino);
+        let Some(file) = self.files.get(idx) else {
+            reply.error(ENOENT);
+            return;
+        };
+        let key = (req.pid(), file.clone());
+        if !self.fs_links.contains_key(&key) {
+            reply.error(EACCES);
+            return;
+        };
+
+        // TODO: Permission checking based on declared link status
+        let access_mode = flags & O_ACCMODE;
+
+        reply.opened(idx as u64, FOPEN_DIRECT_IO);
+    }
+
     fn read(
         &mut self,
         _req: &Request,
