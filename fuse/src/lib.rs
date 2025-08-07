@@ -11,27 +11,10 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::os::unix::net::UnixDatagram;
+use std::sync::atomic::AtomicU64;
 use std::sync::mpsc::{SendError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
-const HELLO_TXT_CONTENT: &str = "Hello World!\n";
-const HELLO_TXT_ATTR: FileAttr = FileAttr {
-    ino: 2,
-    size: 22,
-    blocks: 1,
-    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
-    mtime: UNIX_EPOCH,
-    ctime: UNIX_EPOCH,
-    crtime: UNIX_EPOCH,
-    kind: FileType::RegularFile,
-    perm: 0o644,
-    nlink: 1,
-    uid: 501,
-    gid: 20,
-    rdev: 0,
-    flags: 0,
-    blksize: 512,
-};
 
 use config::ast;
 
@@ -46,6 +29,43 @@ fn expand_home(path: &PathBuf) -> PathBuf {
 
 pub type PID = u32;
 pub type LinkId = (PID, ast::LinkHandle);
+pub type Mode = i32;
+static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
+
+#[derive(Debug)]
+pub struct NexusFile {
+    mode: Mode,
+    attr: FileAttr,
+    sock: UnixDatagram,
+}
+
+impl NexusFile {
+    fn new(sock: UnixDatagram, mode: Mode) -> Self {
+        let now = SystemTime::now();
+        let ino = INODE_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Self {
+            mode,
+            attr: FileAttr {
+                ino,
+                size: u16::MAX as u64,
+                blocks: 1,
+                atime: now,
+                mtime: now,
+                ctime: now,
+                crtime: now,
+                kind: FileType::RegularFile,
+                perm: 0o644,
+                nlink: 2,
+                uid: 501,
+                gid: 20,
+                rdev: 0,
+                flags: 0,
+                blksize: 512,
+            },
+            sock,
+        }
+    }
+}
 
 /// Nexus FUSE FS which intercepts the requests from processes to links
 /// (implemented as virtual files). Reads/writes to the link files are mapped
@@ -56,7 +76,7 @@ pub struct NexusFs {
     logger: Option<Sender<String>>,
     attr: FileAttr,
     files: Vec<ast::LinkHandle>,
-    fs_links: HashMap<LinkId, UnixDatagram>,
+    fs_links: HashMap<LinkId, NexusFile>,
     kernel_links: HashMap<LinkId, UnixDatagram>,
 }
 
@@ -111,9 +131,9 @@ impl NexusFs {
     /// Builder method to pre-allocate the domain socket links.
     pub fn with_links(
         mut self,
-        links: impl IntoIterator<Item = (PID, ast::LinkHandle)>,
+        links: impl IntoIterator<Item = (PID, ast::LinkHandle, Mode)>,
     ) -> Result<Self, LinkError> {
-        for key in links {
+        for (pid, handle, mode) in links {
             let (link_side, kernel_side) =
                 UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
             link_side
@@ -122,10 +142,13 @@ impl NexusFs {
             kernel_side
                 .set_nonblocking(true)
                 .map_err(|_| LinkError::DatagramCreation)?;
-            if self.fs_links.insert(key.clone(), link_side).is_some() {
-                return Err(LinkError::DuplicateLink);
-            }
-            if self.kernel_links.insert(key, kernel_side).is_some() {
+            let key = (pid, handle);
+            if self
+                .fs_links
+                .insert(key.clone(), NexusFile::new(link_side, mode))
+                .is_some()
+                || self.kernel_links.insert(key, kernel_side).is_some()
+            {
                 return Err(LinkError::DuplicateLink);
             }
         }
@@ -185,34 +208,37 @@ fn inode_to_index(inode: u64) -> usize {
 }
 
 impl Filesystem for NexusFs {
-    fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+    fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        let _ = self.log("Lookup!".to_string());
         if parent != FUSE_ROOT_ID {
             reply.error(ENOENT);
             return;
         }
-
-        let name_str = name.to_str().unwrap_or("");
-        match self
-            .files
-            .iter()
-            .enumerate()
-            .find(|(_, fname)| *fname == &name_str.to_string())
-        {
-            Some(_) => {
-                reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
-            }
-            None => {
-                reply.error(ENOENT);
-            }
+        let key = (req.pid(), name.to_str().unwrap().to_string());
+        if let Some(file) = self.fs_links.get(&key) {
+            reply.entry(&TTL, &file.attr, 0);
+        } else {
+            reply.error(ENOENT);
         }
     }
 
-    fn getattr(&mut self, _req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
-        let now = SystemTime::now();
+    fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+        let _ = self.log("getattr!".to_string());
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
-            _ if ino < (self.fs_links.len() + 2) as u64 => reply.attr(&TTL, &HELLO_TXT_ATTR),
-            _ => reply.error(ENOENT),
+            _ => {
+                let index = inode_to_index(ino);
+                let Some(name) = self.files.get(index) else {
+                    reply.error(ENOENT);
+                    return;
+                };
+                let key = (req.pid(), name.clone());
+                let Some(file) = self.fs_links.get(&key) else {
+                    reply.error(EACCES);
+                    return;
+                };
+                reply.attr(&TTL, &file.attr);
+            }
         }
     }
 
@@ -260,13 +286,14 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
-        let Some(sock) = self.fs_links.get(&(req.pid(), file.clone())) else {
+        let Some(file) = self.fs_links.get(&(req.pid(), file.clone())) else {
+            let _ = self.log("EACCES!".to_string());
             reply.error(EACCES);
             return;
         };
 
         let mut recv_buf = vec![0u8; 1024];
-        let recv_size = match sock.recv(&mut recv_buf) {
+        let recv_size = match file.sock.recv(&mut recv_buf) {
             Ok(n) => {
                 let _ = self.log(format!("Received message {n} bytes long"));
                 n

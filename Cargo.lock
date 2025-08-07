@@ -124,6 +124,7 @@ dependencies = [
  "clap",
  "config",
  "fuse",
+ "libc",
  "runner",
  "serde",
  "toml",

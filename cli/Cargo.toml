@@ -11,3 +11,4 @@ clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true }
 anyhow = { workspace = true }
+libc = { workspace = true }
