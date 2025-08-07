@@ -63,7 +63,7 @@ pub struct NexusFs {
 }
 
 #[derive(Debug)]
-pub struct NexusFile {
+struct NexusFile {
     mode: LinkMode,
     attr: FileAttr,
     sock: UnixDatagram,
