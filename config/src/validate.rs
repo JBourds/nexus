@@ -478,9 +478,9 @@ pub struct Link {
     pub connection_delay: DistanceVar,
     pub propagation_delay: DistanceVar,
 }
+
 impl Link {
     const DEFAULT: &'static str = "ideal";
-    const SELF: &'static str = "self";
     const NONE: &'static str = "none";
     const DIRECT: &'static str = "direct";
     const INDIRECT: &'static str = "indirect";
