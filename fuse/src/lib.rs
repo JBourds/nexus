@@ -27,14 +27,6 @@ pub type PID = u32;
 pub type Inode = u64;
 pub type LinkId = (PID, ast::LinkHandle);
 
-#[derive(Debug)]
-pub struct NexusFile {
-    mode: Mode,
-    attr: FileAttr,
-    sock: UnixDatagram,
-    unread_msg: Option<(usize, Vec<u8>)>,
-}
-
 /// Nexus FUSE FS which intercepts the requests from processes to links
 /// (implemented as virtual files). Reads/writes to the link files are mapped
 /// to unix datagram domain sockets managed by the simulation kernel.
@@ -47,6 +39,21 @@ pub struct NexusFs {
     files: Vec<ast::LinkHandle>,
     fs_links: HashMap<LinkId, NexusFile>,
     kernel_links: HashMap<LinkId, UnixDatagram>,
+}
+
+#[derive(Debug)]
+pub struct NexusFile {
+    mode: Mode,
+    attr: FileAttr,
+    sock: UnixDatagram,
+    unread_msg: Option<(usize, Vec<u8>)>,
+}
+
+#[derive(Debug)]
+pub struct NexusLink {
+    pub pid: PID,
+    pub link: ast::LinkHandle,
+    pub mode: Mode,
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
@@ -135,9 +142,9 @@ impl NexusFs {
     /// Builder method to pre-allocate the domain socket links.
     pub fn with_links(
         mut self,
-        links: impl IntoIterator<Item = (PID, ast::LinkHandle, Mode)>,
+        links: impl IntoIterator<Item = NexusLink>,
     ) -> Result<Self, LinkError> {
-        for (pid, handle, mode) in links {
+        for NexusLink { pid, link, mode } in links {
             let (link_side, kernel_side) =
                 UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
             link_side
@@ -146,12 +153,12 @@ impl NexusFs {
             kernel_side
                 .set_nonblocking(true)
                 .map_err(|_| LinkError::DatagramCreation)?;
-            let key = (pid, handle.clone());
+            let key = (pid, link.clone());
 
-            let inode = if let Some(index) = self.files.iter().position(|file| **file == handle) {
+            let inode = if let Some(index) = self.files.iter().position(|file| **file == link) {
                 index_to_inode(index)
             } else {
-                self.files.push(handle);
+                self.files.push(link);
                 next_inode()
             };
 

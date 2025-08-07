@@ -25,31 +25,8 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let sim = config::parse(args.config.into())?;
-    let processes = runner::run(&sim)?;
-    let mut protocol_links = vec![];
-    for (node_handle, protocol_handle, process) in &processes {
-        let node = sim.nodes.get(node_handle).unwrap();
-        let protocol = node.protocols.get(protocol_handle).unwrap();
-        let pid = process.id();
-        let inbound = protocol.inbound_links();
-        let outbound = protocol.outbound_links();
-        protocol_links.extend(
-            inbound
-                .iter()
-                .chain(outbound.iter())
-                .collect::<HashSet<&ast::LinkHandle>>()
-                .into_iter()
-                .map(|link| {
-                    let mode = match (inbound.contains(link), outbound.contains(link)) {
-                        (true, true) => O_RDWR,
-                        (true, _) => O_RDONLY,
-                        (_, true) => O_WRONLY,
-                        _ => unreachable!(),
-                    };
-                    (pid, link.clone(), mode)
-                }),
-        );
-    }
+    let run_handles = runner::run(&sim)?;
+    let protocol_links = get_fs_links(&sim, &run_handles);
 
     let (tx, rx) = mpsc::channel();
     let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
@@ -58,13 +35,18 @@ fn main() -> Result<()> {
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
 
     let mut send_queue = HashMap::new();
-    let pids = processes
+    let pids = run_handles
         .iter()
-        .map(|(_, _, process)| process.id())
+        .map(|handle| handle.process.id())
         .collect::<HashSet<_>>();
 
     loop {
-        for (node_handle, protocol_handle, process) in processes.iter() {
+        for runner::RunHandle {
+            node: node_handle,
+            protocol: protocol_handle,
+            process,
+        } in run_handles.iter()
+        {
             while let Ok(msg) = rx.try_recv() {
                 println!("{msg}");
             }
@@ -124,4 +106,41 @@ fn main() -> Result<()> {
     #[allow(unreachable_code)]
     sess.join();
     Ok(())
+}
+
+fn get_fs_links(sim: &ast::Simulation, handles: &[runner::RunHandle]) -> Vec<fuse::NexusLink> {
+    let mut links = vec![];
+    for runner::RunHandle {
+        node: node_handle,
+        protocol: protocol_handle,
+        process,
+    } in handles
+    {
+        let node = sim.nodes.get(node_handle).unwrap();
+        let protocol = node.protocols.get(protocol_handle).unwrap();
+        let pid = process.id();
+        let inbound = protocol.inbound_links();
+        let outbound = protocol.outbound_links();
+        links.extend(
+            inbound
+                .iter()
+                .chain(outbound.iter())
+                .collect::<HashSet<&ast::LinkHandle>>()
+                .into_iter()
+                .map(|link| {
+                    let mode = match (inbound.contains(link), outbound.contains(link)) {
+                        (true, true) => O_RDWR,
+                        (true, _) => O_RDONLY,
+                        (_, true) => O_WRONLY,
+                        _ => unreachable!(),
+                    };
+                    fuse::NexusLink {
+                        pid,
+                        link: link.clone(),
+                        mode,
+                    }
+                }),
+        );
+    }
+    links
 }
