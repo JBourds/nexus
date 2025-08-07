@@ -1,6 +1,7 @@
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::{
     collections::{HashMap, HashSet},
+    path::PathBuf,
     rc::Rc,
     sync::mpsc,
 };
@@ -12,9 +13,13 @@ use config::ast;
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
 struct Args {
-    #[arg(short, long)]
     /// Configuration toml file for the simulation
+    #[arg(short, long)]
     config: String,
+
+    /// Location where the NexusFS should be mounted during simulation
+    #[arg(short, long)]
+    nexus_root: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
@@ -47,7 +52,7 @@ fn main() -> Result<()> {
     }
 
     let (tx, rx) = mpsc::channel();
-    let fs = fuse::NexusFs::default();
+    let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
     let root = fs.root().clone();
     #[allow(unused_variables)]
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
