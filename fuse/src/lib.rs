@@ -97,6 +97,10 @@ impl NexusFs {
         }
     }
 
+    pub fn root(&self) -> &PathBuf {
+        &self.root
+    }
+
     /// Builder method to add files to the nexus file system.
     pub fn with_files(mut self, files: impl IntoIterator<Item = ast::LinkHandle>) -> Self {
         self.files.extend(files);
