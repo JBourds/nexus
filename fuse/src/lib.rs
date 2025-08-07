@@ -7,6 +7,7 @@ use fuser::{
 };
 use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
+use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
@@ -31,6 +32,7 @@ pub struct NexusFile {
     mode: Mode,
     attr: FileAttr,
     sock: UnixDatagram,
+    unread_msg: Option<(usize, Vec<u8>)>,
 }
 
 /// Nexus FUSE FS which intercepts the requests from processes to links
@@ -91,6 +93,7 @@ impl NexusFile {
                 blksize: 512,
             },
             sock,
+            unread_msg: None,
         }
     }
 }
@@ -279,7 +282,7 @@ impl Filesystem for NexusFs {
         ino: u64,
         _fh: u64,
         _offset: i64,
-        _size: u32,
+        size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
@@ -293,10 +296,24 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
-        let Some(file) = self.fs_links.get(&(req.pid(), file.clone())) else {
+        let Some(file) = self.fs_links.get_mut(&(req.pid(), file.clone())) else {
             reply.error(EACCES);
             return;
         };
+
+        // Serve unread parts of previous message first
+        if let Some((read_ptr, buf)) = &mut file.unread_msg {
+            let remaining = buf.len() - *read_ptr;
+            let read_size = min(remaining, size as usize);
+            let end = *read_ptr + read_size;
+            reply.data(&buf.as_slice()[*read_ptr..end]);
+            if read_size == remaining {
+                file.unread_msg = None;
+            } else {
+                file.unread_msg = Some((end, std::mem::take(buf)));
+            }
+            return;
+        }
 
         let mut msg_size_buf = [0u8; core::mem::size_of::<usize>()];
         match file.sock.recv(&mut msg_size_buf) {
@@ -328,11 +345,14 @@ impl Filesystem for NexusFs {
                 return;
             }
         };
+
         // Reads should not be forced to be one shot. Anything unread
         // should be buffered in case the reader wants to read incrementally.
-        let buf = &recv_buf[..recv_size as usize];
-
-        reply.data(buf);
+        let read_size = min(recv_size, size as usize);
+        reply.data(&recv_buf[..read_size as usize]);
+        if read_size < recv_size {
+            file.unread_msg = Some((read_size, recv_buf));
+        }
     }
 
     fn write(
