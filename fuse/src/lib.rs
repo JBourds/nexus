@@ -17,7 +17,7 @@ use std::{collections::HashMap, path::PathBuf};
 const HELLO_TXT_CONTENT: &str = "Hello World!\n";
 const HELLO_TXT_ATTR: FileAttr = FileAttr {
     ino: 2,
-    size: 13,
+    size: 22,
     blocks: 1,
     atime: UNIX_EPOCH, // 1970-01-01 00:00:00
     mtime: UNIX_EPOCH,
@@ -238,22 +238,58 @@ impl Filesystem for NexusFs {
 
     fn read(
         &mut self,
-        _req: &Request,
+        req: &Request,
         ino: u64,
         _fh: u64,
         offset: i64,
-        _size: u32,
+        size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        if ino != FUSE_ROOT_ID {
-            println!("This is where here will someday be content!");
-            reply.error(ENOENT);
-        } else {
-            println!("Listing the root!");
-            reply.error(ENOENT);
+        let _ = self.log(format!(
+            "Read\n\tSize: {size}\n\tOffset: {offset}, PID: {}",
+            req.pid()
+        ));
+        if ino == FUSE_ROOT_ID {
+            reply.error(EISDIR);
+            return;
         }
+        let file_index = inode_to_index(ino);
+        let Some(file) = self.files.get(file_index) else {
+            reply.error(ENOENT);
+            return;
+        };
+        let Some(sock) = self.fs_links.get(&(req.pid(), file.clone())) else {
+            reply.error(EACCES);
+            return;
+        };
+
+        let mut recv_buf = vec![0u8; 1024];
+        let recv_size = match sock.recv(&mut recv_buf) {
+            Ok(n) => {
+                let _ = self.log(format!("Received message {n} bytes long"));
+                n
+            }
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                // Nothing in the socket
+                reply.data(&[]);
+                return;
+            }
+            Err(e) => {
+                let _ = self.log(e.to_string());
+                reply.error(EBADMSG);
+                return;
+            }
+        };
+
+        // Could underflow if file length is less than local_start
+        let read_size = min(size, recv_size as u32);
+        println!("Read size: {read_size}");
+        let buf = &recv_buf[..read_size as usize];
+
+        let _ = self.log(format!("Received data: {}", String::from_utf8_lossy(buf)));
+        reply.data(buf);
     }
 
     fn readdir(
