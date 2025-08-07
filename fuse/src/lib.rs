@@ -55,7 +55,7 @@ pub struct NexusFs {
     root: PathBuf,
     logger: Option<Sender<String>>,
     attr: FileAttr,
-    files: HashSet<ast::LinkHandle>,
+    files: Vec<ast::LinkHandle>,
     fs_links: HashMap<LinkId, UnixDatagram>,
     kernel_links: HashMap<LinkId, UnixDatagram>,
 }
@@ -172,7 +172,8 @@ impl Default for NexusFs {
         Self {
             root,
             attr: Self::ROOT_ATTR,
-            files: HashSet::default(),
+            logger: None,
+            files: Vec::default(),
             fs_links: HashMap::default(),
             kernel_links: HashMap::default(),
         }
