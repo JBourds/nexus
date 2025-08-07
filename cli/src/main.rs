@@ -1,11 +1,13 @@
-use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
-use std::{collections::HashSet, sync::mpsc};
+use libc::{O_RDONLY, O_RDWR, O_WRONLY};
+use std::{
+    collections::{HashMap, HashSet},
+    rc::Rc,
+    sync::mpsc,
+};
 
 use anyhow::Result;
 use clap::Parser;
 use config::ast;
-use fuse;
-use runner;
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -47,30 +49,75 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let fs = fuse::NexusFs::default();
     let root = fs.root().clone();
+    #[allow(unused_variables)]
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
     while !root.exists() {}
 
-    for (node_handle, protocol_handle, process) in processes.into_iter().rev() {
-        for ((pid, handle), socket) in &mut kernel_links {
-            let msg = format!("Hello {handle} [{pid}]!");
-            let msg_len = msg.len().to_ne_bytes();
-            socket.send(&msg_len)?;
-            socket.send(msg.as_bytes())?;
-        }
-        std::thread::sleep(std::time::Duration::from_secs(1));
-        while let Ok(msg) = rx.try_recv() {
-            println!("{msg}");
-        }
-        println!("{node_handle}.{protocol_handle}");
-        let output = process.wait_with_output()?;
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            println!("{node_handle}.{protocol_handle}: {line}");
-        }
-        let lines = String::from_utf8_lossy(&output.stderr);
-        for line in lines.lines() {
-            println!("{node_handle}.{protocol_handle}: {line}");
+    let mut send_queue = HashMap::new();
+    let pids = processes
+        .iter()
+        .map(|(_, _, process)| process.id())
+        .collect::<HashSet<_>>();
+
+    loop {
+        for (node_handle, protocol_handle, process) in processes.iter() {
+            while let Ok(msg) = rx.try_recv() {
+                println!("{msg}");
+            }
+
+            println!("{node_handle}.{protocol_handle}");
+            for ((pid, handle), socket) in kernel_links
+                .iter_mut()
+                .filter(|((pid, _), _)| *pid == process.id())
+            {
+                // Handle all outbound connections
+                let mut msg_len = [0u8; core::mem::size_of::<usize>()];
+                if let Ok(received) = socket.recv(&mut msg_len) {
+                    if received != core::mem::size_of::<usize>() {
+                        eprintln!(
+                            "Received {received} for message header but expected {}",
+                            core::mem::size_of::<usize>()
+                        );
+                    }
+                    let required_capacity = usize::from_ne_bytes(msg_len);
+                    let mut recv_buf = vec![0; required_capacity];
+                    if let Ok(received) = socket.recv(recv_buf.as_mut_slice()) {
+                        if received != required_capacity {
+                            eprintln!(
+                                "Error: received {received} but expected {required_capacity}"
+                            );
+                        } else {
+                            println!("Received: {}", String::from_utf8_lossy(&recv_buf));
+                        }
+                    }
+                    let msg = Rc::new(recv_buf);
+
+                    // Deliver message to all other entries
+                    for pid in pids.iter().filter(|their_pid| *their_pid != pid) {
+                        send_queue
+                            .entry((*pid, handle.clone()))
+                            .or_insert(Vec::new())
+                            .push(Rc::clone(&msg));
+                    }
+                }
+
+                // Handle inbound connections
+                for msg in send_queue
+                    .remove_entry(&(*pid, handle.clone()))
+                    .map(|(_, val)| val)
+                    .unwrap_or_default()
+                {
+                    let msg_len = msg.len().to_ne_bytes();
+                    socket.send(&msg_len)?;
+                    socket.send(&msg)?;
+                }
+            }
+
+            std::thread::sleep(std::time::Duration::from_secs(1));
         }
     }
+
+    #[allow(unreachable_code)]
     sess.join();
     Ok(())
 }

@@ -1,19 +1,19 @@
 mod errors;
 use errors::*;
+use fuser::ReplyWrite;
 use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
     ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::{EACCES, EAGAIN, EBADMSG, EBUSY, EISDIR, ENOENT, O_APPEND};
+use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
-use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SendError, Sender};
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
 use config::ast;
@@ -39,6 +39,7 @@ pub struct NexusFile {
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
+    #[allow(dead_code)]
     logger: Option<Sender<String>>,
     attr: FileAttr,
     files: Vec<ast::LinkHandle>,
@@ -95,7 +96,6 @@ impl NexusFile {
 }
 
 impl NexusFs {
-    /// Create FS at root
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
@@ -177,7 +177,6 @@ impl NexusFs {
             fs::create_dir_all(&root).map_err(|_| FsError::CreateDirError(root.clone()))?;
         }
         let kernel_links = core::mem::take(&mut self.kernel_links);
-        self.log(format!("{:#?}", self.fs_links));
         let sess =
             fuser::spawn_mount2(self, &root, &options).map_err(|_| FsError::MountError(root))?;
         Ok((sess, kernel_links))
@@ -190,6 +189,7 @@ impl NexusFs {
         }
     }
 
+    #[allow(dead_code)]
     fn log(&self, msg: String) -> Result<(), SendError<String>> {
         if let Some(logger) = &self.logger {
             logger.send(msg)
@@ -215,9 +215,7 @@ impl Default for NexusFs {
 
 impl Filesystem for NexusFs {
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
-        let _ = self.log("Lookup!".to_string());
         if parent != FUSE_ROOT_ID {
-            let _ = self.log(format!("ENOENT [{}] - Parent not FUSE root", req.pid()));
             reply.error(ENOENT);
             return;
         }
@@ -225,26 +223,16 @@ impl Filesystem for NexusFs {
         if let Some(file) = self.fs_links.get(&key) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
-            let _ = self.log(format!(
-                "ENOENT [{}] - Couldn't find in FS links",
-                req.pid()
-            ));
             reply.error(ENOENT);
         }
     }
 
     fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
-        let _ = self.log("getattr!".to_string());
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
             _ => {
                 let index = inode_to_index(ino);
                 let Some(name) = self.files.get(index) else {
-                    let _ = self.log(format!(
-                        "ENOENT [{}] - Couldn't find index {index} in files {:?}",
-                        req.pid(),
-                        self.files
-                    ));
                     reply.error(ENOENT);
                     return;
                 };
@@ -259,21 +247,13 @@ impl Filesystem for NexusFs {
     }
 
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
-        let _ = self.log(format!("Open: Inode: {ino}, PID: {}", req.pid()));
-
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
-            let _ = self.log(format!(
-                "enoent [{}] - couldn't find index {index} in files {:?}",
-                req.pid(),
-                self.files
-            ));
             reply.error(ENOENT);
             return;
         };
         let key = (req.pid(), file.clone());
         let Some(file) = self.fs_links.get(&key) else {
-            let _ = self.log("EACCES!".to_string());
             reply.error(EACCES);
             return;
         };
@@ -298,32 +278,22 @@ impl Filesystem for NexusFs {
         req: &Request,
         ino: u64,
         _fh: u64,
-        offset: i64,
-        size: u32,
+        _offset: i64,
+        _size: u32,
         _flags: i32,
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
-        let _ = self.log(format!(
-            "Read\n\tSize: {size}\n\tOffset: {offset}, PID: {}",
-            req.pid()
-        ));
         if ino == FUSE_ROOT_ID {
             reply.error(EISDIR);
             return;
         }
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
-            let _ = self.log(format!(
-                "enoent [{}] - couldn't find index {index} in files {:?}",
-                req.pid(),
-                self.files
-            ));
             reply.error(ENOENT);
             return;
         };
         let Some(file) = self.fs_links.get(&(req.pid(), file.clone())) else {
-            let _ = self.log("EACCES!".to_string());
             reply.error(EACCES);
             return;
         };
@@ -331,11 +301,7 @@ impl Filesystem for NexusFs {
         let mut msg_size_buf = [0u8; core::mem::size_of::<usize>()];
         match file.sock.recv(&mut msg_size_buf) {
             Ok(n) if n == core::mem::size_of::<usize>() => {}
-            Ok(n) => {
-                let _ = self.log(format!(
-                    "Expected to read {} bytes in message header but got {n}",
-                    core::mem::size_of::<usize>()
-                ));
+            Ok(_) => {
                 reply.error(EBADMSG);
                 return;
             }
@@ -343,8 +309,7 @@ impl Filesystem for NexusFs {
                 reply.data(&[]);
                 return;
             }
-            Err(e) => {
-                let _ = self.log(e.to_string());
+            Err(_) => {
                 reply.error(EBADMSG);
                 return;
             }
@@ -354,34 +319,77 @@ impl Filesystem for NexusFs {
         let mut recv_buf = vec![0; required_capacity];
         let recv_size = match file.sock.recv(recv_buf.as_mut_slice()) {
             Ok(n) if n != required_capacity => {
-                let _ = self.log(format!("Expected {required_capacity} bytes but got {n}"));
                 reply.error(EBADMSG);
                 return;
             }
             Ok(n) => n,
-            Err(e) => {
-                let _ = self.log(e.to_string());
+            Err(_) => {
                 reply.error(EBADMSG);
                 return;
             }
         };
+        // Reads should not be forced to be one shot. Anything unread
+        // should be buffered in case the reader wants to read incrementally.
         let buf = &recv_buf[..recv_size as usize];
 
-        let _ = self.log(format!("Received data: {}", String::from_utf8_lossy(buf)));
         reply.data(buf);
+    }
+
+    fn write(
+        &mut self,
+        req: &Request<'_>,
+        ino: u64,
+        _fh: u64,
+        _offset: i64,
+        data: &[u8],
+        _write_flags: u32,
+        _flags: i32,
+        _lock_owner: Option<u64>,
+        reply: ReplyWrite,
+    ) {
+        if ino == FUSE_ROOT_ID {
+            reply.error(EISDIR);
+            return;
+        }
+        let index = inode_to_index(ino);
+        let Some(file) = self.files.get(index) else {
+            reply.error(ENOENT);
+            return;
+        };
+        let Some(file) = self.fs_links.get(&(req.pid(), file.clone())) else {
+            reply.error(EACCES);
+            return;
+        };
+
+        let msg_len = data.len().to_ne_bytes();
+        if !(file
+            .sock
+            .send(&msg_len)
+            .is_ok_and(|bytes_written| bytes_written == msg_len.len())
+            && file
+                .sock
+                .send(data)
+                .is_ok_and(|bytes_written| bytes_written == data.len()))
+        {
+            reply.error(EBADMSG);
+            return;
+        };
+        let Ok(bytes_written) = data.len().try_into() else {
+            reply.error(EMSGSIZE);
+            return;
+        };
+        reply.written(bytes_written);
     }
 
     fn readdir(
         &mut self,
-        req: &Request,
+        _req: &Request,
         ino: u64,
         _fh: u64,
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
-        let _ = self.log("readdir".to_string());
         if ino != FUSE_ROOT_ID {
-            let _ = self.log(format!("ENOENT [{}] - Find dir {ino} not root", req.pid(),));
             reply.error(ENOENT);
             return;
         }
@@ -402,7 +410,6 @@ impl Filesystem for NexusFs {
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
-                let _ = self.log(format!("Break: {i}"));
                 break;
             }
         }
