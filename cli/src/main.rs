@@ -18,8 +18,6 @@ struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     let sim = config::parse(args.config.into())?;
-    let files = sim.links.keys().map(ToString::to_string);
-
     let processes = runner::run(&sim)?;
     let mut protocol_links = vec![];
     for (node_handle, protocol_handle, process) in &processes {
@@ -37,8 +35,8 @@ fn main() -> Result<()> {
                 .map(|link| {
                     let mode = match (inbound.contains(link), outbound.contains(link)) {
                         (true, true) => O_RDWR,
-                        (true, false) => O_RDONLY,
-                        (false, true) => O_WRONLY,
+                        (true, _) => O_RDONLY,
+                        (_, true) => O_WRONLY,
                         _ => unreachable!(),
                     };
                     (pid, link.clone(), mode)
@@ -49,11 +47,7 @@ fn main() -> Result<()> {
     let (tx, rx) = mpsc::channel();
     let fs = fuse::NexusFs::default();
     let root = fs.root().clone();
-    let (sess, mut kernel_links) = fs
-        .with_files(files)
-        .with_links(protocol_links)?
-        .with_logger(tx)
-        .mount()?;
+    let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
     while !root.exists() {}
     println!("{kernel_links:#?}");
 

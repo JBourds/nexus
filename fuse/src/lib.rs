@@ -11,12 +11,40 @@ use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::os::unix::net::UnixDatagram;
-use std::sync::atomic::AtomicU64;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SendError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
 
 use config::ast;
+
+static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
+const TTL: Duration = Duration::from_secs(1);
+
+pub type Mode = i32;
+pub type PID = u32;
+pub type Inode = u64;
+pub type LinkId = (PID, ast::LinkHandle);
+
+#[derive(Debug)]
+pub struct NexusFile {
+    mode: Mode,
+    attr: FileAttr,
+    sock: UnixDatagram,
+}
+
+/// Nexus FUSE FS which intercepts the requests from processes to links
+/// (implemented as virtual files). Reads/writes to the link files are mapped
+/// to unix datagram domain sockets managed by the simulation kernel.
+#[derive(Debug)]
+pub struct NexusFs {
+    root: PathBuf,
+    logger: Option<Sender<String>>,
+    attr: FileAttr,
+    files: Vec<ast::LinkHandle>,
+    fs_links: HashMap<LinkId, NexusFile>,
+    kernel_links: HashMap<LinkId, UnixDatagram>,
+}
 
 fn expand_home(path: &PathBuf) -> PathBuf {
     if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/") {
@@ -27,22 +55,21 @@ fn expand_home(path: &PathBuf) -> PathBuf {
     PathBuf::from(path)
 }
 
-pub type PID = u32;
-pub type LinkId = (PID, ast::LinkHandle);
-pub type Mode = i32;
-static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
+fn inode_to_index(inode: u64) -> usize {
+    (inode - (FUSE_ROOT_ID + 1)) as usize
+}
 
-#[derive(Debug)]
-pub struct NexusFile {
-    mode: Mode,
-    attr: FileAttr,
-    sock: UnixDatagram,
+fn index_to_inode(index: usize) -> u64 {
+    index as u64 + (FUSE_ROOT_ID + 1)
+}
+
+fn next_inode() -> u64 {
+    INODE_GEN.fetch_add(1, Ordering::Relaxed)
 }
 
 impl NexusFile {
-    fn new(sock: UnixDatagram, mode: Mode) -> Self {
+    fn new(sock: UnixDatagram, mode: Mode, ino: u64) -> Self {
         let now = SystemTime::now();
-        let ino = INODE_GEN.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
         Self {
             mode,
             attr: FileAttr {
@@ -66,21 +93,6 @@ impl NexusFile {
         }
     }
 }
-
-/// Nexus FUSE FS which intercepts the requests from processes to links
-/// (implemented as virtual files). Reads/writes to the link files are mapped
-/// to unix datagram domain sockets managed by the simulation kernel.
-#[derive(Debug)]
-pub struct NexusFs {
-    root: PathBuf,
-    logger: Option<Sender<String>>,
-    attr: FileAttr,
-    files: Vec<ast::LinkHandle>,
-    fs_links: HashMap<LinkId, NexusFile>,
-    kernel_links: HashMap<LinkId, UnixDatagram>,
-}
-
-const TTL: Duration = Duration::from_secs(1);
 
 impl NexusFs {
     /// Create FS at root
@@ -117,12 +129,6 @@ impl NexusFs {
         &self.root
     }
 
-    /// Builder method to add files to the nexus file system.
-    pub fn with_files(mut self, files: impl IntoIterator<Item = ast::LinkHandle>) -> Self {
-        self.files.extend(files);
-        self
-    }
-
     /// Builder method to pre-allocate the domain socket links.
     pub fn with_links(
         mut self,
@@ -137,10 +143,18 @@ impl NexusFs {
             kernel_side
                 .set_nonblocking(true)
                 .map_err(|_| LinkError::DatagramCreation)?;
-            let key = (pid, handle);
+            let key = (pid, handle.clone());
+
+            let inode = if let Some(index) = self.files.iter().position(|file| **file == handle) {
+                index_to_inode(index)
+            } else {
+                self.files.push(handle);
+                next_inode()
+            };
+
             if self
                 .fs_links
-                .insert(key.clone(), NexusFile::new(link_side, mode))
+                .insert(key.clone(), NexusFile::new(link_side, mode, inode))
                 .is_some()
                 || self.kernel_links.insert(key, kernel_side).is_some()
             {
@@ -163,6 +177,7 @@ impl NexusFs {
             fs::create_dir_all(&root).map_err(|_| FsError::CreateDirError(root.clone()))?;
         }
         let kernel_links = core::mem::take(&mut self.kernel_links);
+        self.log(format!("{:#?}", self.fs_links));
         let sess =
             fuser::spawn_mount2(self, &root, &options).map_err(|_| FsError::MountError(root))?;
         Ok((sess, kernel_links))
@@ -198,14 +213,11 @@ impl Default for NexusFs {
     }
 }
 
-fn inode_to_index(inode: u64) -> usize {
-    (inode - (FUSE_ROOT_ID + 1)) as usize
-}
-
 impl Filesystem for NexusFs {
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         let _ = self.log("Lookup!".to_string());
         if parent != FUSE_ROOT_ID {
+            let _ = self.log(format!("ENOENT [{}] - Parent not FUSE root", req.pid()));
             reply.error(ENOENT);
             return;
         }
@@ -213,6 +225,10 @@ impl Filesystem for NexusFs {
         if let Some(file) = self.fs_links.get(&key) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
+            let _ = self.log(format!(
+                "ENOENT [{}] - Couldn't find in FS links",
+                req.pid()
+            ));
             reply.error(ENOENT);
         }
     }
@@ -224,6 +240,11 @@ impl Filesystem for NexusFs {
             _ => {
                 let index = inode_to_index(ino);
                 let Some(name) = self.files.get(index) else {
+                    let _ = self.log(format!(
+                        "ENOENT [{}] - Couldn't find index {index} in files {:?}",
+                        req.pid(),
+                        self.files
+                    ));
                     reply.error(ENOENT);
                     return;
                 };
@@ -240,13 +261,19 @@ impl Filesystem for NexusFs {
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         let _ = self.log(format!("Open: Inode: {ino}, PID: {}", req.pid()));
 
-        let idx = inode_to_index(ino);
-        let Some(file) = self.files.get(idx) else {
+        let index = inode_to_index(ino);
+        let Some(file) = self.files.get(index) else {
+            let _ = self.log(format!(
+                "enoent [{}] - couldn't find index {index} in files {:?}",
+                req.pid(),
+                self.files
+            ));
             reply.error(ENOENT);
             return;
         };
         let key = (req.pid(), file.clone());
         if !self.fs_links.contains_key(&key) {
+            let _ = self.log("EACCES!".to_string());
             reply.error(EACCES);
             return;
         };
@@ -254,7 +281,7 @@ impl Filesystem for NexusFs {
         // TODO: Permission checking based on declared link status
         let access_mode = flags & O_ACCMODE;
 
-        reply.opened(idx as u64, FOPEN_DIRECT_IO);
+        reply.opened(index as u64, FOPEN_DIRECT_IO);
     }
 
     fn read(
@@ -276,8 +303,13 @@ impl Filesystem for NexusFs {
             reply.error(EISDIR);
             return;
         }
-        let file_index = inode_to_index(ino);
-        let Some(file) = self.files.get(file_index) else {
+        let index = inode_to_index(ino);
+        let Some(file) = self.files.get(index) else {
+            let _ = self.log(format!(
+                "enoent [{}] - couldn't find index {index} in files {:?}",
+                req.pid(),
+                self.files
+            ));
             reply.error(ENOENT);
             return;
         };
@@ -294,7 +326,7 @@ impl Filesystem for NexusFs {
                 n
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // Nothing in the socket
+                // All done reading
                 reply.data(&[]);
                 return;
             }
@@ -307,7 +339,6 @@ impl Filesystem for NexusFs {
 
         // Could underflow if file length is less than local_start
         let read_size = min(size, recv_size as u32);
-        println!("Read size: {read_size}");
         let buf = &recv_buf[..read_size as usize];
 
         let _ = self.log(format!("Received data: {}", String::from_utf8_lossy(buf)));
@@ -316,13 +347,15 @@ impl Filesystem for NexusFs {
 
     fn readdir(
         &mut self,
-        _req: &Request,
+        req: &Request,
         ino: u64,
         _fh: u64,
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        let _ = self.log("readdir".to_string());
         if ino != FUSE_ROOT_ID {
+            let _ = self.log(format!("ENOENT [{}] - Find dir {ino} not root", req.pid(),));
             reply.error(ENOENT);
             return;
         }
@@ -335,7 +368,7 @@ impl Filesystem for NexusFs {
 
         // Dynamically add entries from self.files
         for (i, name) in self.files.iter().enumerate() {
-            let inode = (i + 2) as u64;
+            let inode = index_to_inode(i);
             entries.push((inode, FileType::RegularFile, name.clone()));
         }
 
@@ -343,7 +376,7 @@ impl Filesystem for NexusFs {
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
-                println!("Break: {i}");
+                let _ = self.log(format!("Break: {i}"));
                 break;
             }
         }
