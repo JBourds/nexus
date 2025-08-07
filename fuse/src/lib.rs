@@ -14,6 +14,24 @@ use std::os::unix::net::UnixDatagram;
 use std::sync::mpsc::{SendError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
+const HELLO_TXT_CONTENT: &str = "Hello World!\n";
+const HELLO_TXT_ATTR: FileAttr = FileAttr {
+    ino: 2,
+    size: 13,
+    blocks: 1,
+    atime: UNIX_EPOCH, // 1970-01-01 00:00:00
+    mtime: UNIX_EPOCH,
+    ctime: UNIX_EPOCH,
+    crtime: UNIX_EPOCH,
+    kind: FileType::RegularFile,
+    perm: 0o644,
+    nlink: 1,
+    uid: 501,
+    gid: 20,
+    rdev: 0,
+    flags: 0,
+    blksize: 512,
+};
 
 use config::ast;
 
@@ -143,34 +161,18 @@ impl Filesystem for NexusFs {
         }
 
         let name_str = name.to_str().unwrap_or("");
-        if let Some((i, _)) = self
+        match self
             .files
             .iter()
             .enumerate()
             .find(|(_, fname)| *fname == &name_str.to_string())
         {
-            let ino = (i + 2) as u64;
-            let now = SystemTime::now();
-            let attr = FileAttr {
-                ino,
-                size: 0,
-                blocks: 0,
-                atime: now,
-                mtime: now,
-                ctime: now,
-                crtime: now,
-                kind: FileType::Socket,
-                perm: 0o666,
-                nlink: 1,
-                uid: 501,
-                gid: 20,
-                rdev: 0,
-                flags: 0,
-                blksize: 512,
-            };
-            reply.entry(&TTL, &attr, 0);
-        } else {
-            reply.error(ENOENT);
+            Some(_) => {
+                reply.entry(&TTL, &HELLO_TXT_ATTR, 0);
+            }
+            None => {
+                reply.error(ENOENT);
+            }
         }
     }
 
@@ -178,26 +180,7 @@ impl Filesystem for NexusFs {
         let now = SystemTime::now();
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
-            _ if ino < (self.fs_links.len() + 2) as u64 => reply.attr(
-                &TTL,
-                &FileAttr {
-                    ino,
-                    size: 0,
-                    blocks: 0,
-                    atime: now,
-                    mtime: now,
-                    ctime: now,
-                    crtime: now,
-                    kind: FileType::RegularFile,
-                    perm: 0o755,
-                    nlink: 1,
-                    uid: 501,
-                    gid: 20,
-                    rdev: 0,
-                    flags: 0,
-                    blksize: 512,
-                },
-            ),
+            _ if ino < (self.fs_links.len() + 2) as u64 => reply.attr(&TTL, &HELLO_TXT_ATTR),
             _ => reply.error(ENOENT),
         }
     }
