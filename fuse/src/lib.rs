@@ -53,6 +53,7 @@ pub type LinkId = (PID, ast::LinkHandle);
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
+    logger: Option<Sender<String>>,
     attr: FileAttr,
     files: HashSet<ast::LinkHandle>,
     fs_links: HashMap<LinkId, UnixDatagram>,
@@ -147,6 +148,21 @@ impl NexusFs {
         let sess =
             fuser::spawn_mount2(self, &root, &options).map_err(|_| FsError::MountError(root))?;
         Ok((sess, kernel_links))
+    }
+
+    pub fn with_logger(self, logger: Sender<String>) -> Self {
+        Self {
+            logger: Some(logger),
+            ..self
+        }
+    }
+
+    fn log(&self, msg: String) -> Result<(), SendError<String>> {
+        if let Some(logger) = &self.logger {
+            logger.send(msg)
+        } else {
+            Ok(())
+        }
     }
 }
 
