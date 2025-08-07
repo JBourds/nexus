@@ -111,6 +111,12 @@ impl NexusFs {
         for key in links {
             let (link_side, kernel_side) =
                 UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
+            link_side
+                .set_nonblocking(true)
+                .map_err(|_| LinkError::DatagramCreation)?;
+            kernel_side
+                .set_nonblocking(true)
+                .map_err(|_| LinkError::DatagramCreation)?;
             if self.fs_links.insert(key.clone(), link_side).is_some() {
                 return Err(LinkError::DuplicateLink);
             }
