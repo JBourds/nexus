@@ -15,7 +15,6 @@ position.coordinates = [ {} ]
 [[nodes.client.protocols]]
 
 name = "client"
-root = "./"
 runner = "python3"
 runner_args = ["client.py"]
 direct = [["server", "ideal"]]
@@ -28,7 +27,6 @@ position.coordinates = [ {} ]
 [[nodes.server.protocols]]
 
 name = "server"
-root = "./"
 runner = "python3"
 runner_args = ["server.py"]
 direct = [["client", "ideal"]]
