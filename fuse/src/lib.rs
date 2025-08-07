@@ -180,8 +180,9 @@ impl NexusFs {
             fs::create_dir_all(&root).map_err(|_| FsError::CreateDirError(root.clone()))?;
         }
         let kernel_links = core::mem::take(&mut self.kernel_links);
-        let sess =
-            fuser::spawn_mount2(self, &root, &options).map_err(|_| FsError::MountError(root))?;
+        let sess = fuser::spawn_mount2(self, &root, &options)
+            .map_err(|_| FsError::MountError(root.clone()))?;
+        while !root.exists() {}
         Ok((sess, kernel_links))
     }
 

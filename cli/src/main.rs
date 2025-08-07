@@ -56,7 +56,6 @@ fn main() -> Result<()> {
     let root = fs.root().clone();
     #[allow(unused_variables)]
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
-    while !root.exists() {}
 
     let mut send_queue = HashMap::new();
     let pids = processes
