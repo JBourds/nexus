@@ -56,8 +56,8 @@ impl NexusFile {
                 kind: FileType::RegularFile,
                 perm: 0o644,
                 nlink: 2,
-                uid: 501,
-                gid: 20,
+                uid: unsafe { libc::getuid() },
+                gid: unsafe { libc::getgid() },
                 rdev: 0,
                 flags: 0,
                 blksize: 512,
@@ -83,38 +83,33 @@ pub struct NexusFs {
 const TTL: Duration = Duration::from_secs(1);
 
 impl NexusFs {
-    /// Default FS root attribute
-    const ROOT_ATTR: FileAttr = FileAttr {
-        ino: FUSE_ROOT_ID,
-        size: 0,
-        blocks: 0,
-        atime: UNIX_EPOCH,
-        mtime: UNIX_EPOCH,
-        ctime: UNIX_EPOCH,
-        crtime: UNIX_EPOCH,
-        kind: FileType::Directory,
-        perm: 0o755,
-        nlink: 2,
-        uid: 501,
-        gid: 20,
-        rdev: 0,
-        flags: 0,
-        blksize: 512,
-    };
-
     /// Create FS at root
     pub fn new(root: PathBuf) -> Self {
-        let now = SystemTime::now();
         Self {
             root,
-            attr: FileAttr {
-                atime: now,
-                mtime: now,
-                ctime: now,
-                crtime: now,
-                ..Self::ROOT_ATTR
-            },
+            attr: Self::root_attr(),
             ..Default::default()
+        }
+    }
+
+    fn root_attr() -> FileAttr {
+        let now = SystemTime::now();
+        FileAttr {
+            ino: FUSE_ROOT_ID,
+            size: 0,
+            blocks: 0,
+            atime: now,
+            mtime: now,
+            ctime: now,
+            crtime: now,
+            kind: FileType::Directory,
+            perm: 0o755,
+            nlink: 2,
+            uid: unsafe { libc::getuid() },
+            gid: unsafe { libc::getgid() },
+            rdev: 0,
+            flags: 0,
+            blksize: 512,
         }
     }
 
@@ -194,7 +189,7 @@ impl Default for NexusFs {
         let root = expand_home(&PathBuf::from("~/nexus"));
         Self {
             root,
-            attr: Self::ROOT_ATTR,
+            attr: Self::root_attr(),
             logger: None,
             files: Vec::default(),
             fs_links: HashMap::default(),
