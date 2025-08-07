@@ -49,12 +49,12 @@ fn main() -> Result<()> {
     let root = fs.root().clone();
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
     while !root.exists() {}
-    println!("{kernel_links:#?}");
 
     for (node_handle, protocol_handle, process) in processes.into_iter().rev() {
         for ((pid, handle), socket) in &mut kernel_links {
             let msg = format!("Hello {handle} [{pid}]!");
-            println!("Sending msg {msg} to pid {pid}");
+            let msg_len = msg.len().to_ne_bytes();
+            socket.send(&msg_len)?;
             socket.send(msg.as_bytes())?;
         }
         std::thread::sleep(std::time::Duration::from_secs(1));

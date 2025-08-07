@@ -328,14 +328,18 @@ impl Filesystem for NexusFs {
             return;
         };
 
-        let mut recv_buf = vec![0u8; 1024];
-        let recv_size = match file.sock.recv(&mut recv_buf) {
+        let mut msg_size_buf = [0u8; core::mem::size_of::<usize>()];
+        match file.sock.recv(&mut msg_size_buf) {
+            Ok(n) if n == core::mem::size_of::<usize>() => {}
             Ok(n) => {
-                let _ = self.log(format!("Received message {n} bytes long"));
-                n
+                let _ = self.log(format!(
+                    "Expected to read {} bytes in message header but got {n}",
+                    core::mem::size_of::<usize>()
+                ));
+                reply.error(EBADMSG);
+                return;
             }
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
-                // All done reading
                 reply.data(&[]);
                 return;
             }
@@ -344,11 +348,24 @@ impl Filesystem for NexusFs {
                 reply.error(EBADMSG);
                 return;
             }
-        };
+        }
 
-        // Could underflow if file length is less than local_start
-        let read_size = min(size, recv_size as u32);
-        let buf = &recv_buf[..read_size as usize];
+        let required_capacity = usize::from_ne_bytes(msg_size_buf);
+        let mut recv_buf = vec![0; required_capacity];
+        let recv_size = match file.sock.recv(recv_buf.as_mut_slice()) {
+            Ok(n) if n != required_capacity => {
+                let _ = self.log(format!("Expected {required_capacity} bytes but got {n}"));
+                reply.error(EBADMSG);
+                return;
+            }
+            Ok(n) => n,
+            Err(e) => {
+                let _ = self.log(e.to_string());
+                reply.error(EBADMSG);
+                return;
+            }
+        };
+        let buf = &recv_buf[..recv_size as usize];
 
         let _ = self.log(format!("Received data: {}", String::from_utf8_lossy(buf)));
         reply.data(buf);
