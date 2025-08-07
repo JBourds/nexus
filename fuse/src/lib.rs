@@ -2,13 +2,16 @@ mod errors;
 use errors::*;
 use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
-    ReplyData, ReplyDirectory, ReplyEntry, Request,
+    ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::ENOENT;
-use std::collections::HashSet;
+use libc::{EACCES, EAGAIN, EBADMSG, EBUSY, EISDIR, ENOENT};
+use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
+use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
+use std::io;
 use std::os::unix::net::UnixDatagram;
+use std::sync::mpsc::{SendError, Sender};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{collections::HashMap, path::PathBuf};
 
