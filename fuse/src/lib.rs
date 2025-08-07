@@ -179,6 +179,10 @@ impl Default for NexusFs {
     }
 }
 
+fn inode_to_index(inode: u64) -> usize {
+    (inode - (FUSE_ROOT_ID + 1)) as usize
+}
+
 impl Filesystem for NexusFs {
     fn lookup(&mut self, _req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent != FUSE_ROOT_ID {
