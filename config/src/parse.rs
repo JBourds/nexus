@@ -122,6 +122,7 @@ pub struct DirectConnection {
 }
 
 #[derive(Debug, Default, Deserialize)]
+#[allow(dead_code)]
 pub struct IndirectConnection(pub String);
 
 #[derive(Debug, Default, Deserialize)]
