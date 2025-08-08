@@ -13,7 +13,6 @@ use crate::helpers::unzip;
 use config::ast::{self, Cmd};
 
 pub type LinkHandle = usize;
-pub type ProtocolHandle = usize;
 pub type NodeHandle = usize;
 
 #[derive(Clone, Debug)]
@@ -75,7 +74,7 @@ impl NodeProtocol {
                 .map(|name| {
                     link_handles
                         .get(&name)
-                        .map(|handle| *handle)
+                        .copied()
                         .ok_or(ConversionError::LinkHandleConversion(name))
                 })
                 .collect::<Result<_, ConversionError>>()
@@ -89,7 +88,7 @@ impl NodeProtocol {
                 let links = map_link_handles(handles)?;
                 let key = node_handles
                     .get(&key)
-                    .map(|handle| *handle)
+                    .copied()
                     .ok_or(ConversionError::NodeHandleConversion(key))?;
                 Ok((key, links))
             })
