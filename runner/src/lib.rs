@@ -1,5 +1,9 @@
 use config::ast;
-use std::process::{Child, Command, Stdio};
+use std::{
+    fmt::Display,
+    process::{Child, Command, Stdio},
+    str::FromStr,
+};
 pub mod errors;
 use errors::*;
 
@@ -7,6 +11,33 @@ pub struct RunHandle {
     pub node: ast::NodeHandle,
     pub protocol: ast::ProtocolHandle,
     pub process: Child,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum RunMode {
+    Simulate,
+    Playback,
+}
+
+impl FromStr for RunMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "simulate" => Ok(RunMode::Simulate),
+            "playback" => Ok(RunMode::Playback),
+            _ => Err(format!("Invalid mode: {}", s)),
+        }
+    }
+}
+
+impl Display for RunMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunMode::Simulate => write!(f, "simulate"),
+            RunMode::Playback => write!(f, "playback"),
+        }
+    }
 }
 
 pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {

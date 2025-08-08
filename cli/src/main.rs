@@ -7,10 +7,27 @@ use std::{
 
 use anyhow::Result;
 use config::ast;
-mod args;
-use args::{Args, RunMode};
 
 use clap::Parser;
+
+use runner::RunMode;
+use std::path::PathBuf;
+
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+pub struct Args {
+    /// Configuration toml file for the simulation
+    #[arg(short, long)]
+    pub config: String,
+
+    /// Location where the NexusFS should be mounted during simulation
+    #[arg(short, long)]
+    pub nexus_root: Option<PathBuf>,
+
+    #[arg(short, long, default_value_t = RunMode::Simulate)]
+    pub mode: RunMode,
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let sim = config::parse(args.config.into())?;
