@@ -1,13 +1,10 @@
 use kernel::Kernel;
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
-use std::{
-    collections::{HashMap, HashSet},
-    rc::Rc,
-    sync::mpsc,
-};
+use std::{collections::HashSet, sync::mpsc};
 
 use anyhow::Result;
 use config::ast;
+use fuse::fs::*;
 
 use clap::Parser;
 
@@ -36,7 +33,7 @@ fn main() -> Result<()> {
     let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
 
     let (tx, _) = mpsc::channel();
-    let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
+    let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     let (sess, kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
     Kernel::new(sim, kernel_links)?.run(args.mode)?;
     sess.join();
@@ -47,7 +44,7 @@ fn get_fs_links(
     sim: &ast::Simulation,
     handles: &[runner::RunHandle],
     run_mode: RunMode,
-) -> Result<Vec<fuse::NexusLink>, fuse::errors::LinkError> {
+) -> Result<Vec<NexusLink>, fuse::errors::LinkError> {
     let mut links = vec![];
     for runner::RunHandle {
         node: node_handle,
@@ -75,12 +72,12 @@ fn get_fs_links(
                         (_, true) => O_WRONLY,
                         _ => unreachable!(),
                     };
-                    fuse::LinkMode::try_from(file_mode)?
+                    LinkMode::try_from(file_mode)?
                 }
-                RunMode::Playback => fuse::LinkMode::PlaybackWrites,
+                RunMode::Playback => LinkMode::PlaybackWrites,
             };
 
-            links.push(fuse::NexusLink {
+            links.push(NexusLink {
                 pid,
                 link: link.clone(),
                 mode,

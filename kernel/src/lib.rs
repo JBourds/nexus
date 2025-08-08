@@ -1,7 +1,8 @@
 pub mod errors;
 mod helpers;
 mod types;
-use fuse::PID;
+use fuse::errors::SocketError;
+use fuse::socket;
 use helpers::{make_handles, unzip};
 
 use std::{
@@ -15,7 +16,7 @@ use config::ast::{self, Params};
 use runner::RunMode;
 use types::*;
 
-use crate::errors::{ConversionError, KernelError, SocketError};
+use crate::errors::{ConversionError, KernelError};
 
 pub type LinkId = (fuse::PID, LinkHandle);
 
@@ -69,63 +70,13 @@ impl Kernel {
         })
     }
 
-    pub fn _recv(
-        socket: &mut UnixDatagram,
-        data: &mut [u8],
-        pid: fuse::PID,
-        link_name: impl AsRef<str>,
-    ) -> Result<usize, SocketError> {
-        socket
-            .recv(data)
-            .map_err(|ioerr| SocketError::SocketReadError {
-                ioerr,
-                pid,
-                link_name: link_name.as_ref().to_string(),
-            })
-            .map(|n_read| {
-                if n_read != data.len() {
-                    Err(SocketError::ReadSizeMismatch {
-                        expected: data.len(),
-                        actual: n_read,
-                    })
-                } else {
-                    Ok(n_read)
-                }
-            })?
-    }
-
-    pub fn _send(
-        socket: &mut UnixDatagram,
-        data: &[u8],
-        pid: fuse::PID,
-        link_name: impl AsRef<str>,
-    ) -> Result<usize, SocketError> {
-        socket
-            .send(data)
-            .map_err(|ioerr| SocketError::SocketWriteError {
-                ioerr,
-                pid,
-                link_name: link_name.as_ref().to_string(),
-            })
-            .map(|n_written| {
-                if n_written != data.len() {
-                    Err(SocketError::WriteSizeMismatch {
-                        expected: data.len(),
-                        actual: n_written,
-                    })
-                } else {
-                    Ok(n_written)
-                }
-            })?
-    }
-
     pub fn recv(
         socket: &mut UnixDatagram,
         data: &mut [u8],
         pid: fuse::PID,
         link_name: impl AsRef<str>,
     ) -> Result<usize, KernelError> {
-        Self::_recv(socket, data, pid, link_name).map_err(KernelError::FileError)
+        socket::recv(socket, data, pid, link_name).map_err(KernelError::FileError)
     }
 
     pub fn send(
@@ -134,7 +85,7 @@ impl Kernel {
         pid: fuse::PID,
         link_name: impl AsRef<str>,
     ) -> Result<usize, KernelError> {
-        Self::_send(socket, data, pid, link_name).map_err(KernelError::FileError)
+        socket::send(socket, data, pid, link_name).map_err(KernelError::FileError)
     }
 
     pub fn send_msg(
