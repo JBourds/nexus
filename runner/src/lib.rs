@@ -14,28 +14,28 @@ pub struct RunHandle {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RunMode {
+pub enum RunCmd {
     Simulate,
     Playback,
 }
 
-impl FromStr for RunMode {
+impl FromStr for RunCmd {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "simulate" => Ok(RunMode::Simulate),
-            "playback" => Ok(RunMode::Playback),
+            "simulate" => Ok(RunCmd::Simulate),
+            "playback" => Ok(RunCmd::Playback),
             _ => Err(format!("Invalid mode: {}", s)),
         }
     }
 }
 
-impl Display for RunMode {
+impl Display for RunCmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunMode::Simulate => write!(f, "simulate"),
-            RunMode::Playback => write!(f, "playback"),
+            RunCmd::Simulate => write!(f, "simulate"),
+            RunCmd::Playback => write!(f, "playback"),
         }
     }
 }

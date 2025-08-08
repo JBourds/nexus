@@ -7,13 +7,13 @@ use std::time::SystemTime;
 use std::{collections::HashSet, sync::mpsc};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
-use anyhow::Result;
+use anyhow::{Result, ensure};
 use config::ast;
 use fuse::fs::*;
 
 use clap::Parser;
 
-use runner::RunMode;
+use runner::RunCmd;
 use std::path::PathBuf;
 
 #[derive(Parser, Debug)]
@@ -27,27 +27,39 @@ pub struct Args {
     #[arg(short, long)]
     pub nexus_root: Option<PathBuf>,
 
-    #[arg(short, long, default_value_t = RunMode::Simulate)]
-    pub mode: RunMode,
+    /// Command to run
+    #[arg(long, default_value_t = RunCmd::Simulate)]
+    pub cmd: RunCmd,
+
+    /// Directory where logs to be parsed are. Required in the commands which
+    /// use it but has no effect in others.
+    #[arg(short, long)]
+    pub logs: Option<PathBuf>,
 }
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    ensure!(
+        args.cmd != RunCmd::Playback || args.logs.is_some(),
+        format!(
+            "Must provide a directory for `logs` argument when running command `{}`",
+            args.cmd
+        )
+    );
     let sim = config::parse(args.config.into())?;
-    setup_logging(&sim.params.root, args.mode)?;
-
+    setup_logging(&sim.params.root, args.cmd)?;
     let run_handles = runner::run(&sim)?;
-    let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
+    let protocol_links = get_fs_links(&sim, &run_handles, args.cmd)?;
 
     let (tx, _) = mpsc::channel();
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     let (sess, kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
-    Kernel::new(sim, kernel_links)?.run(args.mode)?;
+    Kernel::new(sim, kernel_links)?.run(args.cmd, args.logs)?;
     sess.join();
     Ok(())
 }
 
-fn setup_logging(sim_root: &Path, mode: RunMode) -> Result<()> {
+fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
     let datetime: DateTime<Utc> = SystemTime::now().into();
     let datetime = datetime.format("%Y-%m-%d_%H:%M:%S").to_string();
     let root = sim_root.join(&datetime);
@@ -56,7 +68,7 @@ fn setup_logging(sim_root: &Path, mode: RunMode) -> Result<()> {
     }
     let tx = root.join("tx");
     let rx = root.join("rx");
-    let (tx_logfile, rx_logfile) = if mode == RunMode::Simulate {
+    let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
         (Some(make_logfile(tx)?), Some(make_logfile(rx)?))
     } else {
         (None, Some(make_logfile(rx)?))
@@ -88,7 +100,7 @@ fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
 fn get_fs_links(
     sim: &ast::Simulation,
     handles: &[runner::RunHandle],
-    run_mode: RunMode,
+    run_cmd: RunCmd,
 ) -> Result<Vec<NexusLink>, fuse::errors::LinkError> {
     let mut links = vec![];
     for runner::RunHandle {
@@ -109,17 +121,17 @@ fn get_fs_links(
             .collect::<HashSet<&ast::LinkHandle>>()
             .into_iter()
         {
-            let mode = match run_mode {
-                RunMode::Simulate => {
-                    let file_mode = match (inbound.contains(link), outbound.contains(link)) {
+            let mode = match run_cmd {
+                RunCmd::Simulate => {
+                    let file_cmd = match (inbound.contains(link), outbound.contains(link)) {
                         (true, true) => O_RDWR,
                         (true, _) => O_RDONLY,
                         (_, true) => O_WRONLY,
                         _ => unreachable!(),
                     };
-                    LinkMode::try_from(file_mode)?
+                    LinkMode::try_from(file_cmd)?
                 }
-                RunMode::Playback => LinkMode::PlaybackWrites,
+                RunCmd::Playback => LinkMode::PlaybackWrites,
             };
 
             links.push(NexusLink {

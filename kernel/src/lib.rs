@@ -1,4 +1,5 @@
 pub mod errors;
+use std::path::PathBuf;
 use tracing::Level;
 mod helpers;
 pub mod log;
@@ -15,7 +16,7 @@ use std::{
 };
 
 use config::ast::{self, Params};
-use runner::RunMode;
+use runner::RunCmd;
 use tracing::{debug, event, instrument};
 use types::*;
 
@@ -140,7 +141,7 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
-    pub fn run(mut self, _mode: RunMode) -> Result<(), KernelError> {
+    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
         let mut send_queue = HashMap::new();
         let pids = self
             .files
