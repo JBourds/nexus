@@ -413,6 +413,12 @@ impl Filesystem for NexusFs {
             return;
         };
 
+        // Drop writes from file, only source of writes will be from the kernel
+        if file.mode == LinkMode::PlaybackWrites {
+            reply.written(data.len() as u32);
+            return;
+        }
+
         let msg_len = data.len().to_ne_bytes();
         if !(file
             .sock
