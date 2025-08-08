@@ -35,86 +35,10 @@ fn main() -> Result<()> {
     let run_handles = runner::run(&sim)?;
     let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
 
-    let (tx, rx) = mpsc::channel();
+    let (tx, _) = mpsc::channel();
     let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
-    #[allow(unused_variables)]
-    let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
-
-    // TODO: Remove
-    let kernel = Kernel::new(sim, kernel_links)?;
-    println!("{kernel:#?}");
-    loop {}
-
-    let mut send_queue = HashMap::new();
-    let pids = run_handles
-        .iter()
-        .map(|handle| handle.process.id())
-        .collect::<HashSet<_>>();
-
-    loop {
-        for runner::RunHandle {
-            node: node_handle,
-            protocol: protocol_handle,
-            process,
-        } in run_handles.iter()
-        {
-            while let Ok(msg) = rx.try_recv() {
-                println!("{msg}");
-            }
-
-            println!("{node_handle}.{protocol_handle}");
-            for ((pid, handle), socket) in kernel_links
-                .iter_mut()
-                .filter(|((pid, _), _)| *pid == process.id())
-            {
-                // Handle all outbound connections
-                let mut msg_len = [0u8; core::mem::size_of::<usize>()];
-                if let Ok(received) = socket.recv(&mut msg_len) {
-                    if received != core::mem::size_of::<usize>() {
-                        eprintln!(
-                            "Received {received} for message header but expected {}",
-                            core::mem::size_of::<usize>()
-                        );
-                    }
-                    let required_capacity = usize::from_ne_bytes(msg_len);
-                    let mut recv_buf = vec![0; required_capacity];
-                    if let Ok(received) = socket.recv(recv_buf.as_mut_slice()) {
-                        if received != required_capacity {
-                            eprintln!(
-                                "Error: received {received} but expected {required_capacity}"
-                            );
-                        } else {
-                            println!("Received: {}", String::from_utf8_lossy(&recv_buf));
-                        }
-                    }
-                    let msg = Rc::new(recv_buf);
-
-                    // Deliver message to all other entries
-                    for pid in pids.iter().filter(|their_pid| *their_pid != pid) {
-                        send_queue
-                            .entry((*pid, handle.clone()))
-                            .or_insert(Vec::new())
-                            .push(Rc::clone(&msg));
-                    }
-                }
-
-                // Handle inbound connections
-                for msg in send_queue
-                    .remove_entry(&(*pid, handle.clone()))
-                    .map(|(_, val)| val)
-                    .unwrap_or_default()
-                {
-                    let msg_len = msg.len().to_ne_bytes();
-                    socket.send(&msg_len)?;
-                    socket.send(&msg)?;
-                }
-            }
-
-            std::thread::sleep(std::time::Duration::from_secs(1));
-        }
-    }
-
-    #[allow(unreachable_code)]
+    let (sess, kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
+    Kernel::new(sim, kernel_links)?.run(args.mode)?;
     sess.join();
     Ok(())
 }

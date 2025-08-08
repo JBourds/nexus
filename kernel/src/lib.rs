@@ -1,15 +1,20 @@
 pub mod errors;
 mod helpers;
 mod types;
+use fuse::PID;
 use helpers::{make_handles, unzip};
 
-use std::{collections::HashMap, os::unix::net::UnixDatagram};
+use std::{
+    collections::{HashMap, HashSet},
+    os::unix::net::UnixDatagram,
+    rc::Rc,
+};
 
 use config::ast::{self, Params};
 use runner::RunMode;
 use types::*;
 
-use crate::errors::{ConversionError, KernelError};
+use crate::errors::{ConversionError, KernelError, SocketError};
 
 pub type LinkId = (fuse::PID, LinkHandle);
 
@@ -19,6 +24,8 @@ pub struct Kernel {
     links: Vec<Link>,
     nodes: Vec<Node>,
     files: HashMap<LinkId, UnixDatagram>,
+    link_names: Vec<String>,
+    node_names: Vec<String>,
 }
 
 impl Kernel {
@@ -27,9 +34,9 @@ impl Kernel {
         files: HashMap<fuse::LinkId, UnixDatagram>,
     ) -> Result<Self, KernelError> {
         let (node_names, nodes) = unzip(sim.nodes);
-        let node_handles = make_handles(node_names);
+        let node_handles = make_handles(node_names.clone());
         let (link_names, links) = unzip(sim.links);
-        let link_handles = make_handles(link_names);
+        let link_handles = make_handles(link_names.clone());
         let links = links
             .into_iter()
             .map(|link| Link::from_ast(link, &link_handles))
@@ -56,10 +63,146 @@ impl Kernel {
             links,
             nodes,
             files,
+            link_names,
+            node_names,
         })
     }
 
-    pub fn run(mode: RunMode) -> ! {
-        todo!()
+    pub fn _recv(
+        socket: &mut UnixDatagram,
+        data: &mut [u8],
+        pid: fuse::PID,
+        link_name: impl AsRef<str>,
+    ) -> Result<usize, SocketError> {
+        socket
+            .recv(data)
+            .map_err(|_| SocketError::SocketReadError {
+                pid,
+                link_name: link_name.as_ref().to_string(),
+            })
+            .map(|n_read| {
+                if n_read != data.len() {
+                    Err(SocketError::ReadSizeMismatch {
+                        expected: data.len(),
+                        actual: n_read,
+                    })
+                } else {
+                    Ok(n_read)
+                }
+            })?
+    }
+
+    pub fn _send(
+        socket: &mut UnixDatagram,
+        data: &[u8],
+        pid: fuse::PID,
+        link_name: impl AsRef<str>,
+    ) -> Result<usize, SocketError> {
+        socket
+            .send(data)
+            .map_err(|_| SocketError::SocketWriteError {
+                pid,
+                link_name: link_name.as_ref().to_string(),
+            })
+            .map(|n_written| {
+                if n_written != data.len() {
+                    Err(SocketError::WriteSizeMismatch {
+                        expected: data.len(),
+                        actual: n_written,
+                    })
+                } else {
+                    Ok(n_written)
+                }
+            })?
+    }
+
+    pub fn recv(
+        socket: &mut UnixDatagram,
+        data: &mut [u8],
+        pid: fuse::PID,
+        link_name: impl AsRef<str>,
+    ) -> Result<usize, KernelError> {
+        Self::_recv(socket, data, pid, link_name).map_err(KernelError::FileError)
+    }
+
+    pub fn send(
+        socket: &mut UnixDatagram,
+        data: &[u8],
+        pid: fuse::PID,
+        link_name: impl AsRef<str>,
+    ) -> Result<usize, KernelError> {
+        Self::_send(socket, data, pid, link_name).map_err(KernelError::FileError)
+    }
+
+    pub fn send_msg(
+        socket: &mut UnixDatagram,
+        data: &[u8],
+        pid: fuse::PID,
+        link_name: &impl AsRef<str>,
+    ) -> Result<usize, KernelError> {
+        let msg_len = data.len().to_ne_bytes();
+        Self::send(socket, &msg_len, pid, link_name)?;
+        Self::send(socket, data, pid, link_name)
+    }
+
+    pub fn recv_msg(
+        socket: &mut UnixDatagram,
+        pid: fuse::PID,
+        link_name: &impl AsRef<str>,
+    ) -> Result<Vec<u8>, KernelError> {
+        let mut msg_len = [0u8; core::mem::size_of::<usize>()];
+        Self::recv(socket, &mut msg_len, pid, link_name)?;
+        let required_capacity = usize::from_ne_bytes(msg_len);
+        let mut recv_buf = vec![0; required_capacity];
+        Self::recv(socket, recv_buf.as_mut_slice(), pid, link_name)?;
+        Ok(recv_buf)
+    }
+
+    pub fn run(mut self, _mode: RunMode) -> Result<(), KernelError> {
+        let mut send_queue = HashMap::new();
+        let pids = self
+            .files
+            .keys()
+            .map(|(pid, _)| *pid)
+            .collect::<HashSet<fuse::PID>>();
+
+        loop {
+            for ((pid, handle), socket) in self.files.iter_mut() {
+                let (pid, handle) = (*pid, *handle);
+                let link_name = &self.link_names[handle];
+                println!("{pid}.{link_name}");
+
+                let res = Self::recv_msg(socket, pid, link_name);
+
+                if let Ok(recv_buf) = res {
+                    // Deliver message to all other entries
+                    let msg = Rc::new(recv_buf);
+                    println!("{pid}.{link_name} [TX]: {}", String::from_utf8_lossy(&msg));
+                    for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
+                        send_queue
+                            .entry((*pid, handle))
+                            .or_insert(Vec::new())
+                            .push(Rc::clone(&msg));
+                    }
+                } else {
+                    eprintln!("{res:#?}");
+                }
+
+                // Handle inbound connections
+                for msg in send_queue
+                    .remove_entry(&(pid, handle))
+                    .map(|(_, val)| val)
+                    .unwrap_or_default()
+                {
+                    println!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
+                    Self::send_msg(socket, &msg, pid, link_name)?;
+                }
+
+                std::thread::sleep(std::time::Duration::from_secs(1));
+            }
+        }
+
+        #[allow(unreachable_code)]
+        Ok(())
     }
 }
