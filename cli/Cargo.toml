@@ -13,3 +13,5 @@ serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true }
 anyhow = { workspace = true }
 libc = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }

@@ -14,11 +14,13 @@ use std::{
 
 use config::ast::{self, Params};
 use runner::RunMode;
+use tracing::{debug, instrument};
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
 
 pub type LinkId = (fuse::PID, LinkHandle);
+extern crate tracing;
 
 #[derive(Debug)]
 #[allow(unused)]
@@ -32,6 +34,7 @@ pub struct Kernel {
 }
 
 impl Kernel {
+    #[instrument]
     pub fn new(
         sim: ast::Simulation,
         files: HashMap<fuse::LinkId, UnixDatagram>,
@@ -71,48 +74,54 @@ impl Kernel {
         })
     }
 
-    pub fn recv(
+    pub fn recv<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         data: &mut [u8],
         pid: fuse::PID,
-        link_name: impl AsRef<str>,
+        link_name: &A,
     ) -> Result<usize, KernelError> {
         socket::recv(socket, data, pid, link_name).map_err(KernelError::FileError)
     }
 
-    pub fn send(
+    pub fn send<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         data: &[u8],
         pid: fuse::PID,
-        link_name: impl AsRef<str>,
+        link_name: A,
     ) -> Result<usize, KernelError> {
         socket::send(socket, data, pid, link_name).map_err(KernelError::FileError)
     }
 
-    pub fn send_msg(
+    #[instrument(skip(socket, data), err)]
+    pub fn send_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         data: &[u8],
         pid: fuse::PID,
-        link_name: &impl AsRef<str>,
+        link_name: &A,
     ) -> Result<usize, KernelError> {
-        let msg_len = data.len().to_ne_bytes();
+        let len = data.len();
+        debug!("Sending {len} byte message");
+        let msg_len = len.to_ne_bytes();
         Self::send(socket, &msg_len, pid, link_name)?;
         Self::send(socket, data, pid, link_name)
     }
 
-    pub fn recv_msg(
+    #[instrument(skip(socket), err)]
+    pub fn recv_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         pid: fuse::PID,
-        link_name: &impl AsRef<str>,
+        link_name: &A,
     ) -> Result<Vec<u8>, KernelError> {
         let mut msg_len = [0u8; core::mem::size_of::<usize>()];
         Self::recv(socket, &mut msg_len, pid, link_name)?;
         let required_capacity = usize::from_ne_bytes(msg_len);
+        debug!("Receiving {required_capacity} byte message");
         let mut recv_buf = vec![0; required_capacity];
         Self::recv(socket, recv_buf.as_mut_slice(), pid, link_name)?;
         Ok(recv_buf)
     }
 
+    #[instrument(skip_all)]
     pub fn run(mut self, _mode: RunMode) -> Result<(), KernelError> {
         let mut send_queue = HashMap::new();
         let pids = self
@@ -125,14 +134,12 @@ impl Kernel {
             for ((pid, handle), socket) in self.files.iter_mut() {
                 let (pid, handle) = (*pid, *handle);
                 let link_name = &self.link_names[handle];
-                println!("{pid}.{link_name}");
-
                 match Self::recv_msg(socket, pid, link_name) {
                     Ok(recv_buf) => {
                         // Deliver message to all other entries
                         let msg = Rc::new(recv_buf);
-                        println!("{pid}.{link_name} [TX]: {}", String::from_utf8_lossy(&msg));
                         for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
+                            debug!("{pid}.{link_name} [TX]: Sending message to {pid}");
                             send_queue
                                 .entry((*pid, handle))
                                 .or_insert(Vec::new())
@@ -153,7 +160,7 @@ impl Kernel {
                     .map(|(_, val)| val)
                     .unwrap_or_default()
                 {
-                    println!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
+                    debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
                     Self::send_msg(socket, &msg, pid, link_name)?;
                 }
 

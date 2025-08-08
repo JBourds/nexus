@@ -1,6 +1,7 @@
 use kernel::Kernel;
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::{collections::HashSet, sync::mpsc};
+use tracing_subscriber::{EnvFilter, fmt, prelude::*};
 
 use anyhow::Result;
 use config::ast;
@@ -28,6 +29,11 @@ pub struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
+    tracing_subscriber::registry()
+        .with(fmt::layer())
+        .with(EnvFilter::from_default_env())
+        .init();
+
     let sim = config::parse(args.config.into())?;
     let run_handles = runner::run(&sim)?;
     let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
