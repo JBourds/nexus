@@ -6,6 +6,7 @@ use helpers::{make_handles, unzip};
 
 use std::{
     collections::{HashMap, HashSet},
+    io,
     os::unix::net::UnixDatagram,
     rc::Rc,
 };
@@ -76,7 +77,8 @@ impl Kernel {
     ) -> Result<usize, SocketError> {
         socket
             .recv(data)
-            .map_err(|_| SocketError::SocketReadError {
+            .map_err(|ioerr| SocketError::SocketReadError {
+                ioerr,
                 pid,
                 link_name: link_name.as_ref().to_string(),
             })
@@ -100,7 +102,8 @@ impl Kernel {
     ) -> Result<usize, SocketError> {
         socket
             .send(data)
-            .map_err(|_| SocketError::SocketWriteError {
+            .map_err(|ioerr| SocketError::SocketWriteError {
+                ioerr,
                 pid,
                 link_name: link_name.as_ref().to_string(),
             })
@@ -172,20 +175,24 @@ impl Kernel {
                 let link_name = &self.link_names[handle];
                 println!("{pid}.{link_name}");
 
-                let res = Self::recv_msg(socket, pid, link_name);
-
-                if let Ok(recv_buf) = res {
-                    // Deliver message to all other entries
-                    let msg = Rc::new(recv_buf);
-                    println!("{pid}.{link_name} [TX]: {}", String::from_utf8_lossy(&msg));
-                    for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
-                        send_queue
-                            .entry((*pid, handle))
-                            .or_insert(Vec::new())
-                            .push(Rc::clone(&msg));
+                match Self::recv_msg(socket, pid, link_name) {
+                    Ok(recv_buf) => {
+                        // Deliver message to all other entries
+                        let msg = Rc::new(recv_buf);
+                        println!("{pid}.{link_name} [TX]: {}", String::from_utf8_lossy(&msg));
+                        for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
+                            send_queue
+                                .entry((*pid, handle))
+                                .or_insert(Vec::new())
+                                .push(Rc::clone(&msg));
+                        }
                     }
-                } else {
-                    eprintln!("{res:#?}");
+                    Err(KernelError::FileError(SocketError::NothingToRead)) => {}
+                    Err(KernelError::FileError(SocketError::SocketReadError { ioerr, .. }))
+                        if ioerr.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => {
+                        return Err(e);
+                    }
                 }
 
                 // Handle inbound connections

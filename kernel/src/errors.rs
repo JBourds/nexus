@@ -1,3 +1,5 @@
+use std::io;
+
 use config::ast;
 
 use thiserror::Error;
@@ -20,12 +22,22 @@ pub enum ConversionError {
 
 #[derive(Error, Debug)]
 pub enum SocketError {
-    #[error("Failed to write socket \"`{link_name}`\" for pid `{pid}`")]
-    SocketWriteError { pid: fuse::PID, link_name: String },
+    #[error("Failed to write socket \"`{link_name}`\" for pid `{pid}`.\nError: `{ioerr}`")]
+    SocketWriteError {
+        ioerr: io::Error,
+        pid: fuse::PID,
+        link_name: String,
+    },
+    #[error("Failed to read socket \"`{link_name}`\" for pid `{pid}`.\nError: `{ioerr}`")]
+    SocketReadError {
+        ioerr: io::Error,
+        pid: fuse::PID,
+        link_name: String,
+    },
     #[error("Expected to write `{expected}` bytes but wrote `{actual}`")]
     WriteSizeMismatch { expected: usize, actual: usize },
     #[error("Expected to read `{expected}` bytes but read `{actual}`")]
     ReadSizeMismatch { expected: usize, actual: usize },
-    #[error("Failed to read socket \"`{link_name}`\" for pid `{pid}`")]
-    SocketReadError { pid: fuse::PID, link_name: String },
+    #[error("Nothing to read")]
+    NothingToRead,
 }
