@@ -1,7 +1,11 @@
-use kernel::Kernel;
+use chrono::{DateTime, Utc};
+use kernel::{self, Kernel};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
+use std::fs::File;
+use std::path::Path;
+use std::time::SystemTime;
 use std::{collections::HashSet, sync::mpsc};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::Result;
 use config::ast;
@@ -29,12 +33,9 @@ pub struct Args {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    tracing_subscriber::registry()
-        .with(fmt::layer())
-        .with(EnvFilter::from_default_env())
-        .init();
-
     let sim = config::parse(args.config.into())?;
+    setup_logging(&sim.params.root, args.mode)?;
+
     let run_handles = runner::run(&sim)?;
     let protocol_links = get_fs_links(&sim, &run_handles, args.mode)?;
 
@@ -44,6 +45,44 @@ fn main() -> Result<()> {
     Kernel::new(sim, kernel_links)?.run(args.mode)?;
     sess.join();
     Ok(())
+}
+
+fn setup_logging(sim_root: &Path, mode: RunMode) -> Result<()> {
+    let datetime: DateTime<Utc> = SystemTime::now().into();
+    let datetime = datetime.format("%Y-%m-%d_%H:%M:%S").to_string();
+    let root = sim_root.join(&datetime);
+    if !root.exists() {
+        std::fs::create_dir_all(&root)?;
+    }
+    let tx = root.join("tx");
+    let rx = root.join("rx");
+    let (tx_logfile, rx_logfile) = if mode == RunMode::Simulate {
+        (Some(make_logfile(tx)?), Some(make_logfile(rx)?))
+    } else {
+        (None, Some(make_logfile(rx)?))
+    };
+    tracing_subscriber::registry()
+        .with(
+            fmt::layer()
+                .with_filter(filter::filter_fn(|metadata| {
+                    !matches!(metadata.target(), "tx" | "rx")
+                }))
+                .with_filter(EnvFilter::from_default_env()),
+        )
+        .with(
+            kernel::log::BinaryLogLayer::new(tx_logfile)
+                .with_filter(filter::filter_fn(|metadata| metadata.target() == "tx")),
+        )
+        .with(
+            kernel::log::BinaryLogLayer::new(rx_logfile)
+                .with_filter(filter::filter_fn(|metadata| metadata.target() == "rx")),
+        )
+        .init();
+    Ok(())
+}
+
+fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
+    File::options().create(true).append(true).open(&path)
 }
 
 fn get_fs_links(

@@ -1,5 +1,7 @@
 pub mod errors;
+use tracing::Level;
 mod helpers;
+pub mod log;
 mod types;
 use fuse::errors::SocketError;
 use fuse::socket;
@@ -14,7 +16,7 @@ use std::{
 
 use config::ast::{self, Params};
 use runner::RunMode;
-use tracing::{debug, instrument};
+use tracing::{debug, event, instrument};
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
@@ -97,19 +99,30 @@ impl Kernel {
         socket: &mut UnixDatagram,
         data: &[u8],
         pid: fuse::PID,
+        link: LinkHandle,
         link_name: &A,
     ) -> Result<usize, KernelError> {
         let len = data.len();
         debug!("Sending {len} byte message");
         let msg_len = len.to_ne_bytes();
         Self::send(socket, &msg_len, pid, link_name)?;
-        Self::send(socket, data, pid, link_name)
+
+        let step = 42;
+        let tx = true;
+        match Self::send(socket, data, pid, link_name) {
+            Ok(n_sent) => {
+                event!(target: "tx", Level::INFO, step, link, pid, tx, data);
+                Ok(n_sent)
+            }
+            err => err,
+        }
     }
 
     #[instrument(skip(socket), err)]
     pub fn recv_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         pid: fuse::PID,
+        link: LinkHandle,
         link_name: &A,
     ) -> Result<Vec<u8>, KernelError> {
         let mut msg_len = [0u8; core::mem::size_of::<usize>()];
@@ -117,7 +130,12 @@ impl Kernel {
         let required_capacity = usize::from_ne_bytes(msg_len);
         debug!("Receiving {required_capacity} byte message");
         let mut recv_buf = vec![0; required_capacity];
-        Self::recv(socket, recv_buf.as_mut_slice(), pid, link_name)?;
+        let data = recv_buf.as_mut_slice();
+        Self::recv(socket, data, pid, link_name)?;
+
+        let step = 42;
+        let tx = false;
+        event!(target: "rx", Level::INFO, step, link, pid, tx, data);
         Ok(recv_buf)
     }
 
@@ -134,7 +152,7 @@ impl Kernel {
             for ((pid, handle), socket) in self.files.iter_mut() {
                 let (pid, handle) = (*pid, *handle);
                 let link_name = &self.link_names[handle];
-                match Self::recv_msg(socket, pid, link_name) {
+                match Self::recv_msg(socket, pid, handle, link_name) {
                     Ok(recv_buf) => {
                         // Deliver message to all other entries
                         let msg = Rc::new(recv_buf);
@@ -161,7 +179,7 @@ impl Kernel {
                     .unwrap_or_default()
                 {
                     debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                    Self::send_msg(socket, &msg, pid, link_name)?;
+                    Self::send_msg(socket, &msg, pid, handle, link_name)?;
                 }
 
                 std::thread::sleep(std::time::Duration::from_secs(1));
