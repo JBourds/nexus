@@ -1,3 +1,4 @@
+use kernel::Kernel;
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::{
     collections::{HashMap, HashSet},
@@ -38,6 +39,11 @@ fn main() -> Result<()> {
     let fs = args.nexus_root.map(fuse::NexusFs::new).unwrap_or_default();
     #[allow(unused_variables)]
     let (sess, mut kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
+
+    // TODO: Remove
+    let kernel = Kernel::new(sim, kernel_links)?;
+    println!("{kernel:#?}");
+    loop {}
 
     let mut send_queue = HashMap::new();
     let pids = run_handles

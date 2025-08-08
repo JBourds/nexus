@@ -7,6 +7,7 @@ edition = "2024"
 config = { path = "../config" }
 fuse = { path = "../fuse" }
 runner = { path = "../runner" }
+kernel = { path = "../kernel" }
 clap = { workspace = true, features = ["derive"] }
 serde = { workspace = true, features = ["derive"] }
 toml = { workspace = true }

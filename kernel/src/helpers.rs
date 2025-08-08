@@ -1,0 +1,30 @@
+//! Miscellaneous helper functions.
+use std::collections::HashMap;
+use std::hash::Hash;
+
+pub fn make_handles<T>(iter: impl IntoIterator<Item = T>) -> HashMap<T, usize>
+where
+    T: Hash + Eq,
+{
+    let mut next_index = 0;
+    let mut handles = HashMap::new();
+    for item in iter {
+        if handles.contains_key(&item) {
+            continue;
+        }
+        handles.insert(item, next_index);
+        next_index += 1;
+    }
+    handles
+}
+
+pub fn unzip<T1, T2>(iter: impl IntoIterator<Item = (T1, T2)>) -> (Vec<T1>, Vec<T2>) {
+    iter.into_iter().fold(
+        (Vec::new(), Vec::new()),
+        |(mut vec1, mut vec2), (val1, val2)| {
+            vec1.push(val1);
+            vec2.push(val2);
+            (vec1, vec2)
+        },
+    )
+}
