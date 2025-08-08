@@ -341,7 +341,6 @@ impl Simulation {
         let node_handles = val
             .nodes
             .keys()
-            .into_iter()
             .map(|s| s.to_string())
             .collect::<HashSet<String>>();
         let nodes = val

@@ -13,7 +13,7 @@ pub struct RunHandle {
     pub process: Child,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RunMode {
     Simulate,
     Playback,
