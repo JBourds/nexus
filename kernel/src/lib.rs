@@ -21,6 +21,7 @@ use crate::errors::{ConversionError, KernelError};
 pub type LinkId = (fuse::PID, LinkHandle);
 
 #[derive(Debug)]
+#[allow(unused)]
 pub struct Kernel {
     params: Params,
     links: Vec<Link>,

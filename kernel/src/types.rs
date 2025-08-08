@@ -1,7 +1,6 @@
 //! This module translates the `config` crate's AST types into ones better
 //! suited for high performance simulation and augments them with kernel
 //! specific functionality.
-use std::hash::Hash;
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
@@ -16,12 +15,14 @@ pub type LinkHandle = usize;
 pub type NodeHandle = usize;
 
 #[derive(Clone, Debug)]
+#[allow(unused)]
 pub struct Node {
     pub position: ast::Position,
     pub protocols: Vec<NodeProtocol>,
 }
 
 #[derive(Clone, Debug)]
+#[allow(unused)]
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
@@ -31,6 +32,7 @@ pub struct NodeProtocol {
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
+#[allow(unused)]
 pub struct Link {
     pub next: Option<LinkHandle>,
     pub intermediaries: u32,
