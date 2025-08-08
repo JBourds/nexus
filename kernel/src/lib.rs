@@ -6,11 +6,12 @@ use helpers::{make_handles, unzip};
 use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, Params};
-use fuse::LinkId;
 use runner::RunMode;
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
+
+pub type LinkId = (fuse::PID, LinkHandle);
 
 #[derive(Debug)]
 pub struct Kernel {
@@ -23,7 +24,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(
         sim: ast::Simulation,
-        files: HashMap<LinkId, UnixDatagram>,
+        files: HashMap<fuse::LinkId, UnixDatagram>,
     ) -> Result<Self, KernelError> {
         let (node_names, nodes) = unzip(sim.nodes);
         let node_handles = make_handles(node_names);
@@ -39,6 +40,17 @@ impl Kernel {
             .map(|node| Node::from_ast(node, &link_handles, &node_handles))
             .collect::<Result<_, ConversionError>>()
             .map_err(KernelError::KernelInit)?;
+        let files = files
+            .into_iter()
+            .map(|((pid, link_name), file)| {
+                link_handles
+                    .get(&link_name)
+                    .ok_or(KernelError::KernelInit(
+                        ConversionError::LinkHandleConversion(link_name),
+                    ))
+                    .map(|handle| ((pid, *handle), file))
+            })
+            .collect::<Result<_, KernelError>>()?;
         Ok(Self {
             params: sim.params,
             links,
