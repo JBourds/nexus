@@ -159,7 +159,7 @@ impl Kernel {
         Ok(recv_buf)
     }
 
-    fn timestep(&self) -> Duration {
+    fn time_delta(&self) -> Duration {
         let length = self.params.timestep.length;
         match self.params.timestep.unit {
             ast::TimeUnit::Seconds => Duration::from_secs(length),
@@ -178,10 +178,9 @@ impl Kernel {
             .keys()
             .map(|(pid, _)| *pid)
             .collect::<HashSet<fuse::PID>>();
-        let mut timestep = 1;
-        let delta = self.timestep();
+        let delta = self.time_delta();
 
-        loop {
+        for timestep in 0..self.params.timestep.count.into() {
             let start = SystemTime::now();
             for ((pid, handle), socket) in self.files.iter_mut() {
                 let (pid, handle) = (*pid, *handle);
@@ -221,10 +220,8 @@ impl Kernel {
                     std::thread::sleep(delta - elapsed);
                 }
             }
-            timestep += 1;
         }
 
-        #[allow(unreachable_code)]
         Ok(())
     }
 }
