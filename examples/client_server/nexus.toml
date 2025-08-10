@@ -2,7 +2,8 @@
 # single protocol used to communicate with each other via a direct connection.
 
 [params]
-timestep.length = 0.01          
+timestep.length = 1          
+timestep.unit = "s"
 timestep.count = 1000000        
 seed = 42                       
 root = "~/testnet/simulations"  

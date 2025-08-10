@@ -99,8 +99,6 @@ impl Default for DataUnit {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeUnit {
-    Hours,
-    Minutes,
     Seconds,
     Milliseconds,
     Microseconds,
@@ -112,8 +110,6 @@ impl TimeUnit {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
             "seconds" | "s" => Self::Seconds,
-            "minutes" | "m" => Self::Minutes,
-            "hours" | "h" => Self::Hours,
             "milliseconds" | "ms" => Self::Milliseconds,
             "microseconds" | "us" => Self::Microseconds,
             "nanoseconds" | "ns" => Self::Nanoseconds,
@@ -127,7 +123,7 @@ impl TimeUnit {
 
 impl Default for TimeUnit {
     fn default() -> Self {
-        Self::Seconds
+        Self::Milliseconds
     }
 }
 
@@ -363,7 +359,7 @@ impl Simulation {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimestepConfig {
-    pub length: f64,
+    pub length: u64,
     pub unit: TimeUnit,
     pub count: NonZeroU64,
 }
@@ -379,7 +375,7 @@ impl Default for TimestepConfig {
 }
 
 impl TimestepConfig {
-    const DEFAULT_TIMESTEP_LEN: f64 = 0.1;
+    const DEFAULT_TIMESTEP_LEN: u64 = 1;
     const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
 
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
@@ -393,11 +389,7 @@ impl TimestepConfig {
             .map(NonZeroU64::new)
             .unwrap_or_default()
             .context("Unable to validate time unit in timestep config")?;
-        let length = val
-            .length
-            .map(verify_nonnegative)
-            .unwrap_or(Ok(Self::DEFAULT_TIMESTEP_LEN))
-            .context("Unable to validate length in timestep config")?;
+        let length = val.length.unwrap_or(Self::DEFAULT_TIMESTEP_LEN);
         Ok(Self {
             length,
             count,
@@ -639,6 +631,7 @@ pub struct Coordinate {
 #[derive(Clone, Debug)]
 pub struct Node {
     pub position: Position,
+    pub internal_names: Option<Vec<ProtocolHandle>>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
 }
 
@@ -724,8 +717,8 @@ impl Signal {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConnectionRange {
-    pub maximum: Option<u64>,
-    pub offset: Option<u64>,
+    pub maximum: Option<f64>,
+    pub offset: Option<f64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]

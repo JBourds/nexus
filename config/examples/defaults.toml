@@ -30,8 +30,8 @@
 
 [params]
 
-# Proportion of the timestep unit for each step
-timestep.length = 0.01
+# Quantity of timestep units for each step (defaults to 10)
+timestep.length = 1             
 
 # NOTE: Simulation timestep unit should be set carefully
 # based on other simulation parameters.

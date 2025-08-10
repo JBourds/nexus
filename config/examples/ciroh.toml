@@ -1,6 +1,7 @@
 [params]
 
-timestep.length = 0.01          # Seconds per time step
+timestep.length = 1             # Quantity of timestep units for each step (defaults to 10)
+timestep.unit = "s"             # Unit timesteps are in (defaults to ms)
 timestep.count = 1000000        # Number of time steps to run the simulation for
 seed = 42                       # Random seed to use
 root = "~/testnet/simulations"  # Root directory to store simulation results 
