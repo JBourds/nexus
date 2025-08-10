@@ -6,10 +6,11 @@ use std::{
     path::PathBuf,
 };
 
-use crate::errors::ConversionError;
 use crate::helpers::unzip;
+use crate::{errors::ConversionError, helpers::make_handles};
 
 use config::ast::{self, Cmd};
+use tracing::instrument;
 
 pub type LinkHandle = usize;
 pub type NodeHandle = usize;
@@ -47,26 +48,50 @@ pub struct Link {
 }
 
 impl Node {
+    #[instrument]
     pub(super) fn from_ast(
         node: ast::Node,
+        handle: NodeHandle,
         link_handles: &HashMap<ast::LinkHandle, LinkHandle>,
         node_handles: &HashMap<ast::NodeHandle, LinkHandle>,
-    ) -> Result<Self, ConversionError> {
+    ) -> Result<(Self, Vec<ast::LinkHandle>), ConversionError> {
+        // Internal have their own namespace, copy the hashmap
+        // and overwrite any existing links with internal names.
+        let new_handles = node.internal_names;
+        let link_handles = if !new_handles.is_empty() {
+            &link_handles
+                .clone()
+                .into_iter()
+                .chain(
+                    make_handles(new_handles.clone())
+                        .into_iter()
+                        .map(|(name, handle)| (name, handle + link_handles.len())),
+                )
+                .collect::<HashMap<ast::LinkHandle, LinkHandle>>()
+        } else {
+            link_handles
+        };
+
         let (_, protocols) = unzip(node.protocols);
         let protocols = protocols
             .into_iter()
-            .map(|protocol| NodeProtocol::from_ast(protocol, link_handles, node_handles))
+            .map(|protocol| NodeProtocol::from_ast(protocol, handle, link_handles, node_handles))
             .collect::<Result<_, ConversionError>>()?;
-        Ok(Self {
-            position: node.position,
-            protocols,
-        })
+        Ok((
+            Self {
+                position: node.position,
+                protocols,
+            },
+            new_handles,
+        ))
     }
 }
 
 impl NodeProtocol {
+    #[instrument]
     pub(super) fn from_ast(
         node: ast::NodeProtocol,
+        handle: NodeHandle,
         link_handles: &HashMap<ast::LinkHandle, LinkHandle>,
         node_handles: &HashMap<ast::NodeHandle, LinkHandle>,
     ) -> Result<Self, ConversionError> {
@@ -88,10 +113,14 @@ impl NodeProtocol {
             .into_iter()
             .map(|(key, handles)| {
                 let links = map_link_handles(handles)?;
-                let key = node_handles
-                    .get(&key)
-                    .copied()
-                    .ok_or(ConversionError::NodeHandleConversion(key))?;
+                let key = if matches!(key.as_str(), ast::Node::SELF) {
+                    handle
+                } else {
+                    node_handles
+                        .get(&key)
+                        .copied()
+                        .ok_or(ConversionError::NodeHandleConversion(key))?
+                };
                 Ok((key, links))
             })
             .collect::<Result<_, ConversionError>>()?;
@@ -106,6 +135,7 @@ impl NodeProtocol {
 }
 
 impl Link {
+    #[instrument]
     pub(super) fn from_ast(
         node: ast::Link,
         handles: &HashMap<ast::LinkHandle, LinkHandle>,

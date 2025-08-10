@@ -5,7 +5,7 @@ use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
 use tracing::field::Visit;
-use tracing::{Event, Subscriber, debug};
+use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
 use crate::types::LinkHandle;
@@ -29,7 +29,7 @@ impl Visit for LogVisitor {
 
     fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
         match field.name() {
-            "step" => {
+            "timestep" => {
                 self.record.timestep = value;
             }
             "link" => {

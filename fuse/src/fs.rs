@@ -1,5 +1,5 @@
 use crate::errors::{FsError, LinkError};
-use crate::{LinkId, PID};
+use crate::{KernelLinks, LinkId, PID};
 use config::ast;
 
 use fuser::ReplyWrite;
@@ -33,12 +33,13 @@ pub struct NexusFs {
     attr: FileAttr,
     files: Vec<ast::LinkHandle>,
     fs_links: HashMap<LinkId, NexusFile>,
-    kernel_links: HashMap<LinkId, UnixDatagram>,
+    kernel_links: KernelLinks,
 }
 
 #[derive(Debug)]
 pub struct NexusLink {
     pub pid: PID,
+    pub node: ast::NodeHandle,
     pub link: ast::LinkHandle,
     pub mode: LinkMode,
 }
@@ -147,7 +148,13 @@ impl NexusFs {
         mut self,
         links: impl IntoIterator<Item = NexusLink>,
     ) -> Result<Self, LinkError> {
-        for NexusLink { pid, link, mode } in links {
+        for NexusLink {
+            pid,
+            node,
+            link,
+            mode,
+        } in links
+        {
             let (link_side, kernel_side) =
                 UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
             link_side
@@ -169,7 +176,7 @@ impl NexusFs {
                 .fs_links
                 .insert(key.clone(), NexusFile::new(link_side, mode, inode))
                 .is_some()
-                || self.kernel_links.insert(key, kernel_side).is_some()
+                || self.kernel_links.insert(key, (node, kernel_side)).is_some()
             {
                 return Err(LinkError::DuplicateLink);
             }
@@ -180,7 +187,7 @@ impl NexusFs {
     /// Mount the filesystem without blocking, yield the background session it
     /// is mounted in, and return the hash map with one side of the underlying
     /// sockets for the kernel to use.
-    pub fn mount(mut self) -> Result<(BackgroundSession, HashMap<LinkId, UnixDatagram>), FsError> {
+    pub fn mount(mut self) -> Result<(BackgroundSession, KernelLinks), FsError> {
         let options = vec![
             MountOption::FSName("nexus".to_string()),
             MountOption::AutoUnmount,

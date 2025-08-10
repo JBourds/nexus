@@ -136,6 +136,7 @@ fn get_fs_links(
 
             links.push(NexusLink {
                 pid,
+                node: node_handle.clone(),
                 link: link.clone(),
                 mode,
             });

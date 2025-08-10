@@ -631,12 +631,12 @@ pub struct Coordinate {
 #[derive(Clone, Debug)]
 pub struct Node {
     pub position: Position,
-    pub internal_names: Option<Vec<ProtocolHandle>>,
+    pub internal_names: Vec<ProtocolHandle>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
 }
 
 impl Node {
-    const SELF: &'static str = "self";
+    pub const SELF: &'static str = "self";
     fn validate(
         config_root: &PathBuf,
         val: parse::Node,
@@ -644,19 +644,21 @@ impl Node {
         link_handles: &HashSet<LinkHandle>,
     ) -> Result<Self> {
         // No duplicate internal names
-        let mut links = HashSet::new();
-        let mut internal_names = val.internal_names.unwrap_or_default();
-        for handle in internal_names.iter_mut() {
-            handle.0.make_ascii_lowercase();
-            if !links.insert(handle.0.clone()) {
-                bail!("Node contains duplicate links with handle \"{}\"", handle.0);
+        let mut internal_names = HashSet::new();
+        if let Some(names) = val.internal_names {
+            for name in names {
+                if !internal_names.insert(name.0.to_lowercase()) {
+                    bail!("Node contains duplicate links with name \"{}\"", name.0);
+                }
             }
         }
+
         // These can be duplicated with internal links
-        for mut handle in link_handles.clone().into_iter() {
-            handle.make_ascii_lowercase();
-            let _ = links.insert(handle);
-        }
+        let valid_links = link_handles
+            .iter()
+            .map(|s| s.to_lowercase())
+            .chain(internal_names.clone())
+            .collect();
 
         let position = Position::validate(val.position.unwrap_or_default())
             .context("Unable to validate node positioning of nodes with class")?;
@@ -676,13 +678,14 @@ impl Node {
             .into_iter()
             .map(|protocol| {
                 let name = protocol.name.clone();
-                NodeProtocol::validate(config_root, protocol, node_handles, &links)
+                NodeProtocol::validate(config_root, protocol, node_handles, &valid_links)
                     .map(|validated| (name, validated))
             })
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
             .context("Unable to validate node protocols")?;
         Ok(Self {
             position,
+            internal_names: internal_names.into_iter().collect(),
             protocols,
         })
     }
