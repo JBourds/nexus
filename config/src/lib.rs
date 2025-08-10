@@ -21,3 +21,24 @@ pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
         .context("Failed to validate simulation parameters from config file.")?;
     Ok(validated)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use pretty_assertions::assert_eq;
+    use std::fs;
+
+    #[test]
+    fn rejects() {
+        for entry in fs::read_dir("tests/rejects").unwrap() {
+            assert_eq!(parse(entry.unwrap().path()).is_err(), true);
+        }
+    }
+
+    #[test]
+    fn accepts() {
+        for entry in fs::read_dir("tests/accepts").unwrap() {
+            assert_eq!(parse(entry.unwrap().path()).is_ok(), true);
+        }
+    }
+}

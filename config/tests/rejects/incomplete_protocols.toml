@@ -1,0 +1,8 @@
+[nodes]
+[nodes.gateway]
+
+internal_names = ["satellite"]
+position.coordinates = [{}]
+
+[[nodes.gateway.protocols]]
+name = "satcom"

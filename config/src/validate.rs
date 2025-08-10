@@ -349,6 +349,10 @@ impl Simulation {
             .collect::<Result<HashMap<NodeHandle, Node>>>()
             .context("Failed to validate nodes")?;
 
+        if nodes.iter().all(|(_, node)| node.protocols.is_empty()) {
+            bail!("Must have at least one node protocol defined to run a simulation!");
+        }
+
         Ok(Self {
             params,
             links: processed,
@@ -668,7 +672,11 @@ impl Node {
         let mut protocols = val.protocols.unwrap_or_default();
         for protocol in protocols.iter_mut() {
             protocol.name.make_ascii_lowercase();
-            if !protocol_names.insert(protocol.name.clone()) {
+            if protocol.name.is_empty() {
+                bail!("Protocols must have unique, non-empty names.");
+            } else if protocol.runner.is_empty() {
+                bail!("Must provide non-empty command to run protocol program.");
+            } else if !protocol_names.insert(protocol.name.clone()) {
                 bail!("Found duplicate protocol: \"{}\"", protocol.name);
             }
         }
