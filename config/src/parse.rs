@@ -13,7 +13,7 @@ pub struct Simulation {
 pub struct Params {
     pub(super) timestep: Option<TimestepConfig>,
     pub(super) intermediary_link_threshold: Option<u32>,
-    pub(super) seed: Option<u16>,
+    pub(super) seed: Option<u64>,
     pub(super) root: String,
 }
 

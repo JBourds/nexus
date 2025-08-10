@@ -406,7 +406,7 @@ impl TimestepConfig {
 pub struct Params {
     pub timestep: TimestepConfig,
     pub intermediary_link_threshold: u32,
-    pub seed: u16,
+    pub seed: u64,
     pub root: PathBuf,
 }
 impl Params {

@@ -1,4 +1,5 @@
 pub mod errors;
+use rand::{SeedableRng, rngs::StdRng};
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -18,7 +19,7 @@ use std::{
     rc::Rc,
 };
 
-use config::ast::{self, Params};
+use config::ast::{self, TimestepConfig};
 use runner::RunCmd;
 use tracing::{debug, event, instrument};
 use types::*;
@@ -31,7 +32,9 @@ extern crate tracing;
 #[derive(Debug)]
 #[allow(unused)]
 pub struct Kernel {
-    params: Params,
+    root: PathBuf,
+    rng: StdRng,
+    timestep: TimestepConfig,
     links: Vec<Link>,
     nodes: Vec<Node>,
     files: HashMap<LinkId, UnixDatagram>,
@@ -90,13 +93,71 @@ impl Kernel {
             .collect::<Result<_, KernelError>>()?;
 
         Ok(Self {
-            params: sim.params,
+            root: sim.params.root,
+            rng: StdRng::seed_from_u64(sim.params.seed),
+            timestep: sim.params.timestep,
             links,
             nodes: new_nodes,
             files,
             link_names,
             node_names,
         })
+    }
+
+    #[instrument(skip_all)]
+    #[allow(unused_variables)]
+    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
+        let mut send_queue = HashMap::new();
+        let pids = self
+            .files
+            .keys()
+            .map(|(pid, _)| *pid)
+            .collect::<HashSet<fuse::PID>>();
+        let delta = self.time_delta();
+
+        for timestep in 0..self.timestep.count.into() {
+            let start = SystemTime::now();
+            for ((pid, handle), socket) in self.files.iter_mut() {
+                let (pid, handle) = (*pid, *handle);
+                let link_name = &self.link_names[handle];
+                match Self::recv_msg(socket, pid, timestep, handle, link_name) {
+                    Ok(recv_buf) => {
+                        // Deliver message to all other entries
+                        let msg = Rc::new(recv_buf);
+                        for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
+                            debug!("{pid}.{link_name} [TX]: Sending message to {pid}");
+                            send_queue
+                                .entry((*pid, handle))
+                                .or_insert(Vec::new())
+                                .push(Rc::clone(&msg));
+                        }
+                    }
+                    Err(KernelError::FileError(SocketError::NothingToRead)) => {}
+                    Err(KernelError::FileError(SocketError::SocketReadError { ioerr, .. }))
+                        if ioerr.kind() == io::ErrorKind::WouldBlock => {}
+                    Err(e) => {
+                        return Err(e);
+                    }
+                }
+
+                // Handle inbound connections
+                for msg in send_queue
+                    .remove_entry(&(pid, handle))
+                    .map(|(_, val)| val)
+                    .unwrap_or_default()
+                {
+                    debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
+                    Self::send_msg(socket, &msg, pid, timestep, handle, link_name)?;
+                }
+            }
+            if let Ok(elapsed) = start.elapsed() {
+                if elapsed < delta {
+                    std::thread::sleep(delta - elapsed);
+                }
+            }
+        }
+
+        Ok(())
     }
 
     pub fn recv<A: AsRef<str> + std::fmt::Debug>(
@@ -160,68 +221,12 @@ impl Kernel {
     }
 
     fn time_delta(&self) -> Duration {
-        let length = self.params.timestep.length;
-        match self.params.timestep.unit {
+        let length = self.timestep.length;
+        match self.timestep.unit {
             ast::TimeUnit::Seconds => Duration::from_secs(length),
             ast::TimeUnit::Milliseconds => Duration::from_millis(length),
             ast::TimeUnit::Microseconds => Duration::from_micros(length),
             ast::TimeUnit::Nanoseconds => Duration::from_nanos(length),
         }
-    }
-
-    #[instrument(skip_all)]
-    #[allow(unused_variables)]
-    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
-        let mut send_queue = HashMap::new();
-        let pids = self
-            .files
-            .keys()
-            .map(|(pid, _)| *pid)
-            .collect::<HashSet<fuse::PID>>();
-        let delta = self.time_delta();
-
-        for timestep in 0..self.params.timestep.count.into() {
-            let start = SystemTime::now();
-            for ((pid, handle), socket) in self.files.iter_mut() {
-                let (pid, handle) = (*pid, *handle);
-                let link_name = &self.link_names[handle];
-                match Self::recv_msg(socket, pid, timestep, handle, link_name) {
-                    Ok(recv_buf) => {
-                        // Deliver message to all other entries
-                        let msg = Rc::new(recv_buf);
-                        for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
-                            debug!("{pid}.{link_name} [TX]: Sending message to {pid}");
-                            send_queue
-                                .entry((*pid, handle))
-                                .or_insert(Vec::new())
-                                .push(Rc::clone(&msg));
-                        }
-                    }
-                    Err(KernelError::FileError(SocketError::NothingToRead)) => {}
-                    Err(KernelError::FileError(SocketError::SocketReadError { ioerr, .. }))
-                        if ioerr.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        return Err(e);
-                    }
-                }
-
-                // Handle inbound connections
-                for msg in send_queue
-                    .remove_entry(&(pid, handle))
-                    .map(|(_, val)| val)
-                    .unwrap_or_default()
-                {
-                    debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                    Self::send_msg(socket, &msg, pid, timestep, handle, link_name)?;
-                }
-            }
-            if let Ok(elapsed) = start.elapsed() {
-                if elapsed < delta {
-                    std::thread::sleep(delta - elapsed);
-                }
-            }
-        }
-
-        Ok(())
     }
 }
