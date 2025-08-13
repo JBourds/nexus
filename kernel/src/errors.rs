@@ -9,6 +9,12 @@ pub enum KernelError {
     KernelInit(ConversionError),
     #[error("Error encountered with socket file: `{0}`")]
     FileError(SocketError),
+    #[error("Error encountered when creating file poll.")]
+    PollCreation,
+    #[error("Error encountered when registering file to poll.")]
+    PollRegistration,
+    #[error("Error encountered when polling file.")]
+    PollError,
 }
 
 #[derive(Error, Debug)]

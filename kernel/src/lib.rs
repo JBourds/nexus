@@ -1,16 +1,21 @@
 pub mod errors;
+mod helpers;
+pub mod log;
+mod types;
+
+use fuse::errors::SocketError;
+use mio::unix::SourceFd;
+
+use fuse::socket;
+use helpers::{make_handles, unzip};
+use mio::{Events, Interest, Poll, Token};
 use rand::{SeedableRng, rngs::StdRng};
+use std::os::fd::AsRawFd;
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
 };
-use tracing::Level;
-mod helpers;
-pub mod log;
-mod types;
-use fuse::errors::SocketError;
-use fuse::socket;
-use helpers::{make_handles, unzip};
+use tracing::{Level, info};
 
 use std::{
     collections::{HashMap, HashSet},
@@ -37,7 +42,8 @@ pub struct Kernel {
     timestep: TimestepConfig,
     links: Vec<Link>,
     nodes: Vec<Node>,
-    files: HashMap<LinkId, UnixDatagram>,
+    handles: Vec<LinkId>,
+    sockets: Vec<UnixDatagram>,
     link_names: Vec<String>,
     node_names: Vec<String>,
 }
@@ -90,7 +96,8 @@ impl Kernel {
         let files = files
             .into_iter()
             .map(|((pid, link_name), (node, file))| lookup_link(pid, link_name, node, file))
-            .collect::<Result<_, KernelError>>()?;
+            .collect::<Result<HashMap<LinkId, UnixDatagram>, KernelError>>()?;
+        let (handles, sockets) = unzip(files);
 
         Ok(Self {
             root: sim.params.root,
@@ -98,7 +105,8 @@ impl Kernel {
             timestep: sim.params.timestep,
             links,
             nodes: new_nodes,
-            files,
+            handles,
+            sockets,
             link_names,
             node_names,
         })
@@ -107,27 +115,39 @@ impl Kernel {
     #[instrument(skip_all)]
     #[allow(unused_variables)]
     pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
-        let mut send_queue = HashMap::new();
-        let pids = self
-            .files
-            .keys()
-            .map(|(pid, _)| *pid)
-            .collect::<HashSet<fuse::PID>>();
         let delta = self.time_delta();
+        let mut send_queue = HashMap::new();
+        let pids: Vec<_> = self.handles.iter().map(|(pid, handle)| *pid).collect();
+        let mut poll = Poll::new().map_err(|_| KernelError::PollCreation)?;
+        let mut events = Events::with_capacity(self.sockets.len());
+        for (index, sock) in self.sockets.iter().enumerate() {
+            poll.registry()
+                .register(
+                    &mut SourceFd(&sock.as_raw_fd()),
+                    Token(index),
+                    Interest::READABLE,
+                )
+                .map_err(|_| KernelError::PollRegistration)?;
+        }
 
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
-            for ((pid, handle), socket) in self.files.iter_mut() {
-                let (pid, handle) = (*pid, *handle);
-                let link_name = &self.link_names[handle];
-                match Self::recv_msg(socket, pid, timestep, handle, link_name) {
+            poll.poll(&mut events, Some(delta))
+                .map_err(|_| KernelError::PollError)?;
+            for event in &events {
+                let Token(index) = event.token();
+                let (pid, link_handle) = self.handles[index];
+                let link_name = &self.link_names[link_handle];
+                let socket = &mut self.sockets[index];
+                let res = Self::recv_msg(socket, pid, timestep, link_handle, link_name);
+                match res {
                     Ok(recv_buf) => {
                         // Deliver message to all other entries
                         let msg = Rc::new(recv_buf);
                         for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
                             debug!("{pid}.{link_name} [TX]: Sending message to {pid}");
                             send_queue
-                                .entry((*pid, handle))
+                                .entry((*pid, link_handle))
                                 .or_insert(Vec::new())
                                 .push(Rc::clone(&msg));
                         }
@@ -139,6 +159,10 @@ impl Kernel {
                         return Err(e);
                     }
                 }
+            }
+            for ((pid, handle), socket) in self.handles.iter_mut().zip(self.sockets.iter_mut()) {
+                let (pid, handle) = (*pid, *handle);
+                let link_name = &self.link_names[handle];
 
                 // Handle inbound connections
                 for msg in send_queue
