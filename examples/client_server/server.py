@@ -3,8 +3,10 @@ import time
 
 nexus_sock = os.path.expanduser("~/nexus/ideal")
 
+counter = 0
 while True:
     with open(nexus_sock, "r+") as infile:
         print(infile.read())
-        infile.write("Hello from the server!")
+        infile.write(f"[{counter}]: Hello from the server!")
+        counter += 1
     time.sleep(1)
