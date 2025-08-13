@@ -23,6 +23,14 @@ fn verify_nonnegative(val: f64) -> Result<f64> {
     }
 }
 
+fn parse_probability(val: f64) -> Result<f64> {
+    if !(0.0..=1.0).contains(&val) {
+        bail!("Probability most be between 0 and 1.")
+    } else {
+        Ok(val)
+    }
+}
+
 fn resolve_directory(config_root: &PathBuf, path: &PathBuf) -> Result<PathBuf> {
     let root = expand_home(path);
     let root = if root.is_relative() {
@@ -351,6 +359,17 @@ impl Simulation {
 
         if nodes.iter().all(|(_, node)| node.protocols.is_empty()) {
             bail!("Must have at least one node protocol defined to run a simulation!");
+        } else if nodes
+            .iter()
+            .all(|(_, node)| node.position.coordinates.is_empty())
+        {
+            bail!(
+                "Must have at least one node position defined to run a simulation. \
+            If your simulation does not require a fixed position, satisfy this requirement \
+            by placing a blank coordinate in the `positions` field.
+
+            Ex. `position.coordinates = [{{}}]"
+            );
         }
 
         Ok(Self {
@@ -441,6 +460,11 @@ impl DistanceVar {
         let def = Self::default();
         let avg = val.avg.unwrap_or(def.avg);
         let std = val.std.unwrap_or(def.std);
+        if avg < 0.0 {
+            bail!("Distance variable cannot have negative average.");
+        } else if std < 0.0 {
+            bail!("Distance variable cannot have negative standard deviation.");
+        }
         let unit = if let Some(unit) = val.unit {
             DistanceUnit::validate(unit).context("Unable to validate distance unit.")?
         } else {
@@ -460,14 +484,32 @@ impl DistanceVar {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ProbabilityVar(DistanceVar);
+impl ProbabilityVar {
+    fn validate(val: parse::DistanceVar) -> Result<Self> {
+        match DistanceVar::validate(val) {
+            Ok(dv) => {
+                let avg = parse_probability(dv.avg)
+                    .context("Average of a probability variable must be between 0 and 1.")?;
+                let std = parse_probability(dv.std).context(
+                    "Standard deviation of a probability variable must be between 0 and 1.",
+                )?;
+                Ok(Self(DistanceVar { avg, std, ..dv }))
+            }
+            _ => bail!("Failed to parse probability variable fields."),
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Link {
     pub next: Option<LinkHandle>,
     pub intermediaries: u32,
     pub signal: Signal,
     pub transmission: Rate,
-    pub bit_error: DistanceVar,
-    pub packet_loss: DistanceVar,
+    pub bit_error: ProbabilityVar,
+    pub packet_loss: ProbabilityVar,
     pub queue_delay: DistanceVar,
     pub processing_delay: DistanceVar,
     pub connection_delay: DistanceVar,
@@ -522,12 +564,12 @@ impl Link {
             .context("Unable to validate link transmission rate")?;
         let bit_error = val
             .bit_error
-            .map(DistanceVar::validate)
+            .map(ProbabilityVar::validate)
             .unwrap_or(Ok(ancestor.bit_error))
             .context("Unable to validate link bit error variable.")?;
         let packet_loss = val
             .packet_loss
-            .map(DistanceVar::validate)
+            .map(ProbabilityVar::validate)
             .unwrap_or(Ok(ancestor.packet_loss))
             .context("Unable to validate link packet loss variable.")?;
         let queue_delay = val
