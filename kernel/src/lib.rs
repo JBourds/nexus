@@ -1,12 +1,12 @@
 pub mod errors;
 mod helpers;
 pub mod log;
+mod router;
 mod types;
 
 use fuse::errors::SocketError;
 use mio::unix::SourceFd;
 
-use fuse::socket;
 use helpers::{make_handles, unzip};
 use mio::{Events, Interest, Poll, Token};
 use rand::{SeedableRng, rngs::StdRng};
@@ -30,6 +30,7 @@ use tracing::{debug, event, instrument};
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
+use crate::router::Router;
 
 pub type LinkId = (fuse::PID, LinkHandle);
 extern crate tracing;
@@ -114,9 +115,8 @@ impl Kernel {
 
     #[instrument(skip_all)]
     #[allow(unused_variables)]
-    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
+    pub fn run(self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
         let delta = self.time_delta();
-        let mut send_queue = HashMap::new();
         let pids: Vec<_> = self.handles.iter().map(|(pid, handle)| *pid).collect();
         let mut poll = Poll::new().map_err(|_| KernelError::PollCreation)?;
         let mut events = Events::with_capacity(self.sockets.len());
@@ -130,50 +130,24 @@ impl Kernel {
                 .map_err(|_| KernelError::PollRegistration)?;
         }
 
+        let mut router = Router::new(
+            self.nodes,
+            self.node_names,
+            self.links,
+            self.link_names,
+            self.handles,
+            self.sockets,
+        );
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             poll.poll(&mut events, Some(delta))
                 .map_err(|_| KernelError::PollError)?;
             for event in &events {
                 let Token(index) = event.token();
-                let (pid, link_handle) = self.handles[index];
-                let link_name = &self.link_names[link_handle];
-                let socket = &mut self.sockets[index];
-                let res = Self::recv_msg(socket, pid, timestep, link_handle, link_name);
-                match res {
-                    Ok(recv_buf) => {
-                        // Deliver message to all other entries
-                        let msg = Rc::new(recv_buf);
-                        for pid in pids.iter().filter(|their_pid| **their_pid != pid) {
-                            debug!("{pid}.{link_name} [TX]: Sending message to {pid}");
-                            send_queue
-                                .entry((*pid, link_handle))
-                                .or_insert(Vec::new())
-                                .push(Rc::clone(&msg));
-                        }
-                    }
-                    Err(KernelError::FileError(SocketError::NothingToRead)) => {}
-                    Err(KernelError::FileError(SocketError::SocketReadError { ioerr, .. }))
-                        if ioerr.kind() == io::ErrorKind::WouldBlock => {}
-                    Err(e) => {
-                        return Err(e);
-                    }
-                }
+                router.inbound(index).map_err(KernelError::RouterError)?;
             }
-            for ((pid, handle), socket) in self.handles.iter_mut().zip(self.sockets.iter_mut()) {
-                let (pid, handle) = (*pid, *handle);
-                let link_name = &self.link_names[handle];
-
-                // Handle inbound connections
-                for msg in send_queue
-                    .remove_entry(&(pid, handle))
-                    .map(|(_, val)| val)
-                    .unwrap_or_default()
-                {
-                    debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                    Self::send_msg(socket, &msg, pid, timestep, handle, link_name)?;
-                }
-            }
+            router.outbound().map_err(KernelError::RouterError)?;
+            router.step().map_err(KernelError::RouterError)?;
             if let Ok(elapsed) = start.elapsed() {
                 if elapsed < delta {
                     std::thread::sleep(delta - elapsed);
@@ -182,66 +156,6 @@ impl Kernel {
         }
 
         Ok(())
-    }
-
-    pub fn recv<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        data: &mut [u8],
-        pid: fuse::PID,
-        link_name: &A,
-    ) -> Result<usize, KernelError> {
-        socket::recv(socket, data, pid, link_name).map_err(KernelError::FileError)
-    }
-
-    pub fn send<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        data: &[u8],
-        pid: fuse::PID,
-        link_name: A,
-    ) -> Result<usize, KernelError> {
-        socket::send(socket, data, pid, link_name).map_err(KernelError::FileError)
-    }
-
-    #[instrument(skip(socket, data), err)]
-    pub fn send_msg<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        data: &[u8],
-        pid: fuse::PID,
-        timestep: u64,
-        link: LinkHandle,
-        link_name: &A,
-    ) -> Result<usize, KernelError> {
-        let len = data.len();
-        debug!("Sending {len} byte message");
-        let msg_len = len.to_ne_bytes();
-        Self::send(socket, &msg_len, pid, link_name)?;
-
-        match Self::send(socket, data, pid, link_name) {
-            Ok(n_sent) => {
-                event!(target: "tx", Level::INFO, timestep, link, pid, tx = true, data);
-                Ok(n_sent)
-            }
-            err => err,
-        }
-    }
-
-    #[instrument(skip(socket), err)]
-    pub fn recv_msg<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        pid: fuse::PID,
-        timestep: u64,
-        link: LinkHandle,
-        link_name: &A,
-    ) -> Result<Vec<u8>, KernelError> {
-        let mut msg_len = [0u8; core::mem::size_of::<usize>()];
-        Self::recv(socket, &mut msg_len, pid, link_name)?;
-        let required_capacity = usize::from_ne_bytes(msg_len);
-        debug!("Receiving {required_capacity} byte message");
-        let mut recv_buf = vec![0; required_capacity];
-        let data = recv_buf.as_mut_slice();
-        Self::recv(socket, data, pid, link_name)?;
-        event!(target: "rx", Level::INFO, timestep, link, pid, tx = false, data);
-        Ok(recv_buf)
     }
 
     fn time_delta(&self) -> Duration {
