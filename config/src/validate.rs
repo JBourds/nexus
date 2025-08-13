@@ -168,36 +168,6 @@ impl Default for DistanceUnit {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Modifier {
-    Flat,
-    Linear,
-    Logarithmic,
-    Exponental,
-}
-
-impl Modifier {
-    fn validate(mut val: parse::Modifier) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "flat" => Self::Flat,
-            "linear" => Self::Linear,
-            "log" => Self::Logarithmic,
-            "exp" => Self::Exponental,
-            s => {
-                bail!("Expected to find (\"flat\" | \"linear\" | \"log\" | \"exp\") but found {s}");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl Default for Modifier {
-    fn default() -> Self {
-        Self::Flat
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rate {
     pub rate: f64,
     pub data_unit: DataUnit,
@@ -448,13 +418,25 @@ impl Params {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct DistanceVar {
     pub avg: f64,
     pub std: f64,
-    pub modifier: Modifier,
+    pub modifier: meval::Expr,
     pub unit: DistanceUnit,
 }
+
+impl Default for DistanceVar {
+    fn default() -> Self {
+        Self {
+            avg: Default::default(),
+            std: Default::default(),
+            modifier: "1".parse().unwrap(),
+            unit: Default::default(),
+        }
+    }
+}
+
 impl DistanceVar {
     fn validate(val: parse::DistanceVar) -> Result<Self> {
         let def = Self::default();
@@ -470,25 +452,30 @@ impl DistanceVar {
         } else {
             def.unit
         };
-        let modifier = if let Some(modifier) = val.modifier {
-            Modifier::validate(modifier).context("Unable to validate distance modifier.")?
-        } else {
-            def.modifier
-        };
         Ok(Self {
             avg,
             std,
-            modifier,
             unit,
+            ..def
         })
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ProbabilityVar {
     pub rate: f64,
-    pub modifier: Modifier,
+    pub modifier: meval::Expr,
     pub unit: DistanceUnit,
+}
+
+impl Default for ProbabilityVar {
+    fn default() -> Self {
+        Self {
+            rate: Default::default(),
+            modifier: "1".parse().unwrap(),
+            unit: Default::default(),
+        }
+    }
 }
 
 impl ProbabilityVar {
@@ -502,16 +489,7 @@ impl ProbabilityVar {
         } else {
             def.unit
         };
-        let modifier = if let Some(modifier) = val.modifier {
-            Modifier::validate(modifier).context("Unable to validate distance modifier.")?
-        } else {
-            def.modifier
-        };
-        Ok(Self {
-            rate,
-            modifier,
-            unit,
-        })
+        Ok(Self { rate, unit, ..def })
     }
 }
 
@@ -578,32 +556,32 @@ impl Link {
         let bit_error = val
             .bit_error
             .map(ProbabilityVar::validate)
-            .unwrap_or(Ok(ancestor.bit_error))
+            .unwrap_or(Ok(ancestor.bit_error.clone()))
             .context("Unable to validate link bit error variable.")?;
         let packet_loss = val
             .packet_loss
             .map(ProbabilityVar::validate)
-            .unwrap_or(Ok(ancestor.packet_loss))
+            .unwrap_or(Ok(ancestor.packet_loss.clone()))
             .context("Unable to validate link packet loss variable.")?;
         let queue_delay = val
             .queue_delay
             .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.queue_delay))
+            .unwrap_or(Ok(ancestor.queue_delay.clone()))
             .context("Unable to validate link queue delay variable.")?;
         let processing_delay = val
             .processing_delay
             .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.processing_delay))
+            .unwrap_or(Ok(ancestor.processing_delay.clone()))
             .context("Unable to validate link processing delay variable.")?;
         let connection_delay = val
             .connection_delay
             .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.connection_delay))
+            .unwrap_or(Ok(ancestor.connection_delay.clone()))
             .context("Unable to validate link connection delay variable.")?;
         let propagation_delay = val
             .propagation_delay
             .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.propagation_delay))
+            .unwrap_or(Ok(ancestor.propagation_delay.clone()))
             .context("Unable to validate link propagation delay variable.")?;
         Ok(Self {
             next,

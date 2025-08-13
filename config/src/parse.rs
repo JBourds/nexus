@@ -29,12 +29,9 @@ pub struct TimestepConfig {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct Modifier(pub String);
-
-#[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DistanceVar {
-    pub(super) modifier: Option<Modifier>,
+    pub(super) modifier: Option<meval::Expr>,
     pub(super) avg: Option<f64>,
     pub(super) std: Option<f64>,
     pub(super) unit: Option<Unit>,
@@ -43,7 +40,7 @@ pub struct DistanceVar {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ProbabilityVar {
-    pub(super) modifier: Option<Modifier>,
+    pub(super) modifier: Option<meval::Expr>,
     pub(super) rate: Option<f64>,
     pub(super) unit: Option<Unit>,
 }
