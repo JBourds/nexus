@@ -31,14 +31,33 @@ mod tests {
     #[test]
     fn rejects() {
         for entry in fs::read_dir("tests/rejects").unwrap() {
-            assert_eq!(parse(entry.unwrap().path()).is_err(), true);
+            let path = entry.unwrap().path();
+            let config = path.join("nexus.toml");
+            let expected = fs::read_to_string(path.join("expected.txt")).unwrap();
+            let expected = expected.trim_end();
+            let res = parse(config);
+            let msg = format!(
+                "Expected {path:?} to be rejected with error:\n\n\"{expected}\"\
+                \n\nBut got result:\n\n\"{res:#?}\""
+            );
+            assert_eq!(
+                res.is_err_and(|e| format!("{e:#?}") == expected),
+                true,
+                "{msg}"
+            );
         }
     }
 
     #[test]
     fn accepts() {
         for entry in fs::read_dir("tests/accepts").unwrap() {
-            assert_eq!(parse(entry.unwrap().path()).is_ok(), true);
+            let path = entry.unwrap().path();
+            let res = parse(path.clone());
+            assert_eq!(
+                res.is_ok(),
+                true,
+                "Expected {path:?} to be accepted but got result:\n{res:#?}"
+            );
         }
     }
 }
