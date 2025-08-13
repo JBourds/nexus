@@ -485,20 +485,33 @@ impl DistanceVar {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ProbabilityVar(DistanceVar);
+pub struct ProbabilityVar {
+    pub rate: f64,
+    pub modifier: Modifier,
+    pub unit: DistanceUnit,
+}
+
 impl ProbabilityVar {
-    fn validate(val: parse::DistanceVar) -> Result<Self> {
-        match DistanceVar::validate(val) {
-            Ok(dv) => {
-                let avg = parse_probability(dv.avg)
-                    .context("Average of a probability variable must be between 0 and 1.")?;
-                let std = parse_probability(dv.std).context(
-                    "Standard deviation of a probability variable must be between 0 and 1.",
-                )?;
-                Ok(Self(DistanceVar { avg, std, ..dv }))
-            }
-            _ => bail!("Failed to parse probability variable fields."),
-        }
+    fn validate(val: parse::ProbabilityVar) -> Result<Self> {
+        let def = Self::default();
+        let rate = val.rate.unwrap_or(def.rate);
+        let rate =
+            parse_probability(rate).context("Probability variable must be between 0 and 1.")?;
+        let unit = if let Some(unit) = val.unit {
+            DistanceUnit::validate(unit).context("Unable to validate distance unit.")?
+        } else {
+            def.unit
+        };
+        let modifier = if let Some(modifier) = val.modifier {
+            Modifier::validate(modifier).context("Unable to validate distance modifier.")?
+        } else {
+            def.modifier
+        };
+        Ok(Self {
+            rate,
+            modifier,
+            unit,
+        })
     }
 }
 

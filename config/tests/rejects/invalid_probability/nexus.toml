@@ -1,7 +1,7 @@
 [links]
 
 [links.invalid]
-packet_loss.avg = 1.1
+packet_loss.rate = 1.1
 
 [nodes]
 

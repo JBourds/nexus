@@ -42,6 +42,14 @@ pub struct DistanceVar {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct ProbabilityVar {
+    pub(super) modifier: Option<Modifier>,
+    pub(super) rate: Option<f64>,
+    pub(super) unit: Option<Unit>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Rate {
     pub(super) rate: Option<f64>,
     pub(super) data_unit: Option<Unit>,
@@ -59,8 +67,8 @@ pub struct Link {
     pub(super) intermediaries: Option<u32>,
     pub(super) signal: Option<Signal>,
     pub(super) transmission: Option<Rate>,
-    pub(super) packet_loss: Option<DistanceVar>,
-    pub(super) bit_error: Option<DistanceVar>,
+    pub(super) packet_loss: Option<ProbabilityVar>,
+    pub(super) bit_error: Option<ProbabilityVar>,
     pub(super) queue_delay: Option<DistanceVar>,
     pub(super) processing_delay: Option<DistanceVar>,
     pub(super) connection_delay: Option<DistanceVar>,

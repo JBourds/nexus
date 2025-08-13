@@ -121,9 +121,9 @@ transmission.time_unit = "s"
 # Error Rates
 
 # Probability of bit flipping in the transfer.
-bit_error = { avg = 0, std = 0, modifier = "flat", unit = "m" }          
+bit_error = { rate = 0, modifier = "flat", unit = "m" }          
 
-packet_loss = { avg = 0, std = 0, modifier = "flat", unit = "feet" }
+packet_loss = { rate = 0, modifier = "flat", unit = "feet" }
 
 # Network Delays
 

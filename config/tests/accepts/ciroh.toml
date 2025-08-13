@@ -32,14 +32,13 @@ connection_delay.std = 5
 processing_delay.avg = 60       
 processing_delay.std = 1       
 
-packet_loss.avg = 0.3
-packet_loss.std = 0.05
+packet_loss.rate = 0.3
 
 [links.lora]
 # Lora is a radio protocol - no routing.
 next = "none"
 
-packet_loss.avg = 0.01
+packet_loss.rate = 0.01
 transmission.rate = 1         
 transmission.data_unit = "kb"
 
@@ -53,7 +52,7 @@ propagation_delay.std = 0.1
 
 [links.lora_bad]
 inherit = "lora"
-packet_loss.avg = 0.05        
+packet_loss.rate = 0.05        
 
 propagation_delay.avg = 1
 propagation_delay.std = 0.25      
