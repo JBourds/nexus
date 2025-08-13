@@ -32,7 +32,7 @@ use types::*;
 use crate::errors::{ConversionError, KernelError};
 use crate::router::Router;
 
-pub type LinkId = (fuse::PID, LinkHandle);
+pub type LinkId = (fuse::PID, NodeHandle, LinkHandle);
 extern crate tracing;
 
 #[derive(Debug)]
@@ -66,7 +66,7 @@ impl Kernel {
         // are unique within a node, so create a mapping of (node, link): handle
         // which gets checked first when resolving string handles below.
         let mut new_nodes = vec![];
-        let mut internal_node_handles = HashMap::new();
+        let mut internal_node_link_handles = HashMap::new();
         for (handle, (node_name, node)) in node_names
             .clone()
             .into_iter()
@@ -80,19 +80,20 @@ impl Kernel {
             link_names.extend(internal_names.clone());
             for (handle, internal_name) in (link_names.len() - 1..).zip(internal_names.into_iter())
             {
-                internal_node_handles.insert((node_name.clone(), internal_name), handle);
+                internal_node_link_handles.insert((node_name.clone(), internal_name), handle);
             }
         }
 
         let lookup_link =
             |pid: fuse::PID, link_name: String, node: ast::NodeHandle, file: UnixDatagram| {
-                internal_node_handles
+                let node_handle = *node_handles.get(&node).unwrap();
+                internal_node_link_handles
                     .get(&(node, link_name.clone()))
                     .or(link_handles.get(&link_name))
                     .ok_or(KernelError::KernelInit(
                         ConversionError::LinkHandleConversion(link_name),
                     ))
-                    .map(|handle| ((pid, *handle), file))
+                    .map(|link_handle| ((pid, node_handle, *link_handle), file))
             };
         let files = files
             .into_iter()
@@ -117,7 +118,6 @@ impl Kernel {
     #[allow(unused_variables)]
     pub fn run(self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
         let delta = self.time_delta();
-        let pids: Vec<_> = self.handles.iter().map(|(pid, handle)| *pid).collect();
         let mut poll = Poll::new().map_err(|_| KernelError::PollCreation)?;
         let mut events = Events::with_capacity(self.sockets.len());
         for (index, sock) in self.sockets.iter().enumerate() {

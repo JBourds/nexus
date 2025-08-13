@@ -10,7 +10,7 @@ use std::{
     os::unix::net::UnixDatagram,
     rc::Rc,
 };
-use tracing::{Level, debug, error, event, info, instrument};
+use tracing::{Level, debug, error, event, instrument};
 
 use crate::types::LinkHandle;
 
@@ -70,14 +70,15 @@ impl Router {
 
     #[instrument(skip_all)]
     pub fn inbound(&mut self, index: usize) -> Result<(), RouterError> {
-        let (pid, link_handle) = self.handles[index];
+        let (pid, node_handle, link_handle) = self.handles[index];
         let link_name = &self.link_names[link_handle];
         let endpoint = &mut self.endpoints[index];
         loop {
             match Self::recv_msg(endpoint, pid, self.timestep, link_handle, link_name) {
                 Ok(recv_buf) => {
                     let msg = Rc::new(recv_buf);
-                    let Some(recipients) = self.routing_table.get(&(pid, link_handle)) else {
+                    let Some(recipients) = self.routing_table.get(&(pid, node_handle, link_handle))
+                    else {
                         error!(
                             "Couldn't find key {:?} in {:#?}",
                             (pid, link_handle),
@@ -109,18 +110,19 @@ impl Router {
     pub fn outbound(&mut self) -> Result<(), RouterError> {
         for (index, mailbox) in self.mailboxes.iter_mut().enumerate() {
             let endpoint = &mut self.endpoints[index];
-            let (pid, link) = self.handles[index];
-            let link_name = &self.link_names[link];
+            let (pid, node_handle, link_handle) = self.handles[index];
+            let link_name = &self.link_names[link_handle];
             let timestep = self.timestep;
             while let Some(msg) = mailbox.pop_front() {
                 debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                Self::send_msg(endpoint, &msg, pid, timestep, link, link_name).map_err(|_| {
-                    RouterError::SendError {
+                Self::send_msg(endpoint, &msg, pid, timestep, link_handle, link_name).map_err(
+                    |_| RouterError::SendError {
                         sender: pid,
-                        link,
+                        node_name: self.node_names[node_handle].clone(),
+                        link_name: self.link_names[link_handle].clone(),
                         timestep,
-                    }
-                })?;
+                    },
+                )?;
             }
         }
         Ok(())
@@ -163,7 +165,7 @@ impl Router {
         socket::send(socket, data, pid, link_name).map_err(RouterError::FileError)
     }
 
-    #[instrument(skip(socket), err)]
+    #[instrument(skip(socket))]
     fn recv_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         pid: fuse::PID,

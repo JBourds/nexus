@@ -30,11 +30,12 @@ pub enum ConversionError {
 #[derive(Error, Debug)]
 pub enum RouterError {
     #[error(
-        "Failed to route message from PID `{sender}` to link `{link}` at timestep `{timestep}`"
+        "Failed to route message from node `{node_name}`, PID `{sender}`, to link `{link_name}` at timestep `{timestep}`"
     )]
     SendError {
         sender: PID,
-        link: LinkHandle,
+        node_name: String,
+        link_name: String,
         timestep: u64,
     },
     #[error("Failed to deliver queued messages.")]
