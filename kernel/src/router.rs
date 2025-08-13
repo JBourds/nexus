@@ -21,7 +21,16 @@ pub(crate) struct Message {
     buf: Vec<u8>,
 }
 
-type IndexPointer = usize;
+/// Route information computed based on link parameters and number of
+/// intermediaries representative of the entire route.
+#[derive(Debug, Default)]
+struct Route {
+    index_pointer: usize,
+    delay_avg: u64,
+    delay_std: u64,
+    packet_loss_prob: f64,
+    bit_error_rate: f64,
+}
 
 #[derive(Debug)]
 pub(crate) struct Router {
@@ -32,7 +41,7 @@ pub(crate) struct Router {
     link_names: Vec<String>,
     endpoints: Vec<UnixDatagram>,
     handles: Vec<LinkId>,
-    routing_table: HashMap<LinkId, Vec<IndexPointer>>,
+    routing_table: HashMap<LinkId, Vec<Route>>,
     mailboxes: Vec<VecDeque<Rc<Vec<u8>>>>,
     timestep: u64,
 }
@@ -52,8 +61,20 @@ impl Router {
         // everything else
         let handles_count = handles.len();
         let routing_table = (0..handles_count)
-            .map(|i| (handles[i], (0..handles_count).filter(|j| i != *j).collect()))
+            .map(|i| {
+                (
+                    handles[i],
+                    (0..handles_count)
+                        .filter(|j| i != *j)
+                        .map(|j| Route {
+                            index_pointer: j,
+                            ..Default::default()
+                        })
+                        .collect(),
+                )
+            })
             .collect();
+
         Self {
             nodes,
             node_names,
@@ -87,8 +108,10 @@ impl Router {
                         return Ok(());
                     };
                     debug!("Recipients: {recipients:?}");
-                    for index in recipients {
-                        self.mailboxes[*index].push_back(Rc::clone(&msg));
+                    // TODO: Use other route information to determine delays
+                    // and mutations/drops
+                    for Route { index_pointer, .. } in recipients {
+                        self.mailboxes[*index_pointer].push_back(Rc::clone(&msg));
                     }
                 }
                 Err(RouterError::FileError(SocketError::NothingToRead)) => {
