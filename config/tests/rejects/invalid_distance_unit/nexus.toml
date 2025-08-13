@@ -1,0 +1,14 @@
+[links]
+
+[links.invalid]
+signal.unit = "x"
+
+[nodes]
+
+[nodes.main]
+position.coordinates = [ {} ]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "make"

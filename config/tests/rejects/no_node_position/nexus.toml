@@ -1,0 +1,7 @@
+[nodes]
+
+[nodes.main]
+
+[[nodes.main.protocols]]
+name = "main"
+runner = "make"

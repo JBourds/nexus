@@ -147,7 +147,7 @@ propagation_delay = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 # assigned index as a unique id which will be used to uniquely identify its 
 # output in the simulation folder.
 
-position.coordinates = []
+position.coordinates = [{}]
 position.units = "meters"
 
 # Array of internal link names which act like ideal links but cannot be
@@ -160,4 +160,8 @@ internal_names = []
 # idle_power = 0.001      # Percentage of charge used per second
 # idle_charging = 0.005   # Percentage of charge recovered per second
 # ...other charging params
+
+[[nodes.default.protocols]]
+name = "main"
+runner = "make"
 

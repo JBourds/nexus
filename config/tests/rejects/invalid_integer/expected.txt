@@ -1,0 +1,17 @@
+Error {
+    context: "Failed to parse simulation parameters from config file.",
+    source: TomlError {
+        message: "invalid value: integer `-1`, expected u64",
+        raw: Some(
+            "[params]\n\ntimestep.length = -1          \n",
+        ),
+        keys: [
+            "params",
+            "timestep",
+            "length",
+        ],
+        span: Some(
+            28..30,
+        ),
+    },
+}

@@ -1,0 +1,14 @@
+[links]
+
+[links.invalid]
+packet_loss.avg = 1.1
+
+[nodes]
+
+[nodes.main]
+position.coordinates = [ {} ]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "make"

@@ -1,0 +1,13 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Unable to validate simulation parameters",
+        source: Error {
+            context: "Unable to validate timestep configuration in simulation config.",
+            source: Error {
+                context: "Unable to validate time unit in timestep config",
+                source: "Expected to find a valid time unit but found \"x\"",
+            },
+        },
+    },
+}

@@ -1,0 +1,31 @@
+[params]
+timestep.length = 1          
+timestep.unit = "s"
+timestep.count = 5        
+seed = 42                       
+root = "~/testnet/simulations"  
+
+[nodes]
+
+[nodes.client]
+position.coordinates = [ {} ]
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+direct = [["server", "ideal"]]
+accepts = ["ideal"]
+
+
+[nodes.server]
+position.coordinates = [ {} ]
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+direct = [["client", "ideal"]]
+accepts = ["ideal"]

@@ -1,0 +1,13 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Unable to process link \"invalid\"",
+        source: Error {
+            context: "Unable to validate link signal",
+            source: Error {
+                context: "Unable to validate distance unit.",
+                source: "Expected to find a valid distance unit but found \"x\"",
+            },
+        },
+    },
+}

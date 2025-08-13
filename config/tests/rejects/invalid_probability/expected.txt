@@ -1,0 +1,13 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Unable to process link \"invalid\"",
+        source: Error {
+            context: "Unable to validate link packet loss variable.",
+            source: Error {
+                context: "Average of a probability variable must be between 0 and 1.",
+                source: "Probability most be between 0 and 1.",
+            },
+        },
+    },
+}

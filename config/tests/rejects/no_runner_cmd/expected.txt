@@ -1,0 +1,7 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Failed to validate nodes",
+        source: "Must provide non-empty command to run protocol program.",
+    },
+}

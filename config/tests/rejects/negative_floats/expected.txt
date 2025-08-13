@@ -1,0 +1,10 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Unable to process link \"invalid\"",
+        source: Error {
+            context: "Unable to validate link processing delay variable.",
+            source: "Distance variable cannot have negative average.",
+        },
+    },
+}

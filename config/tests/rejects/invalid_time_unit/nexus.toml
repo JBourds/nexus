@@ -1,0 +1,13 @@
+[params]
+timestep.unit = "x"
+
+[nodes]
+
+[nodes.main]
+position.coordinates = [ {} ]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "make"
+

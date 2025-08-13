@@ -1,8 +1,0 @@
-
-[params]
-
-timestep.length = -1          
-timestep.count = 1000000        
-seed = 42                       
-root = "~/testnet/simulations"  
-                                

@@ -1,0 +1,4 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: "Must have at least one node protocol defined to run a simulation!",
+}
