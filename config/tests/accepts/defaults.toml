@@ -127,10 +127,8 @@ packet_loss = { rate = 0, modifier = "flat", unit = "feet" }
 
 # Network Delays
 
-queue_delay = { avg = 0, std = 0, modifier = "flat", unit = "meters" }      
-processing_delay = { avg = 0, std = 0, modifier = "flat", unit = "kilometers" }
-connection_delay = { avg = 0, std = 0, modifier = "flat", unit = "mi" }
-propagation_delay = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
+delays.processing = { rate = inf, data_unit = "b", time_unit = "s" }
+delays.propagation = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 
 [nodes]
 

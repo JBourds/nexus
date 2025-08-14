@@ -41,10 +41,7 @@ pub struct Link {
     pub transmission: ast::Rate,
     pub bit_error: ast::ProbabilityVar,
     pub packet_loss: ast::ProbabilityVar,
-    pub queue_delay: ast::DistanceVar,
-    pub processing_delay: ast::DistanceVar,
-    pub connection_delay: ast::DistanceVar,
-    pub propagation_delay: ast::DistanceVar,
+    pub delays: ast::Delays,
 }
 
 impl Node {
@@ -155,10 +152,7 @@ impl Link {
             transmission: node.transmission,
             bit_error: node.bit_error,
             packet_loss: node.packet_loss,
-            queue_delay: node.queue_delay,
-            processing_delay: node.processing_delay,
-            connection_delay: node.connection_delay,
-            propagation_delay: node.propagation_delay,
+            delays: node.delays,
         })
     }
 }

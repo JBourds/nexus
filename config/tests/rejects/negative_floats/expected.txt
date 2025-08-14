@@ -3,8 +3,14 @@ Error {
     source: Error {
         context: "Unable to process link \"invalid\"",
         source: Error {
-            context: "Unable to validate link processing delay variable.",
-            source: "Distance variable cannot have negative average.",
+            context: "Unable to validate link delays.",
+            source: Error {
+                context: "Unable to validate processing delay rate.",
+                source: Error {
+                    context: "Unable to validate rate\'s value.",
+                    source: "Value must be positive",
+                },
+            },
         },
     },
 }

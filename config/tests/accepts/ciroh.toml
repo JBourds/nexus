@@ -26,11 +26,7 @@ transmission.rate = 176
 transmission.data_unit = "kb"
 transmission.time_unit = "seconds"
 
-connection_delay.avg = 20       
-connection_delay.std = 5
-
-processing_delay.avg = 60       
-processing_delay.std = 1       
+delays.processing.rate = 60       
 
 packet_loss.rate = 0.3
 
@@ -47,15 +43,15 @@ signal.offset = 2
 signal.unit = "km"
 signal.shape = "cone"
 
-propagation_delay.avg = 0.5      
-propagation_delay.std = 0.1      
+delays.propagation.avg = 0.5      
+delays.propagation.std = 0.1      
 
 [links.lora_bad]
 inherit = "lora"
 packet_loss.rate = 0.05        
 
-propagation_delay.avg = 1
-propagation_delay.std = 0.25      
+delays.propagation.avg = 1
+delays.propagation.std = 0.25      
 
 [nodes]
 [nodes.gateway]

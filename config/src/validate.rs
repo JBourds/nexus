@@ -109,10 +109,14 @@ pub struct Link {
     pub transmission: Rate,
     pub bit_error: ProbabilityVar,
     pub packet_loss: ProbabilityVar,
-    pub queue_delay: DistanceVar,
-    pub processing_delay: DistanceVar,
-    pub connection_delay: DistanceVar,
-    pub propagation_delay: DistanceVar,
+    pub delays: Delays,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Delays {
+    pub transmission: Rate,
+    pub processing: Rate,
+    pub propagation: DistanceVar,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -272,6 +276,7 @@ impl Default for Rate {
         }
     }
 }
+
 impl Simulation {
     /// Guaranteed to not have a cycle because it only traces links with a
     /// common ancestor to the default link, which is a sink node.
@@ -461,6 +466,31 @@ impl Params {
     }
 }
 
+impl Delays {
+    fn validate(val: parse::Delays) -> Result<Self> {
+        let transmission = val
+            .transmission
+            .map(Rate::validate)
+            .unwrap_or(Ok(Rate::default()))
+            .context("Unable to validate transmission delay rate.")?;
+        let processing = val
+            .processing
+            .map(Rate::validate)
+            .unwrap_or(Ok(Rate::default()))
+            .context("Unable to validate processing delay rate.")?;
+        let propagation = val
+            .propagation
+            .map(DistanceVar::validate)
+            .unwrap_or(Ok(DistanceVar::default()))
+            .context("Unable to validate propagation delay rate.")?;
+        Ok(Self {
+            transmission,
+            processing,
+            propagation,
+        })
+    }
+}
+
 impl Default for DistanceVar {
     fn default() -> Self {
         Self {
@@ -577,26 +607,11 @@ impl Link {
             .map(ProbabilityVar::validate)
             .unwrap_or(Ok(ancestor.packet_loss.clone()))
             .context("Unable to validate link packet loss variable.")?;
-        let queue_delay = val
-            .queue_delay
-            .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.queue_delay.clone()))
-            .context("Unable to validate link queue delay variable.")?;
-        let processing_delay = val
-            .processing_delay
-            .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.processing_delay.clone()))
-            .context("Unable to validate link processing delay variable.")?;
-        let connection_delay = val
-            .connection_delay
-            .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.connection_delay.clone()))
-            .context("Unable to validate link connection delay variable.")?;
-        let propagation_delay = val
-            .propagation_delay
-            .map(DistanceVar::validate)
-            .unwrap_or(Ok(ancestor.propagation_delay.clone()))
-            .context("Unable to validate link propagation delay variable.")?;
+        let delays = val
+            .delays
+            .map(Delays::validate)
+            .unwrap_or(Ok(ancestor.delays.clone()))
+            .context("Unable to validate link delays.")?;
         Ok(Self {
             next,
             intermediaries,
@@ -604,10 +619,7 @@ impl Link {
             transmission,
             bit_error,
             packet_loss,
-            queue_delay,
-            processing_delay,
-            connection_delay,
-            propagation_delay,
+            delays,
         })
     }
 }

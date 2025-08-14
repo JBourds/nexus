@@ -66,10 +66,15 @@ pub struct Link {
     pub(super) transmission: Option<Rate>,
     pub(super) packet_loss: Option<ProbabilityVar>,
     pub(super) bit_error: Option<ProbabilityVar>,
-    pub(super) queue_delay: Option<DistanceVar>,
-    pub(super) processing_delay: Option<DistanceVar>,
-    pub(super) connection_delay: Option<DistanceVar>,
-    pub(super) propagation_delay: Option<DistanceVar>,
+    pub(super) delays: Option<Delays>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Delays {
+    pub(super) transmission: Option<Rate>,
+    pub(super) processing: Option<Rate>,
+    pub(super) propagation: Option<DistanceVar>,
 }
 
 #[derive(Debug, Default, Deserialize)]
