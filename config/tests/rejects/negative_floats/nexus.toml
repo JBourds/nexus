@@ -1,7 +1,7 @@
 [links]
 
 [links.invalid]
-delays.processing.rate = -0.1
+packet_loss.rate = -0.1
 
 [nodes]
 

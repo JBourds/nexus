@@ -3,13 +3,10 @@ Error {
     source: Error {
         context: "Unable to process link \"invalid\"",
         source: Error {
-            context: "Unable to validate link delays.",
+            context: "Unable to validate link packet loss variable.",
             source: Error {
-                context: "Unable to validate processing delay rate.",
-                source: Error {
-                    context: "Unable to validate rate\'s value.",
-                    source: "Value must be positive",
-                },
+                context: "Probability variable must be between 0 and 1.",
+                source: "Probability most be between 0 and 1.",
             },
         },
     },

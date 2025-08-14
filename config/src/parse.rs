@@ -47,7 +47,7 @@ pub struct ProbabilityVar {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Rate {
-    pub(super) rate: Option<f64>,
+    pub(super) rate: Option<u64>,
     pub(super) data_unit: Option<Unit>,
     pub(super) time_unit: Option<Unit>,
 }

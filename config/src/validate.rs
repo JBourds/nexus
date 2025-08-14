@@ -133,7 +133,7 @@ pub struct ProbabilityVar {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rate {
-    pub rate: f64,
+    pub rate: u64,
     pub data_unit: DataUnit,
     pub time_unit: TimeUnit,
 }
@@ -150,12 +150,60 @@ pub enum DataUnit {
     Gigabyte,
 }
 
+impl DataUnit {
+    /// Return the integer ratio of left / right with a boolean
+    /// flag to indicate whether it was the left (true) or right
+    /// (false) which is the numerator in the expression.
+    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let left = left.lshifts();
+        let right = right.lshifts();
+        let left_greater = left > right;
+        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
+        (left_greater, 1 << ratio)
+    }
+
+    pub fn lshifts(&self) -> usize {
+        match self {
+            DataUnit::Bit => 0,
+            DataUnit::Kilobit => 10,
+            DataUnit::Megabit => 20,
+            DataUnit::Gigabit => 30,
+            DataUnit::Byte => 3,
+            DataUnit::Kilobyte => 13,
+            DataUnit::Megabyte => 23,
+            DataUnit::Gigabyte => 33,
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum TimeUnit {
     Seconds,
     Milliseconds,
     Microseconds,
     Nanoseconds,
+}
+
+impl TimeUnit {
+    /// Return the integer ratio of left / right with a boolean
+    /// flag to indicate whether it was the left (true) or right
+    /// (false) which is the numerator in the expression.
+    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let left = left.power();
+        let right = right.power();
+        let left_greater = left > right;
+        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
+        (left_greater, 1 << ratio)
+    }
+
+    pub fn power(&self) -> usize {
+        match self {
+            TimeUnit::Seconds => 0,
+            TimeUnit::Milliseconds => 3,
+            TimeUnit::Microseconds => 6,
+            TimeUnit::Nanoseconds => 9,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -251,11 +299,7 @@ impl Rate {
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate rate's time unit")?;
-        let rate = val
-            .rate
-            .map(verify_nonnegative)
-            .unwrap_or(Ok(f64::default()))
-            .context("Unable to validate rate's value.")?;
+        let rate = val.rate.unwrap_or(u64::MAX);
         Ok(Self {
             rate,
             data_unit,
@@ -267,7 +311,7 @@ impl Rate {
 impl Default for Rate {
     fn default() -> Self {
         Self {
-            rate: f64::INFINITY,
+            rate: u64::MAX,
             data_unit: DataUnit::default(),
             time_unit: TimeUnit::default(),
         }

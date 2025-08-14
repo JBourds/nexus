@@ -75,8 +75,7 @@ signal.shape = "omni"
 # Unit for distance
 signal.unit = "meters"
 
-# Node transmission rate
-transmission.rate = inf          
+# Node transmission rate (defaults to maximum value able to be hold by u64)
 transmission.data_unit = "bit"
 transmission.time_unit = "s"
 
@@ -99,7 +98,7 @@ packet_loss = { rate = 0, modifier = "flat", unit = "feet" }
 
 # Network Delays
 
-delays.processing = { rate = inf, data_unit = "b", time_unit = "s" }
+delays.processing = { data_unit = "b", time_unit = "s" }
 delays.propagation = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 
 [nodes]
