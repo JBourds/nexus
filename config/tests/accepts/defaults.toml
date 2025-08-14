@@ -76,8 +76,8 @@ signal.shape = "omni"
 signal.unit = "meters"
 
 # Node transmission rate (defaults to maximum value able to be hold by u64)
-transmission.data_unit = "bit"
-transmission.time_unit = "s"
+transmission.data = "bit"
+transmission.time = "s"
 
 # Each value which depends on distance is characterized by its average value
 # and standard deviation, as well as a type of decay and the unit of distance. 
@@ -92,14 +92,15 @@ transmission.time_unit = "s"
 # Error Rates
 
 # Probability of bit flipping in the transfer.
-bit_error = { rate = 0, modifier = "flat", unit = "m" }          
+bit_error = { rate = 0, distance = "m" }          
 
-packet_loss = { rate = 0, modifier = "flat", unit = "feet" }
+# Probability of experiencing packet loss
+packet_loss = { rate = 0, distance = "cm" }
 
 # Network Delays
 
-delays.processing = { data_unit = "b", time_unit = "s" }
-delays.propagation = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
+delays.processing = { data = "b", time = "s" }
+delays.propagation = { rate = 0, distance = "km" }
 
 [nodes]
 
@@ -117,7 +118,7 @@ delays.propagation = { avg = 0, std = 0, modifier = "flat", unit = "yards" }
 # output in the simulation folder.
 
 position.coordinates = [{}]
-position.units = "meters"
+position.unit = "meters"
 
 # Array of internal link names which act like ideal links but cannot be
 # received from any node outside of this one. Overrides existing link names,

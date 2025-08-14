@@ -3,10 +3,10 @@ Error {
     source: Error {
         context: "Unable to process link \"invalid\"",
         source: Error {
-            context: "Unable to validate link packet loss variable.",
+            context: "Unable to validate link signal",
             source: Error {
-                context: "Probability variable must be between 0 and 1.",
-                source: "Probability most be between 0 and 1.",
+                context: "Maximum distance must be positive.",
+                source: "Value must be positive",
             },
         },
     },

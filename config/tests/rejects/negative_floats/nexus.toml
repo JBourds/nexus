@@ -1,7 +1,7 @@
 [links]
 
 [links.invalid]
-packet_loss.rate = -0.1
+signal.max_range = -0.1
 
 [nodes]
 

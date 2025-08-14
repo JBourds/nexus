@@ -1,5 +1,4 @@
 [params]
-
 timestep.length = 1             # Quantity of timestep units for each step (defaults to 10)
 timestep.unit = "s"             # Unit timesteps are in (defaults to ms)
 timestep.count = 1000000        # Number of time steps to run the simulation for
@@ -20,8 +19,8 @@ signal.shape = "direct"
 
 # Iridium 9603 transmission rate (176 kbps).
 transmission.rate = 176
-transmission.data_unit = "kb"
-transmission.time_unit = "seconds"
+transmission.data = "kb"
+transmission.time = "seconds"
 
 delays.processing.rate = 60       
 
@@ -30,22 +29,20 @@ packet_loss.rate = 0.3
 [links.lora]
 packet_loss.rate = 0.01
 transmission.rate = 1         
-transmission.data_unit = "kb"
+transmission.data = "kb"
 
 signal.max_range = 4
 signal.offset = 2
 signal.unit = "km"
 signal.shape = "cone"
 
-delays.propagation.avg = 0.5      
-delays.propagation.std = 0.1      
+delays.propagation.rate = "0.1 * x"
+delays.propagation.time = "s"
+delays.propagation.distance = "km"
 
 [links.lora_bad]
 inherit = "lora"
 packet_loss.rate = 0.05        
-
-delays.propagation.avg = 1
-delays.propagation.std = 0.25      
 
 [nodes]
 [nodes.gateway]
@@ -110,7 +107,7 @@ position.coordinates = [
     { point = { x = 0, y = -1, z = 0}},
     [[-1, 0, 0]],
 ]
-position.units = "km"
+position.unit = "km"
 
 [[nodes.peripheral.protocols]]
 name = "tdma"

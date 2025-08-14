@@ -29,27 +29,25 @@ pub struct TimestepConfig {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct DistanceVar {
-    pub(super) modifier: Option<meval::Expr>,
-    pub(super) avg: Option<f64>,
-    pub(super) std: Option<f64>,
-    pub(super) unit: Option<Unit>,
+pub struct DistanceTimeVar {
+    pub(super) rate: Option<meval::Expr>,
+    pub(super) time: Option<Unit>,
+    pub(super) distance: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct ProbabilityVar {
-    pub(super) modifier: Option<meval::Expr>,
-    pub(super) rate: Option<f64>,
-    pub(super) unit: Option<Unit>,
+pub struct DistanceProbVar {
+    pub(super) rate: Option<meval::Expr>,
+    pub(super) distance: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Rate {
     pub(super) rate: Option<u64>,
-    pub(super) data_unit: Option<Unit>,
-    pub(super) time_unit: Option<Unit>,
+    pub(super) data: Option<Unit>,
+    pub(super) time: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -61,8 +59,8 @@ pub struct Link {
     pub(super) inherit: Option<String>,
     pub(super) signal: Option<Signal>,
     pub(super) transmission: Option<Rate>,
-    pub(super) packet_loss: Option<ProbabilityVar>,
-    pub(super) bit_error: Option<ProbabilityVar>,
+    pub(super) packet_loss: Option<DistanceProbVar>,
+    pub(super) bit_error: Option<DistanceProbVar>,
     pub(super) delays: Option<Delays>,
 }
 
@@ -71,7 +69,7 @@ pub struct Link {
 pub struct Delays {
     pub(super) transmission: Option<Rate>,
     pub(super) processing: Option<Rate>,
-    pub(super) propagation: Option<DistanceVar>,
+    pub(super) propagation: Option<DistanceTimeVar>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -96,7 +94,7 @@ pub struct ProtocolName(pub String);
 #[serde(default, deny_unknown_fields)]
 pub struct Position {
     pub(super) coordinates: Option<Vec<Coordinate>>,
-    pub(super) units: Option<Unit>,
+    pub(super) unit: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]

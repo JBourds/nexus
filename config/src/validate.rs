@@ -2,6 +2,7 @@ use super::parse;
 use crate::helpers::*;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -21,7 +22,7 @@ pub struct Simulation {
 #[derive(Clone, Default, Debug)]
 pub struct Position {
     pub coordinates: Vec<Coordinate>,
-    pub units: DistanceUnit,
+    pub unit: DistanceUnit,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -100,42 +101,51 @@ pub struct Params {
     pub root: PathBuf,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default)]
 pub struct Link {
     pub signal: Signal,
     pub transmission: Rate,
-    pub bit_error: ProbabilityVar,
-    pub packet_loss: ProbabilityVar,
-    pub delays: Delays,
+    pub bit_error: DistanceProbVar,
+    pub packet_loss: DistanceProbVar,
+    delays: DelayCalculator,
+}
+
+#[derive(Clone)]
+pub struct DelayCalculator {
+    pub transmission: Rate,
+    pub processing: Rate,
+    pub propagation: Rc<dyn Fn(f64) -> f64>,
+    pub ts_config: TimestepConfig,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Delays {
     pub transmission: Rate,
     pub processing: Rate,
-    pub propagation: DistanceVar,
+    pub propagation: DistanceTimeVar,
 }
 
+/// Expression of `x` (distance) which is equal to the duration in `unit`s
+/// for an event to occur (ex. Bits to propagate).
 #[derive(Clone, Debug, PartialEq)]
-pub struct DistanceVar {
-    pub avg: f64,
-    pub std: f64,
-    pub modifier: meval::Expr,
-    pub unit: DistanceUnit,
+pub struct DistanceTimeVar {
+    pub rate: meval::Expr,
+    pub time: TimeUnit,
+    pub distance: DistanceUnit,
 }
 
+/// Expression of `x` (distance) which equals the probability of an event.
 #[derive(Clone, Debug, PartialEq)]
-pub struct ProbabilityVar {
-    pub rate: f64,
-    pub modifier: meval::Expr,
-    pub unit: DistanceUnit,
+pub struct DistanceProbVar {
+    pub rate: meval::Expr,
+    pub distance: DistanceUnit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Rate {
     pub rate: u64,
-    pub data_unit: DataUnit,
-    pub time_unit: TimeUnit,
+    pub data: DataUnit,
+    pub time: TimeUnit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -150,8 +160,24 @@ pub enum DataUnit {
     Gigabyte,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeUnit {
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DistanceUnit {
+    Millimeters,
+    Centimeters,
+    Meters,
+    Kilometers,
+}
+
 impl DataUnit {
-    /// Return the integer ratio of left / right with a boolean
+    /// Return the left shift ratio of left / right with a boolean
     /// flag to indicate whether it was the left (true) or right
     /// (false) which is the numerator in the expression.
     pub fn ratio(left: Self, right: Self) -> (bool, usize) {
@@ -176,16 +202,8 @@ impl DataUnit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TimeUnit {
-    Seconds,
-    Milliseconds,
-    Microseconds,
-    Nanoseconds,
-}
-
 impl TimeUnit {
-    /// Return the integer ratio of left / right with a boolean
+    /// Return the log_10 ratio of left / right with a boolean
     /// flag to indicate whether it was the left (true) or right
     /// (false) which is the numerator in the expression.
     pub fn ratio(left: Self, right: Self) -> (bool, usize) {
@@ -204,15 +222,6 @@ impl TimeUnit {
             TimeUnit::Nanoseconds => 9,
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DistanceUnit {
-    Meters,
-    Kilometers,
-    Feet,
-    Yards,
-    Miles,
 }
 
 impl DataUnit {
@@ -268,11 +277,10 @@ impl DistanceUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
+            "millimeters" | "mm" => Self::Millimeters,
+            "centimeters" | "cm" => Self::Centimeters,
             "meters" | "m" => Self::Meters,
             "kilometers" | "km" => Self::Kilometers,
-            "feet" => Self::Feet,
-            "yards" => Self::Yards,
-            "miles" | "mi" => Self::Miles,
             s => {
                 bail!("Expected to find a valid distance unit but found \"{s}\"");
             }
@@ -289,22 +297,18 @@ impl Default for DistanceUnit {
 
 impl Rate {
     fn validate(val: parse::Rate) -> Result<Self> {
-        let data_unit = val
-            .data_unit
+        let data = val
+            .data
             .map(DataUnit::validate)
             .unwrap_or(Ok(DataUnit::default()))
             .context("Unable to validate rate's data unit")?;
-        let time_unit = val
-            .time_unit
+        let time = val
+            .time
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate rate's time unit")?;
         let rate = val.rate.unwrap_or(u64::MAX);
-        Ok(Self {
-            rate,
-            data_unit,
-            time_unit,
-        })
+        Ok(Self { rate, data, time })
     }
 }
 
@@ -312,8 +316,8 @@ impl Default for Rate {
     fn default() -> Self {
         Self {
             rate: u64::MAX,
-            data_unit: DataUnit::default(),
-            time_unit: TimeUnit::default(),
+            data: DataUnit::default(),
+            time: TimeUnit::default(),
         }
     }
 }
@@ -407,7 +411,7 @@ impl Simulation {
             let link = links
                 .remove(key)
                 .expect("Topological ordering is derived from links map so this should be okay.");
-            let res = Link::validate(link, &processed)
+            let res = Link::validate(link, &processed, params.timestep)
                 .context(format!("Unable to process link \"{}\"", key))?;
             let _ = processed.insert(key.to_string(), res);
         }
@@ -514,8 +518,8 @@ impl Delays {
             .context("Unable to validate processing delay rate.")?;
         let propagation = val
             .propagation
-            .map(DistanceVar::validate)
-            .unwrap_or(Ok(DistanceVar::default()))
+            .map(DistanceTimeVar::validate)
+            .unwrap_or(Ok(DistanceTimeVar::default()))
             .context("Unable to validate propagation delay rate.")?;
         Ok(Self {
             transmission,
@@ -525,63 +529,133 @@ impl Delays {
     }
 }
 
-impl Default for DistanceVar {
+impl DelayCalculator {
+    fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
+        let Ok(propagation) = delays.propagation.rate.bind("x") else {
+            bail!("Link rates must be a one variable function of distance \"x\"");
+        };
+        Ok(Self {
+            transmission: delays.transmission,
+            processing: delays.processing,
+            propagation: Rc::new(move |v| propagation(v).clamp(0.0, 1.0)),
+            ts_config,
+        })
+    }
+
+    /// Determine how many timesteps are required to delay for based on the
+    /// distance of the transmission and amount of data to transmit.
+    pub fn timestep_delay(&self, distance: f64, amount: u64, unit: DataUnit) -> u64 {
+        let processing = Self::timesteps_required(amount, unit, self.processing, self.ts_config);
+        let transmission =
+            Self::timesteps_required(amount, unit, self.transmission, self.ts_config);
+        let propagation = (self.propagation)(distance).ceil() as u64;
+        processing + transmission + propagation
+    }
+
+    /// Determine `u64` timesteps required to transmit `amount` `unit`s
+    /// of data given the `rate` data flows and the `config` for timesteps.
+    fn timesteps_required(amount: u64, unit: DataUnit, rate: Rate, config: TimestepConfig) -> u64 {
+        // Determine which data unit is larger (higher magnitude), and how many
+        // left shifts are needed to align them.
+        let (data_tx_greater, data_ratio) = DataUnit::ratio(rate.data, unit);
+        let (data_num, data_den) = if data_tx_greater {
+            (
+                amount,
+                rate.rate
+                    .checked_shl(data_ratio.try_into().unwrap())
+                    .expect("Left shift overflow."),
+            )
+        } else {
+            (
+                amount
+                    .checked_shl(data_ratio.try_into().unwrap())
+                    .expect("Left shift overflow."),
+                rate.rate,
+            )
+        };
+        // Determine which time unit is larger (higher magnitude), and how many
+        // powers of 10 the difference is by.
+        let (time_tx_greater, time_ratio) = TimeUnit::ratio(rate.time, config.unit);
+        let scalar = 10_u64
+            .checked_pow(time_ratio.try_into().unwrap())
+            .expect("Exponentiation overflow.");
+        let (time_num, time_den) = if time_tx_greater {
+            (data_num, data_den * scalar)
+        } else {
+            (data_num * scalar, data_den)
+        };
+        time_num.div_ceil(time_den)
+    }
+}
+
+impl Default for DelayCalculator {
     fn default() -> Self {
         Self {
-            avg: Default::default(),
-            std: Default::default(),
-            modifier: "1".parse().unwrap(),
-            unit: Default::default(),
+            transmission: Default::default(),
+            processing: Default::default(),
+            propagation: Rc::new(|_| 0.0),
+            ts_config: Default::default(),
         }
     }
 }
 
-impl DistanceVar {
-    fn validate(val: parse::DistanceVar) -> Result<Self> {
-        let def = Self::default();
-        let avg = val.avg.unwrap_or(def.avg);
-        let std = val.std.unwrap_or(def.std);
-        if avg < 0.0 {
-            bail!("Distance variable cannot have negative average.");
-        } else if std < 0.0 {
-            bail!("Distance variable cannot have negative standard deviation.");
+impl std::fmt::Debug for DelayCalculator {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "DelayCalculator {{ .. }}")
+    }
+}
+
+impl Default for DistanceTimeVar {
+    fn default() -> Self {
+        Self {
+            rate: "0".parse().unwrap(),
+            time: Default::default(),
+            distance: Default::default(),
         }
-        let unit = if let Some(unit) = val.unit {
-            DistanceUnit::validate(unit).context("Unable to validate distance unit.")?
+    }
+}
+
+impl DistanceTimeVar {
+    fn validate(val: parse::DistanceTimeVar) -> Result<Self> {
+        let def = Self::default();
+        let rate = val.rate.unwrap_or(def.rate);
+        let time = if let Some(time) = val.time {
+            TimeUnit::validate(time).context("Unable to validate distance time unit.")?
         } else {
-            def.unit
+            def.time
+        };
+        let distance = if let Some(distance) = val.distance {
+            DistanceUnit::validate(distance).context("Unable to validate distance unit.")?
+        } else {
+            def.distance
         };
         Ok(Self {
-            avg,
-            std,
-            unit,
-            ..def
+            rate,
+            time,
+            distance,
         })
     }
 }
 
-impl Default for ProbabilityVar {
+impl Default for DistanceProbVar {
     fn default() -> Self {
         Self {
-            rate: Default::default(),
-            modifier: "1".parse().unwrap(),
-            unit: Default::default(),
+            rate: "0".parse().unwrap(),
+            distance: DistanceUnit::default(),
         }
     }
 }
 
-impl ProbabilityVar {
-    fn validate(val: parse::ProbabilityVar) -> Result<Self> {
+impl DistanceProbVar {
+    fn validate(val: parse::DistanceProbVar) -> Result<Self> {
         let def = Self::default();
         let rate = val.rate.unwrap_or(def.rate);
-        let rate =
-            parse_probability(rate).context("Probability variable must be between 0 and 1.")?;
-        let unit = if let Some(unit) = val.unit {
-            DistanceUnit::validate(unit).context("Unable to validate distance unit.")?
+        let distance = if let Some(distance) = val.distance {
+            DistanceUnit::validate(distance).context("Unable to validate distance unit.")?
         } else {
-            def.unit
+            def.distance
         };
-        Ok(Self { rate, unit, ..def })
+        Ok(Self { rate, distance })
     }
 }
 
@@ -592,7 +666,11 @@ impl Link {
 
     /// Ensure provided values for links are valid and
     /// resolve inheritance.
-    fn validate(val: parse::Link, processed: &HashMap<LinkHandle, Self>) -> Result<Self> {
+    fn validate(
+        val: parse::Link,
+        processed: &HashMap<LinkHandle, Self>,
+        ts_config: TimestepConfig,
+    ) -> Result<Self> {
         let ancestor = processed
             .get(&val.inherit.expect("This should have been filled in"))
             .expect("Ancestory should have been resolved by now");
@@ -609,19 +687,21 @@ impl Link {
             .context("Unable to validate link transmission rate")?;
         let bit_error = val
             .bit_error
-            .map(ProbabilityVar::validate)
+            .map(DistanceProbVar::validate)
             .unwrap_or(Ok(ancestor.bit_error.clone()))
             .context("Unable to validate link bit error variable.")?;
         let packet_loss = val
             .packet_loss
-            .map(ProbabilityVar::validate)
+            .map(DistanceProbVar::validate)
             .unwrap_or(Ok(ancestor.packet_loss.clone()))
             .context("Unable to validate link packet loss variable.")?;
-        let delays = val
-            .delays
-            .map(Delays::validate)
-            .unwrap_or(Ok(ancestor.delays.clone()))
-            .context("Unable to validate link delays.")?;
+        let delays = if let Some(delays) = val.delays {
+            let delays = Delays::validate(delays).context("Failed to validate link delays.")?;
+            DelayCalculator::validate(delays, ts_config)
+                .context("Unable to create delay calculator.")?
+        } else {
+            ancestor.delays.clone()
+        };
         Ok(Self {
             signal,
             transmission,
@@ -644,12 +724,12 @@ impl Position {
             })
             .collect();
 
-        let units = val
-            .units
+        let unit = val
+            .unit
             .map(DistanceUnit::validate)
             .unwrap_or(Ok(DistanceUnit::default()))
             .context("Unable to validate distance units for node position")?;
-        Ok(Self { coordinates, units })
+        Ok(Self { coordinates, unit })
     }
 }
 
@@ -746,10 +826,17 @@ impl Node {
 
 impl Signal {
     fn validate(val: parse::Signal) -> Result<Self> {
-        let range = ConnectionRange {
-            maximum: val.max_range,
-            offset: val.offset,
-        };
+        let maximum = val
+            .max_range
+            .map(|maximum| {
+                verify_nonnegative(maximum).context("Maximum distance must be positive.")
+            })
+            .transpose()?;
+        let offset = val
+            .offset
+            .map(|maximum| verify_nonnegative(maximum).context("Distance offset must be positive."))
+            .transpose()?;
+        let range = ConnectionRange { maximum, offset };
         let shape = val
             .shape
             .map(SignalShape::validate)
@@ -889,3 +976,21 @@ impl NodeProtocol {
         })
     }
 }
+
+// #[config(test)]
+// mod tests {
+//     use super::*;
+//
+//     #[test]
+//     fn delay_calculator() {
+//         let ts_config = TimestepConfig {
+//             length: 100,
+//             unit: TimeUnit::Milliseconds,
+//             count: NonZeroU64::new(1000).unwrap(),
+//         };
+//         let transmission_rate = Rate { rate: 100, data: DataUnit::Bit, time: TimeUnit::Seconds };
+//         let processing_rate = Rate { rate: 10, data: DataUnit::Kilobit, time: TimeUnit::Seconds };
+//         let propagation = DistanceTimeVar { rate: "5", unit: DataUnit }
+//         let delays = Delays { transmission, processing, propagation }
+//     }
+// }
