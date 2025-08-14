@@ -1,6 +1,6 @@
 use super::parse;
 use crate::helpers::*;
-use anyhow::{Context, Result, bail, ensure};
+use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::{
     collections::{HashMap, HashSet},
@@ -96,15 +96,12 @@ pub struct TimestepConfig {
 #[derive(Clone, Debug)]
 pub struct Params {
     pub timestep: TimestepConfig,
-    pub intermediary_link_threshold: u32,
     pub seed: u64,
     pub root: PathBuf,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Link {
-    pub next: Option<LinkHandle>,
-    pub intermediaries: u32,
     pub signal: Signal,
     pub transmission: Rate,
     pub bit_error: ProbabilityVar,
@@ -306,9 +303,6 @@ impl Simulation {
                     if let Some(ref mut inherit) = link.inherit {
                         inherit.make_ascii_lowercase();
                     }
-                    if let Some(ref mut next) = link.next {
-                        next.make_ascii_lowercase();
-                    }
                     map.insert(name, link);
                     map
                 });
@@ -369,7 +363,7 @@ impl Simulation {
             let link = links
                 .remove(key)
                 .expect("Topological ordering is derived from links map so this should be okay.");
-            let res = Link::validate(link, &link_handles, &processed)
+            let res = Link::validate(link, &processed)
                 .context(format!("Unable to process link \"{}\"", key))?;
             let _ = processed.insert(key.to_string(), res);
         }
@@ -447,7 +441,6 @@ impl TimestepConfig {
 }
 
 impl Params {
-    const INTERMEDIARY_LINK_THRESHOLD_DEFAULT: u32 = 100;
     fn validate(config_root: &PathBuf, val: parse::Params) -> Result<Self> {
         let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
         let timestep = val
@@ -457,9 +450,6 @@ impl Params {
             .context("Unable to validate timestep configuration in simulation config.")?;
         Ok(Self {
             timestep,
-            intermediary_link_threshold: val
-                .intermediary_link_threshold
-                .unwrap_or(Self::INTERMEDIARY_LINK_THRESHOLD_DEFAULT),
             seed: val.seed.unwrap_or_default(),
             root,
         })
@@ -553,39 +543,15 @@ impl ProbabilityVar {
 
 impl Link {
     const DEFAULT: &'static str = "ideal";
-    const NONE: &'static str = "none";
     const DIRECT: &'static str = "direct";
     const INDIRECT: &'static str = "indirect";
 
     /// Ensure provided values for links are valid and
     /// resolve inheritance.
-    fn validate(
-        val: parse::Link,
-        link_handles: &HashSet<LinkHandle>,
-        processed: &HashMap<LinkHandle, Self>,
-    ) -> Result<Self> {
+    fn validate(val: parse::Link, processed: &HashMap<LinkHandle, Self>) -> Result<Self> {
         let ancestor = processed
             .get(&val.inherit.expect("This should have been filled in"))
             .expect("Ancestory should have been resolved by now");
-        let next = if let Some(next) = val.next {
-            if next == Link::NONE {
-                None
-            } else {
-                ensure!(
-                    link_handles.contains(&next),
-                    "Link points to nonexistent next link \"{next}\""
-                );
-                Some(next)
-            }
-        } else {
-            None
-        };
-        let intermediaries = val.intermediaries.unwrap_or(ancestor.intermediaries);
-        ensure!(
-            !(next.is_none() && intermediaries > 0),
-            "Cannot have a next link of \"none\" with nonzero intermediary links (found {intermediaries})"
-        );
-
         let signal = val
             .signal
             .map(Signal::validate)
@@ -613,8 +579,6 @@ impl Link {
             .unwrap_or(Ok(ancestor.delays.clone()))
             .context("Unable to validate link delays.")?;
         Ok(Self {
-            next,
-            intermediaries,
             signal,
             transmission,
             bit_error,
@@ -642,6 +606,17 @@ impl Position {
             .unwrap_or(Ok(DistanceUnit::default()))
             .context("Unable to validate distance units for node position")?;
         Ok(Self { coordinates, units })
+    }
+}
+
+impl Coordinate {
+    /// Return 3D euclidean distance between two points
+    /// after converting to a common unit system.
+    pub fn distance(from: &Self, to: &Self) -> f64 {
+        let x = from.point.x - to.point.x;
+        let y = from.point.y - to.point.y;
+        let z = from.point.z - to.point.z;
+        (x * x + y * y + z * z).sqrt()
     }
 }
 

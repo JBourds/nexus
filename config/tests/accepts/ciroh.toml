@@ -13,9 +13,6 @@ root = "~/testnet/simulations"  # Root directory to store simulation results
 # to the satellite. Assume once data has gotten to the satellite, everything
 # else is instant.
 [links.gateway_to_backend]
-# Assume ideal links after satellite receives packet.
-next = "ideal"            
-
 # This is not accurate to the true satellite as it communicates over
 # the air, but is more accurate in terms of how we use it (only the
 # gateway can send messages since it is the only satellite-enabled node)
@@ -31,9 +28,6 @@ delays.processing.rate = 60
 packet_loss.rate = 0.3
 
 [links.lora]
-# Lora is a radio protocol - no routing.
-next = "none"
-
 packet_loss.rate = 0.01
 transmission.rate = 1         
 transmission.data_unit = "kb"

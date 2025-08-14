@@ -12,7 +12,6 @@ pub struct Simulation {
 #[serde(default, deny_unknown_fields)]
 pub struct Params {
     pub(super) timestep: Option<TimestepConfig>,
-    pub(super) intermediary_link_threshold: Option<u32>,
     pub(super) seed: Option<u64>,
     pub(super) root: String,
 }
@@ -60,8 +59,6 @@ pub struct LinkName(pub String);
 #[serde(default, deny_unknown_fields)]
 pub struct Link {
     pub(super) inherit: Option<String>,
-    pub(super) next: Option<String>,
-    pub(super) intermediaries: Option<u32>,
     pub(super) signal: Option<Signal>,
     pub(super) transmission: Option<Rate>,
     pub(super) packet_loss: Option<ProbabilityVar>,

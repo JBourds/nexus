@@ -8,6 +8,7 @@ use std::{
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
+pub use ast::Link;
 
 use config::ast::{self, Cmd};
 use tracing::instrument;
@@ -30,18 +31,6 @@ pub struct NodeProtocol {
     pub accepts: HashSet<LinkHandle>,
     pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
     pub indirect: HashSet<LinkHandle>,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-#[allow(unused)]
-pub struct Link {
-    pub next: Option<LinkHandle>,
-    pub intermediaries: u32,
-    pub signal: ast::Signal,
-    pub transmission: ast::Rate,
-    pub bit_error: ast::ProbabilityVar,
-    pub packet_loss: ast::ProbabilityVar,
-    pub delays: ast::Delays,
 }
 
 impl Node {
@@ -127,32 +116,6 @@ impl NodeProtocol {
             accepts,
             direct,
             indirect,
-        })
-    }
-}
-
-impl Link {
-    #[instrument]
-    pub(super) fn from_ast(
-        node: ast::Link,
-        handles: &HashMap<ast::LinkHandle, LinkHandle>,
-    ) -> Result<Self, ConversionError> {
-        let next = if let Some(name) = node.next {
-            handles
-                .get(&name)
-                .map(|v| Option::Some(*v))
-                .ok_or(ConversionError::LinkHandleConversion(name))?
-        } else {
-            None
-        };
-        Ok(Self {
-            next,
-            intermediaries: node.intermediaries,
-            signal: node.signal,
-            transmission: node.transmission,
-            bit_error: node.bit_error,
-            packet_loss: node.packet_loss,
-            delays: node.delays,
         })
     }
 }

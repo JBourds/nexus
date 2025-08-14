@@ -48,11 +48,6 @@ impl Kernel {
         let node_handles = make_handles(node_names.clone());
         let (mut link_names, links) = unzip(sim.links);
         let link_handles = make_handles(link_names.clone());
-        let links = links
-            .into_iter()
-            .map(|link| Link::from_ast(link, &link_handles))
-            .collect::<Result<_, ConversionError>>()
-            .map_err(KernelError::KernelInit)?;
 
         // Internal links have a higher priority namespace than global links.
         // These still need to be converted into integer handles. Internal links

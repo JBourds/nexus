@@ -47,13 +47,6 @@ seed = 42
 # into (will create a new subdirectory each run)
 root = "~/testnet/simulations" 
 
-# Conservative threshold for the simulation to provide a warning
-# (while still allowing the simulation to run) when it detects 
-# more than this number of links between any two nodes after
-# unrolling recursive link relationships.
-intermediary_link_threshold = 100
-
-
 [links]
 
 # Default link which links implicitly inherit from
@@ -64,27 +57,6 @@ intermediary_link_threshold = 100
 [links.ideal]
 
 # Network Parameters
-
-# Name of the next link (to build composite links).
-# Section describing different link configurations. Links are added under this
-# section by adding a header such as [links.<name>]. Reserved link names are:
-#   - "self": Refers to the link name for the definition it is used within.
-#   - "direct": Link name reserved for direct outbound links between nodes.
-#   - "indirect": Link name reserved for links without explicit connections.
-#   - "ideal": Only default link name which cannot be overridden.
-next = "self"             
-
-# NOTE: If a given link has `N` intermediaries and its "next"
-# parameter has `K` intermediaries with a next parameter of "none",
-# the total number of links the packet will be passed through is `N` * `K`.
-# The simulation will warn you of any cycles and refuse the configuration.
-# It will also provide warnings when the calculated number of intermediaries
-# is >= to the value of `intermediary_link_threshold`.
-
-# Number of intermediary links. 
-# This allows for links to be recursively composed.
-# Must be 0/unspecified if the `next` parameter is set to "none".
-intermediaries = 0        
 
 # Control how far the signal can reach.
 #   - "max": Maximum distance packets can possible be delivered to.
