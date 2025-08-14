@@ -1,0 +1,38 @@
+# Example of multiple nodes
+# with slightly different build parameters
+
+[params]
+timestep.length = 1          
+timestep.unit = "s"
+timestep.count = 5        
+seed = 42                       
+root = "~/simulations"  
+
+[nodes]
+
+[nodes.client]
+deployments = [ 
+    { extra_args = ["1"] }, 
+    { extra_args = ["2"] },
+]
+
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+direct = [["server", "ideal"]]
+accepts = ["ideal"]
+
+
+[nodes.server]
+deployments = [ {} ]
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+direct = [["client", "ideal"]]
+accepts = ["ideal"]

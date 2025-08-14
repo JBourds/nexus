@@ -13,7 +13,7 @@ pub type ProtocolHandle = String;
 pub struct Simulation {
     pub params: Params,
     pub links: HashMap<LinkHandle, Link>,
-    pub nodes: HashMap<NodeHandle, Node>,
+    pub nodes: HashMap<NodeHandle, Vec<Node>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -49,14 +49,9 @@ pub struct Cmd {
 
 #[derive(Clone, Default, Debug)]
 pub struct Position {
-    pub coordinates: Vec<Coordinate>,
-    pub unit: DistanceUnit,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Coordinate {
-    pub point: Point,
     pub orientation: Orientation,
+    pub point: Point,
+    pub unit: DistanceUnit,
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -173,7 +168,7 @@ pub enum DistanceUnit {
     Kilometers,
 }
 
-impl Coordinate {
+impl Position {
     /// Return 3D euclidean distance between two points
     /// after converting to a common unit system.
     pub fn distance(from: &Self, to: &Self) -> f64 {
@@ -187,6 +182,13 @@ impl Coordinate {
 impl DelayCalculator {
     /// Determine how many timesteps are required to delay for based on the
     /// distance of the transmission and amount of data to transmit.
+    ///
+    /// Params:
+    /// - `distance`: Distance in `distance_unit`s.
+    /// - `amount`: Amount of data in `data_unit`s.
+    ///
+    /// Returns:
+    /// - Number of timeseps to delay.
     pub fn timestep_delay(
         &self,
         distance: f64,

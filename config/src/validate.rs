@@ -1,6 +1,7 @@
 use super::parse;
 use crate::ast::*;
 use crate::helpers::*;
+use crate::parse::Deployment;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -183,17 +184,15 @@ impl Simulation {
             .into_iter()
             .map(|(key, node)| {
                 Node::validate(config_root, node, &node_handles, &link_handles)
-                    .map(|node| (key, node))
+                    .map(|nodes| (key, nodes))
             })
-            .collect::<Result<HashMap<NodeHandle, Node>>>()
+            .collect::<Result<HashMap<NodeHandle, Vec<Node>>>>()
             .context("Failed to validate nodes")?;
+        let flat_nodes: Vec<_> = nodes.values().flatten().collect();
 
-        if nodes.iter().all(|(_, node)| node.protocols.is_empty()) {
+        if flat_nodes.iter().all(|node| node.protocols.is_empty()) {
             bail!("Must have at least one node protocol defined to run a simulation!");
-        } else if nodes
-            .iter()
-            .all(|(_, node)| node.position.coordinates.is_empty())
-        {
+        } else if flat_nodes.is_empty() {
             bail!(
                 "Must have at least one node position defined to run a simulation. \
             If your simulation does not require a fixed position, satisfy this requirement \
@@ -447,23 +446,22 @@ impl Link {
 }
 
 impl Position {
-    fn validate(val: parse::Position) -> Result<Self> {
-        let coordinates = val
-            .coordinates
-            .unwrap_or_default()
-            .into_iter()
-            .map(|c| Coordinate {
-                point: c.point.map(Point::validate).unwrap_or_default(),
-                orientation: c.orientation.map(Orientation::validate).unwrap_or_default(),
-            })
-            .collect();
-
+    fn validate(val: parse::Coordinate) -> Result<Self> {
+        let point = val.point.map(Point::validate).unwrap_or_default();
+        let orientation = val
+            .orientation
+            .map(Orientation::validate)
+            .unwrap_or_default();
         let unit = val
             .unit
             .map(DistanceUnit::validate)
             .unwrap_or(Ok(DistanceUnit::default()))
             .context("Unable to validate distance units for node position")?;
-        Ok(Self { coordinates, unit })
+        Ok(Self {
+            point,
+            orientation,
+            unit,
+        })
     }
 }
 
@@ -494,7 +492,7 @@ impl Node {
         val: parse::Node,
         node_handles: &HashSet<NodeHandle>,
         link_handles: &HashSet<LinkHandle>,
-    ) -> Result<Self> {
+    ) -> Result<Vec<Self>> {
         // No duplicate internal names
         let mut internal_names = HashSet::new();
         if let Some(names) = val.internal_names {
@@ -511,9 +509,6 @@ impl Node {
             .map(|s| s.to_lowercase())
             .chain(internal_names.clone())
             .collect();
-
-        let position = Position::validate(val.position.unwrap_or_default())
-            .context("Unable to validate node positioning of nodes with class")?;
 
         // No duplicate protocol names
         let mut protocol_names = HashSet::new();
@@ -539,11 +534,44 @@ impl Node {
             })
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
             .context("Unable to validate node protocols")?;
-        Ok(Self {
-            position,
-            internal_names: internal_names.into_iter().collect(),
-            protocols,
-        })
+
+        let mut nodes = vec![];
+        let Some(deployments) = val.deployments else {
+            bail!("Node cannot be defined without a single deployment location.");
+        };
+        for Deployment {
+            coordinates,
+            extra_args,
+        } in deployments
+        {
+            let protocols = protocols
+                .clone()
+                .into_iter()
+                .map(|(name, protocol)| {
+                    let protocol = if let Some(extra_args) = extra_args.clone() {
+                        let Cmd { cmd, mut args } = protocol.runner;
+                        args.extend(extra_args);
+                        NodeProtocol {
+                            runner: Cmd { cmd, args },
+                            ..protocol
+                        }
+                    } else {
+                        protocol
+                    };
+                    (name, protocol)
+                })
+                .collect::<HashMap<_, _>>();
+            let position = coordinates
+                .map(Position::validate)
+                .unwrap_or(Ok(Position::default()))
+                .context("Failed to validate node coordinates.")?;
+            nodes.push(Node {
+                position,
+                internal_names: internal_names.clone().into_iter().collect(),
+                protocols,
+            });
+        }
+        Ok(nodes)
     }
 }
 

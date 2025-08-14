@@ -92,9 +92,9 @@ pub struct ProtocolName(pub String);
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct Position {
-    pub(super) coordinates: Option<Vec<Coordinate>>,
-    pub(super) unit: Option<Unit>,
+pub struct Deployment {
+    pub(super) coordinates: Option<Coordinate>,
+    pub(super) extra_args: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -118,6 +118,7 @@ pub struct Orientation {
 pub struct Coordinate {
     pub(super) point: Option<Point>,
     pub(super) orientation: Option<Orientation>,
+    pub(super) unit: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -133,7 +134,7 @@ pub struct IndirectConnection(pub String);
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Node {
-    pub(super) position: Option<Position>,
+    pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
     pub(super) protocols: Option<Vec<NodeProtocol>>,
 }

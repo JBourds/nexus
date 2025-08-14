@@ -48,7 +48,10 @@ pub struct Kernel {
 
 impl Kernel {
     pub fn new(sim: ast::Simulation, files: fuse::KernelLinks) -> Result<Self, KernelError> {
-        let (node_names, nodes) = unzip(sim.nodes);
+        let (node_names, nodes) =
+            unzip(sim.nodes.into_iter().flat_map(|(handle, nodes)| {
+                nodes.into_iter().map(move |node| (handle.clone(), node))
+            }));
         let node_handles = make_handles(node_names.clone());
         let (mut link_names, links) = unzip(sim.links);
         let link_handles = make_handles(link_names.clone());
