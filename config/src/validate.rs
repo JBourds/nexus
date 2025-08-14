@@ -114,7 +114,7 @@ pub struct Link {
 pub struct DelayCalculator {
     pub transmission: Rate,
     pub processing: Rate,
-    pub propagation: Rc<dyn Fn(f64) -> f64>,
+    pub propagation: Rc<dyn Fn(f64, DistanceUnit) -> f64>,
     pub ts_config: TimestepConfig,
 }
 
@@ -177,54 +177,6 @@ pub enum DistanceUnit {
 }
 
 impl DataUnit {
-    /// Return the left shift ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.lshifts();
-        let right = right.lshifts();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, 1 << ratio)
-    }
-
-    pub fn lshifts(&self) -> usize {
-        match self {
-            DataUnit::Bit => 0,
-            DataUnit::Kilobit => 10,
-            DataUnit::Megabit => 20,
-            DataUnit::Gigabit => 30,
-            DataUnit::Byte => 3,
-            DataUnit::Kilobyte => 13,
-            DataUnit::Megabyte => 23,
-            DataUnit::Gigabyte => 33,
-        }
-    }
-}
-
-impl TimeUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, 1 << ratio)
-    }
-
-    pub fn power(&self) -> usize {
-        match self {
-            TimeUnit::Seconds => 0,
-            TimeUnit::Milliseconds => 3,
-            TimeUnit::Microseconds => 6,
-            TimeUnit::Nanoseconds => 9,
-        }
-    }
-}
-
-impl DataUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         let case_insensitive_len = val.0.len() - 1;
         val.0[..case_insensitive_len].make_ascii_lowercase();
@@ -242,6 +194,30 @@ impl DataUnit {
             }
         };
         Ok(variant)
+    }
+
+    /// Return the left shift ratio of left / right with a boolean
+    /// flag to indicate whether it was the left (true) or right
+    /// (false) which is the numerator in the expression.
+    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let left = left.lshifts();
+        let right = right.lshifts();
+        let left_greater = left > right;
+        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
+        (left_greater, ratio)
+    }
+
+    pub fn lshifts(&self) -> usize {
+        match self {
+            DataUnit::Bit => 0,
+            DataUnit::Kilobit => 10,
+            DataUnit::Megabit => 20,
+            DataUnit::Gigabit => 30,
+            DataUnit::Byte => 3,
+            DataUnit::Kilobyte => 13,
+            DataUnit::Megabyte => 23,
+            DataUnit::Gigabyte => 33,
+        }
     }
 }
 
@@ -265,6 +241,26 @@ impl TimeUnit {
         };
         Ok(variant)
     }
+
+    /// Return the log_10 ratio of left / right with a boolean
+    /// flag to indicate whether it was the left (true) or right
+    /// (false) which is the numerator in the expression.
+    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let left = left.power();
+        let right = right.power();
+        let left_greater = left > right;
+        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
+        (left_greater, ratio)
+    }
+
+    pub fn power(&self) -> usize {
+        match self {
+            TimeUnit::Seconds => 0,
+            TimeUnit::Milliseconds => 3,
+            TimeUnit::Microseconds => 6,
+            TimeUnit::Nanoseconds => 9,
+        }
+    }
 }
 
 impl Default for TimeUnit {
@@ -286,6 +282,26 @@ impl DistanceUnit {
             }
         };
         Ok(variant)
+    }
+
+    /// Return the log_10 ratio of left / right with a boolean
+    /// flag to indicate whether it was the left (true) or right
+    /// (false) which is the numerator in the expression.
+    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let left = left.power();
+        let right = right.power();
+        let left_greater = left > right;
+        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
+        (left_greater, ratio)
+    }
+
+    pub fn power(&self) -> usize {
+        match self {
+            DistanceUnit::Millimeters => 0,
+            DistanceUnit::Centimeters => 3,
+            DistanceUnit::Meters => 6,
+            DistanceUnit::Kilometers => 9,
+        }
     }
 }
 
@@ -531,30 +547,74 @@ impl Delays {
 
 impl DelayCalculator {
     fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
-        let Ok(propagation) = delays.propagation.rate.bind("x") else {
+        let DistanceTimeVar {
+            rate,
+            time,
+            distance: distance_unit,
+        } = delays.propagation;
+        let Ok(func) = rate.bind("x") else {
             bail!("Link rates must be a one variable function of distance \"x\"");
         };
         Ok(Self {
             transmission: delays.transmission,
             processing: delays.processing,
-            propagation: Rc::new(move |v| propagation(v).clamp(0.0, 1.0)),
+            propagation: Rc::new(move |distance: f64, unit: DistanceUnit| {
+                // Number of `distance_unit` / `time_unit` for value of `distance`
+                let dist_time_units = func(distance);
+                let (distance_prop_greater, distance_ratio) =
+                    DistanceUnit::ratio(distance_unit, unit);
+                // Scale distance units
+                let scalar = 10u64
+                    .checked_pow(distance_ratio.try_into().unwrap())
+                    .expect("Exponentiation overflow.") as f64;
+                let (distance_num, distance_den) = if distance_prop_greater {
+                    (dist_time_units, scalar)
+                } else {
+                    (dist_time_units * scalar, 1.0)
+                };
+                // Scale time units
+                let (time_prop_greater, time_ratio) = TimeUnit::ratio(time, ts_config.unit);
+                let scalar = 10_u64
+                    .checked_pow(time_ratio.try_into().unwrap())
+                    .expect("Exponentiation overflow.") as f64;
+                if time_prop_greater {
+                    distance_num * scalar / distance_den
+                } else {
+                    distance_num / distance_den * scalar
+                }
+            }),
             ts_config,
         })
     }
 
     /// Determine how many timesteps are required to delay for based on the
     /// distance of the transmission and amount of data to transmit.
-    pub fn timestep_delay(&self, distance: f64, amount: u64, unit: DataUnit) -> u64 {
-        let processing = Self::timesteps_required(amount, unit, self.processing, self.ts_config);
-        let transmission =
-            Self::timesteps_required(amount, unit, self.transmission, self.ts_config);
-        let propagation = (self.propagation)(distance).ceil() as u64;
-        processing + transmission + propagation
+    pub fn timestep_delay(
+        &self,
+        distance: f64,
+        amount: u64,
+        data_unit: DataUnit,
+        distance_unit: DistanceUnit,
+    ) -> u64 {
+        let (proc_num, proc_den) =
+            Self::timesteps_required(amount, data_unit, self.processing, self.ts_config);
+        let (trans_num, trans_den) =
+            Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config);
+        let prop_timesteps = (self.propagation)(distance, distance_unit);
+        let mut num = proc_num * trans_den + trans_num * proc_den;
+        let den = proc_den * trans_den;
+        num += (prop_timesteps * den as f64) as u64;
+        num.div_ceil(den)
     }
 
     /// Determine `u64` timesteps required to transmit `amount` `unit`s
     /// of data given the `rate` data flows and the `config` for timesteps.
-    fn timesteps_required(amount: u64, unit: DataUnit, rate: Rate, config: TimestepConfig) -> u64 {
+    fn timesteps_required(
+        amount: u64,
+        unit: DataUnit,
+        rate: Rate,
+        config: TimestepConfig,
+    ) -> (u64, u64) {
         // Determine which data unit is larger (higher magnitude), and how many
         // left shifts are needed to align them.
         let (data_tx_greater, data_ratio) = DataUnit::ratio(rate.data, unit);
@@ -579,12 +639,11 @@ impl DelayCalculator {
         let scalar = 10_u64
             .checked_pow(time_ratio.try_into().unwrap())
             .expect("Exponentiation overflow.");
-        let (time_num, time_den) = if time_tx_greater {
-            (data_num, data_den * scalar)
-        } else {
+        if time_tx_greater {
             (data_num * scalar, data_den)
-        };
-        time_num.div_ceil(time_den)
+        } else {
+            (data_num, data_den * scalar)
+        }
     }
 }
 
@@ -593,7 +652,7 @@ impl Default for DelayCalculator {
         Self {
             transmission: Default::default(),
             processing: Default::default(),
-            propagation: Rc::new(|_| 0.0),
+            propagation: Rc::new(|_, _| 0.0),
             ts_config: Default::default(),
         }
     }
@@ -977,20 +1036,53 @@ impl NodeProtocol {
     }
 }
 
-// #[config(test)]
-// mod tests {
-//     use super::*;
-//
-//     #[test]
-//     fn delay_calculator() {
-//         let ts_config = TimestepConfig {
-//             length: 100,
-//             unit: TimeUnit::Milliseconds,
-//             count: NonZeroU64::new(1000).unwrap(),
-//         };
-//         let transmission_rate = Rate { rate: 100, data: DataUnit::Bit, time: TimeUnit::Seconds };
-//         let processing_rate = Rate { rate: 10, data: DataUnit::Kilobit, time: TimeUnit::Seconds };
-//         let propagation = DistanceTimeVar { rate: "5", unit: DataUnit }
-//         let delays = Delays { transmission, processing, propagation }
-//     }
-// }
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn delay_calculator() {
+        let ts_config = TimestepConfig {
+            length: 1,
+            unit: TimeUnit::Seconds,
+            count: NonZeroU64::new(1000).unwrap(),
+        };
+        let transmission = Rate {
+            rate: 200,
+            data: DataUnit::Bit,
+            time: TimeUnit::Seconds,
+        };
+        let processing = Rate {
+            rate: 200,
+            data: DataUnit::Bit,
+            time: TimeUnit::Seconds,
+        };
+        let propagation = DistanceTimeVar {
+            rate: "5 * x".parse().unwrap(),
+            time: TimeUnit::Seconds,
+            distance: DistanceUnit::Kilometers,
+        };
+        let delays = Delays {
+            transmission,
+            processing,
+            propagation,
+        };
+        let calculator = DelayCalculator::validate(delays, ts_config).unwrap();
+        let tests = [
+            ((0.0001, 0, DataUnit::Bit, DistanceUnit::Kilometers), 1),
+            ((0.0, 1, DataUnit::Bit, DistanceUnit::Kilometers), 1),
+            ((0.0, 100, DataUnit::Bit, DistanceUnit::Kilometers), 1),
+            ((1.0, 0, DataUnit::Bit, DistanceUnit::Kilometers), 5),
+            ((1.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 7),
+            ((1.4, 200, DataUnit::Bit, DistanceUnit::Kilometers), 9),
+            ((1.9, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
+            ((2.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
+        ];
+        for ((distance, amount, data_unit, distance_unit), expected) in tests.into_iter() {
+            assert_eq!(
+                calculator.timestep_delay(distance, amount, data_unit, distance_unit),
+                expected
+            );
+        }
+    }
+}
