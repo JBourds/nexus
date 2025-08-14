@@ -15,6 +15,7 @@ use tracing::{Level, debug, error, event, instrument};
 use crate::types::LinkHandle;
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct Message {
     sender: PID,
     link: LinkHandle,
@@ -24,6 +25,7 @@ pub(crate) struct Message {
 /// Route information computed based on link parameters and number of
 /// intermediaries representative of the entire route.
 #[derive(Debug, Default)]
+#[allow(dead_code)]
 struct Route {
     index_pointer: usize,
     delay_avg: u64,
@@ -33,6 +35,7 @@ struct Route {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) struct Router {
     queued: BTreeMap<u64, Message>,
     nodes: Vec<Node>,

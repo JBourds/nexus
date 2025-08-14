@@ -3,8 +3,6 @@ use fuse::{PID, errors::SocketError};
 
 use thiserror::Error;
 
-use crate::{router::Message, types::LinkHandle};
-
 #[derive(Error, Debug)]
 pub enum KernelError {
     #[error("Failed to initialize kernel due to `{0}`")]

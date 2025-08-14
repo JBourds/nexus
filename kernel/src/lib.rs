@@ -4,7 +4,6 @@ pub mod log;
 mod router;
 mod types;
 
-use fuse::errors::SocketError;
 use mio::unix::SourceFd;
 
 use helpers::{make_handles, unzip};
@@ -15,18 +14,12 @@ use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
 };
-use tracing::{Level, info};
 
-use std::{
-    collections::{HashMap, HashSet},
-    io,
-    os::unix::net::UnixDatagram,
-    rc::Rc,
-};
+use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, TimestepConfig};
 use runner::RunCmd;
-use tracing::{debug, event, instrument};
+use tracing::instrument;
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
