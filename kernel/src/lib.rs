@@ -25,6 +25,10 @@ use types::*;
 use crate::errors::{ConversionError, KernelError};
 use crate::router::Router;
 
+/// Unique identifier for a link belonging to a node protocol
+/// - `fuse::PID`: Process identifier (executing node protocol)
+/// - `NodeHandle`: Node the process belongs to.
+/// - `LinkHandle`: Link the connection is over.
 pub type LinkId = (fuse::PID, NodeHandle, LinkHandle);
 extern crate tracing;
 
