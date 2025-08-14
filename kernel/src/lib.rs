@@ -19,7 +19,7 @@ use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, TimestepConfig};
 use runner::RunCmd;
-use tracing::instrument;
+use tracing::{instrument, warn};
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
@@ -131,6 +131,7 @@ impl Kernel {
             self.handles,
             self.sockets,
         );
+        let mut frame_time_exceeded: u64 = 0;
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             poll.poll(&mut events, Some(delta))
@@ -144,10 +145,22 @@ impl Kernel {
             if let Ok(elapsed) = start.elapsed() {
                 if elapsed < delta {
                     std::thread::sleep(delta - elapsed);
+                } else {
+                    frame_time_exceeded <<= 1;
+                    frame_time_exceeded |= 1;
+                    match frame_time_exceeded.count_ones() {
+                        n if n >= 48 => {
+                            warn!(
+                                "{n} out of the last {} frames have exceeded the timestep delta. Consider using a longer timestep.",
+                                u64::BITS
+                            );
+                            frame_time_exceeded = 0;
+                        }
+                        _ => {}
+                    }
                 }
             }
         }
-
         Ok(())
     }
 
