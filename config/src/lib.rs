@@ -6,9 +6,7 @@ mod helpers;
 pub(crate) mod parse;
 mod validate;
 
-pub mod ast {
-    pub use crate::validate::*;
-}
+pub mod ast;
 
 pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
     let config_text = std::fs::read_to_string(&config_root).context(format!(

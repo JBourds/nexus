@@ -1,4 +1,5 @@
 use super::parse;
+use crate::ast::*;
 use crate::helpers::*;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
@@ -7,174 +8,6 @@ use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
 };
-
-pub type NodeHandle = String;
-pub type LinkHandle = String;
-pub type ProtocolHandle = String;
-
-#[derive(Clone, Debug)]
-pub struct Simulation {
-    pub params: Params,
-    pub links: HashMap<LinkHandle, Link>,
-    pub nodes: HashMap<NodeHandle, Node>,
-}
-
-#[derive(Clone, Default, Debug)]
-pub struct Position {
-    pub coordinates: Vec<Coordinate>,
-    pub unit: DistanceUnit,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Coordinate {
-    pub point: Point,
-    pub orientation: Orientation,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Orientation {
-    pub az: f64,
-    pub el: f64,
-    pub roll: f64,
-}
-
-#[derive(Clone, Debug)]
-pub struct Node {
-    pub position: Position,
-    pub internal_names: Vec<ProtocolHandle>,
-    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
-}
-
-#[derive(Clone, Debug)]
-pub struct NodeProtocol {
-    pub root: PathBuf,
-    pub runner: Cmd,
-    pub accepts: HashSet<LinkHandle>,
-    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
-    pub indirect: HashSet<LinkHandle>,
-}
-
-#[derive(Clone, Debug)]
-pub struct Cmd {
-    pub cmd: String,
-    pub args: Vec<String>,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Signal {
-    pub range: ConnectionRange,
-    pub shape: SignalShape,
-    pub unit: DistanceUnit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SignalShape {
-    Omnidirectional,
-    Cone,
-    Direct,
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ConnectionRange {
-    pub maximum: Option<f64>,
-    pub offset: Option<f64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TimestepConfig {
-    pub length: u64,
-    pub unit: TimeUnit,
-    pub count: NonZeroU64,
-}
-
-#[derive(Clone, Debug)]
-pub struct Params {
-    pub timestep: TimestepConfig,
-    pub seed: u64,
-    pub root: PathBuf,
-}
-
-#[derive(Clone, Debug, Default)]
-pub struct Link {
-    pub signal: Signal,
-    pub transmission: Rate,
-    pub bit_error: DistanceProbVar,
-    pub packet_loss: DistanceProbVar,
-    delays: DelayCalculator,
-}
-
-#[derive(Clone)]
-pub struct DelayCalculator {
-    pub transmission: Rate,
-    pub processing: Rate,
-    pub propagation: Rc<dyn Fn(f64, DistanceUnit) -> f64>,
-    pub ts_config: TimestepConfig,
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Delays {
-    pub transmission: Rate,
-    pub processing: Rate,
-    pub propagation: DistanceTimeVar,
-}
-
-/// Expression of `x` (distance) which is equal to the duration in `unit`s
-/// for an event to occur (ex. Bits to propagate).
-#[derive(Clone, Debug, PartialEq)]
-pub struct DistanceTimeVar {
-    pub rate: meval::Expr,
-    pub time: TimeUnit,
-    pub distance: DistanceUnit,
-}
-
-/// Expression of `x` (distance) which equals the probability of an event.
-#[derive(Clone, Debug, PartialEq)]
-pub struct DistanceProbVar {
-    pub rate: meval::Expr,
-    pub distance: DistanceUnit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rate {
-    pub rate: u64,
-    pub data: DataUnit,
-    pub time: TimeUnit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DataUnit {
-    Bit,
-    Kilobit,
-    Megabit,
-    Gigabit,
-    Byte,
-    Kilobyte,
-    Megabyte,
-    Gigabyte,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TimeUnit {
-    Seconds,
-    Milliseconds,
-    Microseconds,
-    Nanoseconds,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DistanceUnit {
-    Millimeters,
-    Centimeters,
-    Meters,
-    Kilometers,
-}
 
 impl DataUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
@@ -195,36 +28,6 @@ impl DataUnit {
         };
         Ok(variant)
     }
-
-    /// Return the left shift ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.lshifts();
-        let right = right.lshifts();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn lshifts(&self) -> usize {
-        match self {
-            DataUnit::Bit => 0,
-            DataUnit::Kilobit => 10,
-            DataUnit::Megabit => 20,
-            DataUnit::Gigabit => 30,
-            DataUnit::Byte => 3,
-            DataUnit::Kilobyte => 13,
-            DataUnit::Megabyte => 23,
-            DataUnit::Gigabyte => 33,
-        }
-    }
-}
-
-impl Default for DataUnit {
-    fn default() -> Self {
-        Self::Bit
-    }
 }
 
 impl TimeUnit {
@@ -240,32 +43,6 @@ impl TimeUnit {
             }
         };
         Ok(variant)
-    }
-
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
-        match self {
-            TimeUnit::Seconds => 0,
-            TimeUnit::Milliseconds => 3,
-            TimeUnit::Microseconds => 6,
-            TimeUnit::Nanoseconds => 9,
-        }
-    }
-}
-
-impl Default for TimeUnit {
-    fn default() -> Self {
-        Self::Milliseconds
     }
 }
 
@@ -283,32 +60,6 @@ impl DistanceUnit {
         };
         Ok(variant)
     }
-
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
-        match self {
-            DistanceUnit::Millimeters => 0,
-            DistanceUnit::Centimeters => 3,
-            DistanceUnit::Meters => 6,
-            DistanceUnit::Kilometers => 9,
-        }
-    }
-}
-
-impl Default for DistanceUnit {
-    fn default() -> Self {
-        Self::Kilometers
-    }
 }
 
 impl Rate {
@@ -325,16 +76,6 @@ impl Rate {
             .context("Unable to validate rate's time unit")?;
         let rate = val.rate.unwrap_or(u64::MAX);
         Ok(Self { rate, data, time })
-    }
-}
-
-impl Default for Rate {
-    fn default() -> Self {
-        Self {
-            rate: u64::MAX,
-            data: DataUnit::default(),
-            time: TimeUnit::default(),
-        }
     }
 }
 
@@ -470,19 +211,9 @@ impl Simulation {
     }
 }
 
-impl Default for TimestepConfig {
-    fn default() -> Self {
-        Self {
-            length: Self::DEFAULT_TIMESTEP_LEN,
-            unit: TimeUnit::default(),
-            count: Self::DEFAULT_TIMESTEP_COUNT,
-        }
-    }
-}
-
 impl TimestepConfig {
-    const DEFAULT_TIMESTEP_LEN: u64 = 1;
-    const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
+    pub(crate) const DEFAULT_TIMESTEP_LEN: u64 = 1;
+    pub(crate) const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
 
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
         let unit = val
@@ -546,7 +277,7 @@ impl Delays {
 }
 
 impl DelayCalculator {
-    fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
+    pub(crate) fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
         let DistanceTimeVar {
             rate,
             time,
@@ -587,29 +318,9 @@ impl DelayCalculator {
         })
     }
 
-    /// Determine how many timesteps are required to delay for based on the
-    /// distance of the transmission and amount of data to transmit.
-    pub fn timestep_delay(
-        &self,
-        distance: f64,
-        amount: u64,
-        data_unit: DataUnit,
-        distance_unit: DistanceUnit,
-    ) -> u64 {
-        let (proc_num, proc_den) =
-            Self::timesteps_required(amount, data_unit, self.processing, self.ts_config);
-        let (trans_num, trans_den) =
-            Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config);
-        let prop_timesteps = (self.propagation)(distance, distance_unit);
-        let mut num = proc_num * trans_den + trans_num * proc_den;
-        let den = proc_den * trans_den;
-        num += (prop_timesteps * den as f64) as u64;
-        num.div_ceil(den)
-    }
-
     /// Determine `u64` timesteps required to transmit `amount` `unit`s
     /// of data given the `rate` data flows and the `config` for timesteps.
-    fn timesteps_required(
+    pub(crate) fn timesteps_required(
         amount: u64,
         unit: DataUnit,
         rate: Rate,
@@ -647,33 +358,6 @@ impl DelayCalculator {
     }
 }
 
-impl Default for DelayCalculator {
-    fn default() -> Self {
-        Self {
-            transmission: Default::default(),
-            processing: Default::default(),
-            propagation: Rc::new(|_, _| 0.0),
-            ts_config: Default::default(),
-        }
-    }
-}
-
-impl std::fmt::Debug for DelayCalculator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DelayCalculator {{ .. }}")
-    }
-}
-
-impl Default for DistanceTimeVar {
-    fn default() -> Self {
-        Self {
-            rate: "0".parse().unwrap(),
-            time: Default::default(),
-            distance: Default::default(),
-        }
-    }
-}
-
 impl DistanceTimeVar {
     fn validate(val: parse::DistanceTimeVar) -> Result<Self> {
         let def = Self::default();
@@ -693,15 +377,6 @@ impl DistanceTimeVar {
             time,
             distance,
         })
-    }
-}
-
-impl Default for DistanceProbVar {
-    fn default() -> Self {
-        Self {
-            rate: "0".parse().unwrap(),
-            distance: DistanceUnit::default(),
-        }
     }
 }
 
@@ -789,17 +464,6 @@ impl Position {
             .unwrap_or(Ok(DistanceUnit::default()))
             .context("Unable to validate distance units for node position")?;
         Ok(Self { coordinates, unit })
-    }
-}
-
-impl Coordinate {
-    /// Return 3D euclidean distance between two points
-    /// after converting to a common unit system.
-    pub fn distance(from: &Self, to: &Self) -> f64 {
-        let x = from.point.x - to.point.x;
-        let y = from.point.y - to.point.y;
-        let z = from.point.z - to.point.z;
-        (x * x + y * y + z * z).sqrt()
     }
 }
 
@@ -924,36 +588,7 @@ impl SignalShape {
     }
 }
 
-impl Default for SignalShape {
-    fn default() -> Self {
-        Self::Omnidirectional
-    }
-}
-impl std::fmt::Display for Cmd {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{} {}", self.cmd, self.args.join(" "))
-    }
-}
 impl NodeProtocol {
-    pub fn links(&self) -> HashSet<LinkHandle> {
-        let mut links = self.outbound_links();
-        links.extend(self.inbound_links());
-        links
-    }
-
-    pub fn outbound_links(&self) -> HashSet<LinkHandle> {
-        let mut links = HashSet::new();
-        for link_set in self.direct.values() {
-            links.extend(link_set.iter().cloned());
-        }
-        links.extend(self.indirect.iter().cloned());
-        links
-    }
-
-    pub fn inbound_links(&self) -> HashSet<LinkHandle> {
-        self.accepts.clone()
-    }
-
     fn validate(
         config_root: &PathBuf,
         val: parse::NodeProtocol,
@@ -1033,56 +668,5 @@ impl NodeProtocol {
             direct,
             indirect,
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn delay_calculator() {
-        let ts_config = TimestepConfig {
-            length: 1,
-            unit: TimeUnit::Seconds,
-            count: NonZeroU64::new(1000).unwrap(),
-        };
-        let transmission = Rate {
-            rate: 200,
-            data: DataUnit::Bit,
-            time: TimeUnit::Seconds,
-        };
-        let processing = Rate {
-            rate: 200,
-            data: DataUnit::Bit,
-            time: TimeUnit::Seconds,
-        };
-        let propagation = DistanceTimeVar {
-            rate: "5 * x".parse().unwrap(),
-            time: TimeUnit::Seconds,
-            distance: DistanceUnit::Kilometers,
-        };
-        let delays = Delays {
-            transmission,
-            processing,
-            propagation,
-        };
-        let calculator = DelayCalculator::validate(delays, ts_config).unwrap();
-        let tests = [
-            ((0.0001, 0, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((0.0, 1, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((0.0, 100, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((1.0, 0, DataUnit::Bit, DistanceUnit::Kilometers), 5),
-            ((1.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 7),
-            ((1.4, 200, DataUnit::Bit, DistanceUnit::Kilometers), 9),
-            ((1.9, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
-            ((2.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
-        ];
-        for ((distance, amount, data_unit, distance_unit), expected) in tests.into_iter() {
-            assert_eq!(
-                calculator.timestep_delay(distance, amount, data_unit, distance_unit),
-                expected
-            );
-        }
     }
 }
