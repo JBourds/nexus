@@ -1,70 +1,141 @@
 use super::parse;
+use crate::helpers::*;
 use anyhow::{Context, Result, bail, ensure};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
 };
 
-fn expand_home(path: &PathBuf) -> PathBuf {
-    if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/") {
-        if let Some(home_dir) = home::home_dir() {
-            return home_dir.join(stripped);
-        }
-    }
-    PathBuf::from(path)
-}
-
-fn verify_nonnegative(val: f64) -> Result<f64> {
-    if val.is_sign_negative() {
-        bail!("Value must be positive")
-    } else {
-        Ok(val)
-    }
-}
-
-fn parse_probability(val: f64) -> Result<f64> {
-    if !(0.0..=1.0).contains(&val) {
-        bail!("Probability most be between 0 and 1.")
-    } else {
-        Ok(val)
-    }
-}
-
-fn resolve_directory(config_root: &PathBuf, path: &PathBuf) -> Result<PathBuf> {
-    let root = expand_home(path);
-    let root = if root.is_relative() {
-        std::fs::canonicalize(Path::new(config_root).join(root))?
-    } else {
-        root
-    };
-    match root.try_exists() {
-        Ok(true) => {}
-        Ok(false) => {
-            bail!(
-                "Unable to find directory at path \"{}\"",
-                path.to_string_lossy()
-            );
-        }
-        err => {
-            err.context(format!(
-                "Could not verify whether root exists at path \"{:?}\"",
-                root.to_string_lossy()
-            ))?;
-        }
-    }
-    if !root.is_dir() {
-        bail!("Protocol root at \"{}\" is not a directory", root.display());
-    } else {
-        Ok(root)
-    }
-}
-
-// Just use the string names as handles here since they will be small
-// strings and the overhead of cloning a Rc is likely slower
 pub type NodeHandle = String;
 pub type LinkHandle = String;
 pub type ProtocolHandle = String;
+
+#[derive(Clone, Debug)]
+pub struct Simulation {
+    pub params: Params,
+    pub links: HashMap<LinkHandle, Link>,
+    pub nodes: HashMap<NodeHandle, Node>,
+}
+
+#[derive(Clone, Default, Debug)]
+pub struct Position {
+    pub coordinates: Vec<Coordinate>,
+    pub units: DistanceUnit,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Coordinate {
+    pub point: Point,
+    pub orientation: Orientation,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Point {
+    pub x: f64,
+    pub y: f64,
+    pub z: f64,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Orientation {
+    pub az: f64,
+    pub el: f64,
+    pub roll: f64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Node {
+    pub position: Position,
+    pub internal_names: Vec<ProtocolHandle>,
+    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+}
+
+#[derive(Clone, Debug)]
+pub struct NodeProtocol {
+    pub root: PathBuf,
+    pub runner: Cmd,
+    pub accepts: HashSet<LinkHandle>,
+    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
+    pub indirect: HashSet<LinkHandle>,
+}
+
+#[derive(Clone, Debug)]
+pub struct Cmd {
+    pub cmd: String,
+    pub args: Vec<String>,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Signal {
+    pub range: ConnectionRange,
+    pub shape: SignalShape,
+    pub unit: DistanceUnit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum SignalShape {
+    Omnidirectional,
+    Cone,
+    Direct,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ConnectionRange {
+    pub maximum: Option<f64>,
+    pub offset: Option<f64>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TimestepConfig {
+    pub length: u64,
+    pub unit: TimeUnit,
+    pub count: NonZeroU64,
+}
+
+#[derive(Clone, Debug)]
+pub struct Params {
+    pub timestep: TimestepConfig,
+    pub intermediary_link_threshold: u32,
+    pub seed: u64,
+    pub root: PathBuf,
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Link {
+    pub next: Option<LinkHandle>,
+    pub intermediaries: u32,
+    pub signal: Signal,
+    pub transmission: Rate,
+    pub bit_error: ProbabilityVar,
+    pub packet_loss: ProbabilityVar,
+    pub queue_delay: DistanceVar,
+    pub processing_delay: DistanceVar,
+    pub connection_delay: DistanceVar,
+    pub propagation_delay: DistanceVar,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct DistanceVar {
+    pub avg: f64,
+    pub std: f64,
+    pub modifier: meval::Expr,
+    pub unit: DistanceUnit,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ProbabilityVar {
+    pub rate: f64,
+    pub modifier: meval::Expr,
+    pub unit: DistanceUnit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Rate {
+    pub rate: f64,
+    pub data_unit: DataUnit,
+    pub time_unit: TimeUnit,
+}
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum DataUnit {
@@ -76,6 +147,23 @@ pub enum DataUnit {
     Kilobyte,
     Megabyte,
     Gigabyte,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum TimeUnit {
+    Seconds,
+    Milliseconds,
+    Microseconds,
+    Nanoseconds,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum DistanceUnit {
+    Meters,
+    Kilometers,
+    Feet,
+    Yards,
+    Miles,
 }
 
 impl DataUnit {
@@ -105,14 +193,6 @@ impl Default for DataUnit {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TimeUnit {
-    Seconds,
-    Milliseconds,
-    Microseconds,
-    Nanoseconds,
-}
-
 impl TimeUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
@@ -133,15 +213,6 @@ impl Default for TimeUnit {
     fn default() -> Self {
         Self::Milliseconds
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DistanceUnit {
-    Meters,
-    Kilometers,
-    Feet,
-    Yards,
-    Miles,
 }
 
 impl DistanceUnit {
@@ -165,13 +236,6 @@ impl Default for DistanceUnit {
     fn default() -> Self {
         Self::Kilometers
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rate {
-    pub rate: f64,
-    pub data_unit: DataUnit,
-    pub time_unit: TimeUnit,
 }
 
 impl Rate {
@@ -207,13 +271,6 @@ impl Default for Rate {
             time_unit: TimeUnit::default(),
         }
     }
-}
-
-#[derive(Clone, Debug)]
-pub struct Simulation {
-    pub params: Params,
-    pub links: HashMap<LinkHandle, Link>,
-    pub nodes: HashMap<NodeHandle, Node>,
 }
 impl Simulation {
     /// Guaranteed to not have a cycle because it only traces links with a
@@ -350,13 +407,6 @@ impl Simulation {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TimestepConfig {
-    pub length: u64,
-    pub unit: TimeUnit,
-    pub count: NonZeroU64,
-}
-
 impl Default for TimestepConfig {
     fn default() -> Self {
         Self {
@@ -391,13 +441,6 @@ impl TimestepConfig {
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Params {
-    pub timestep: TimestepConfig,
-    pub intermediary_link_threshold: u32,
-    pub seed: u64,
-    pub root: PathBuf,
-}
 impl Params {
     const INTERMEDIARY_LINK_THRESHOLD_DEFAULT: u32 = 100;
     fn validate(config_root: &PathBuf, val: parse::Params) -> Result<Self> {
@@ -416,14 +459,6 @@ impl Params {
             root,
         })
     }
-}
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DistanceVar {
-    pub avg: f64,
-    pub std: f64,
-    pub modifier: meval::Expr,
-    pub unit: DistanceUnit,
 }
 
 impl Default for DistanceVar {
@@ -461,13 +496,6 @@ impl DistanceVar {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
-pub struct ProbabilityVar {
-    pub rate: f64,
-    pub modifier: meval::Expr,
-    pub unit: DistanceUnit,
-}
-
 impl Default for ProbabilityVar {
     fn default() -> Self {
         Self {
@@ -491,20 +519,6 @@ impl ProbabilityVar {
         };
         Ok(Self { rate, unit, ..def })
     }
-}
-
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Link {
-    pub next: Option<LinkHandle>,
-    pub intermediaries: u32,
-    pub signal: Signal,
-    pub transmission: Rate,
-    pub bit_error: ProbabilityVar,
-    pub packet_loss: ProbabilityVar,
-    pub queue_delay: DistanceVar,
-    pub processing_delay: DistanceVar,
-    pub connection_delay: DistanceVar,
-    pub propagation_delay: DistanceVar,
 }
 
 impl Link {
@@ -598,12 +612,6 @@ impl Link {
     }
 }
 
-#[derive(Clone, Default, Debug)]
-pub struct Position {
-    pub coordinates: Vec<Coordinate>,
-    pub units: DistanceUnit,
-}
-
 impl Position {
     fn validate(val: parse::Position) -> Result<Self> {
         let coordinates = val
@@ -625,13 +633,6 @@ impl Position {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Point {
-    pub x: f64,
-    pub y: f64,
-    pub z: f64,
-}
-
 impl Point {
     fn validate(val: parse::Point) -> Self {
         Self {
@@ -642,13 +643,6 @@ impl Point {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Orientation {
-    pub az: f64,
-    pub el: f64,
-    pub roll: f64,
-}
-
 impl Orientation {
     fn validate(val: parse::Orientation) -> Self {
         Self {
@@ -657,19 +651,6 @@ impl Orientation {
             roll: val.roll.unwrap_or_default(),
         }
     }
-}
-
-#[derive(Clone, Copy, Debug, Default)]
-pub struct Coordinate {
-    pub point: Point,
-    pub orientation: Orientation,
-}
-
-#[derive(Clone, Debug)]
-pub struct Node {
-    pub position: Position,
-    pub internal_names: Vec<ProtocolHandle>,
-    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
 }
 
 impl Node {
@@ -732,13 +713,6 @@ impl Node {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct Signal {
-    pub range: ConnectionRange,
-    pub shape: SignalShape,
-    pub unit: DistanceUnit,
-}
-
 impl Signal {
     fn validate(val: parse::Signal) -> Result<Self> {
         let range = ConnectionRange {
@@ -758,20 +732,6 @@ impl Signal {
         Ok(Self { range, shape, unit })
     }
 }
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-pub struct ConnectionRange {
-    pub maximum: Option<f64>,
-    pub offset: Option<f64>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum SignalShape {
-    Omnidirectional,
-    Cone,
-    Direct,
-}
-
 impl SignalShape {
     fn validate(mut val: parse::SignalShape) -> Result<Self> {
         val.0.make_ascii_lowercase();
@@ -792,28 +752,11 @@ impl Default for SignalShape {
         Self::Omnidirectional
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct Cmd {
-    pub cmd: String,
-    pub args: Vec<String>,
-}
-
 impl std::fmt::Display for Cmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} {}", self.cmd, self.args.join(" "))
     }
 }
-
-#[derive(Clone, Debug)]
-pub struct NodeProtocol {
-    pub root: PathBuf,
-    pub runner: Cmd,
-    pub accepts: HashSet<LinkHandle>,
-    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
-    pub indirect: HashSet<LinkHandle>,
-}
-
 impl NodeProtocol {
     pub fn links(&self) -> HashSet<LinkHandle> {
         let mut links = self.outbound_links();
