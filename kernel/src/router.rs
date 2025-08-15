@@ -120,12 +120,7 @@ impl Router {
                         self.mailboxes[*index_pointer].push_back(Rc::clone(&msg));
                     }
                 }
-                Err(RouterError::FileError(SocketError::NothingToRead)) => {
-                    break;
-                }
-                Err(RouterError::FileError(SocketError::SocketReadError { ioerr, .. }))
-                    if ioerr.kind() == io::ErrorKind::WouldBlock =>
-                {
+                Err(e) if e.recoverable() => {
                     break;
                 }
                 Err(e) => {
@@ -144,14 +139,22 @@ impl Router {
             let timestep = self.timestep;
             while let Some(msg) = mailbox.pop_front() {
                 debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                Self::send_msg(endpoint, &msg, pid, timestep, link_handle, link_name).map_err(
-                    |_| RouterError::SendError {
-                        sender: pid,
-                        node_name: self.node_names[node_handle].clone(),
-                        link_name: self.link_names[link_handle].clone(),
-                        timestep,
-                    },
-                )?;
+                match Self::send_msg(endpoint, &msg, pid, timestep, link_handle, link_name) {
+                    Ok(_) => {}
+                    Err(e) if e.recoverable() => {
+                        mailbox.push_front(msg);
+                        break;
+                    }
+                    Err(e) => {
+                        return Err(RouterError::SendError {
+                            sender: pid,
+                            node_name: self.node_names[node_handle].clone(),
+                            link_name: self.link_names[link_handle].clone(),
+                            timestep,
+                            base: Box::new(e),
+                        });
+                    }
+                }
             }
         }
         Ok(())
@@ -172,10 +175,8 @@ impl Router {
         link_name: &A,
     ) -> Result<usize, RouterError> {
         let len = data.len();
-        debug!("Sending {len} byte message");
         let msg_len = len.to_ne_bytes();
         Self::send(socket, &msg_len, pid, link_name)?;
-
         match Self::send(socket, data, pid, link_name) {
             Ok(n_sent) => {
                 event!(target: "tx", Level::INFO, timestep, link, pid, tx = true, data);

@@ -1,20 +1,34 @@
+use std::{
+    io,
+    process::{ExitStatus, Output},
+};
+
 use config::ast;
 use fuse::{PID, errors::SocketError};
 
+use runner::RunHandle;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum KernelError {
-    #[error("Failed to initialize kernel due to `{0}`")]
+    #[error("Failed to initialize kernel due to `{0:#?}`")]
     KernelInit(ConversionError),
+    #[error("Protocol prematurely exited: `{self:#?}`")]
+    ProcessExit {
+        node: String,
+        node_id: usize,
+        protocol: String,
+        pid: PID,
+        output: Output,
+    },
+    #[error("Error during message routing `{0:#?}.")]
+    RouterError(RouterError),
     #[error("Error encountered when creating file poll.")]
     PollCreation,
     #[error("Error encountered when registering file to poll.")]
     PollRegistration,
     #[error("Error encountered when polling file.")]
     PollError,
-    #[error("Error during message routing.")]
-    RouterError(RouterError),
 }
 
 #[derive(Error, Debug)]
@@ -35,9 +49,36 @@ pub enum RouterError {
         node_name: String,
         link_name: String,
         timestep: u64,
+        base: Box<Self>,
     },
     #[error("Failed to deliver queued messages.")]
     RouteError,
-    #[error("Error encountered with socket file: `{0}`")]
+    #[error("Resource temporarily blocked.")]
+    Busy,
+    #[error("Error encountered with socket file: `{0:#?}`")]
     FileError(SocketError),
+}
+
+impl RouterError {
+    pub fn recoverable(&self) -> bool {
+        match self {
+            Self::Busy => true,
+            Self::SendError { base, .. } => base.recoverable(),
+            Self::FileError(inner) => match inner {
+                SocketError::NothingToRead => true,
+                SocketError::SocketReadError { ioerr, .. }
+                    if ioerr.kind() == io::ErrorKind::WouldBlock =>
+                {
+                    true
+                }
+                SocketError::SocketWriteError { ioerr, .. }
+                    if ioerr.kind() == io::ErrorKind::WouldBlock =>
+                {
+                    true
+                }
+                _ => false,
+            },
+            _ => false,
+        }
+    }
 }

@@ -18,8 +18,8 @@ use std::{
 use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, TimestepConfig};
-use runner::RunCmd;
-use tracing::{instrument, warn};
+use runner::{RunCmd, RunHandle};
+use tracing::{error, instrument, warn};
 use types::*;
 
 use crate::errors::{ConversionError, KernelError};
@@ -32,7 +32,6 @@ use crate::router::Router;
 pub type LinkId = (fuse::PID, NodeHandle, LinkHandle);
 extern crate tracing;
 
-#[derive(Debug)]
 #[allow(unused)]
 pub struct Kernel {
     root: PathBuf,
@@ -44,10 +43,15 @@ pub struct Kernel {
     sockets: Vec<UnixDatagram>,
     link_names: Vec<String>,
     node_names: Vec<String>,
+    run_handles: Vec<RunHandle>,
 }
 
 impl Kernel {
-    pub fn new(sim: ast::Simulation, files: fuse::KernelLinks) -> Result<Self, KernelError> {
+    pub fn new(
+        sim: ast::Simulation,
+        files: fuse::KernelLinks,
+        run_handles: Vec<RunHandle>,
+    ) -> Result<Self, KernelError> {
         let (node_names, nodes) =
             unzip(sim.nodes.into_iter().flat_map(|(handle, nodes)| {
                 nodes.into_iter().map(move |node| (handle.clone(), node))
@@ -106,12 +110,36 @@ impl Kernel {
             sockets,
             link_names,
             node_names,
+            run_handles,
         })
     }
 
     #[instrument(skip_all)]
+    fn check_handles(handles: Vec<RunHandle>) -> Result<Vec<RunHandle>, KernelError> {
+        handles
+            .into_iter()
+            .map(|mut handle| {
+                if let Ok(Some(_)) = handle.process.try_wait() {
+                    error!("Process prematurely exited");
+                    let pid = handle.process.id();
+                    let output = handle.process.wait_with_output().unwrap();
+                    Err(KernelError::ProcessExit {
+                        node: handle.node,
+                        node_id: handle.node_id,
+                        protocol: handle.protocol,
+                        pid,
+                        output,
+                    })
+                } else {
+                    Ok(handle)
+                }
+            })
+            .collect::<Result<_, KernelError>>()
+    }
+
+    #[instrument(skip_all)]
     #[allow(unused_variables)]
-    pub fn run(self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
+    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
         let delta = self.time_delta();
         let mut poll = Poll::new().map_err(|_| KernelError::PollCreation)?;
         let mut events = Events::with_capacity(self.sockets.len());
@@ -144,6 +172,8 @@ impl Kernel {
             }
             router.outbound().map_err(KernelError::RouterError)?;
             router.step().map_err(KernelError::RouterError)?;
+            self.run_handles = Self::check_handles(self.run_handles)?;
+
             if let Ok(elapsed) = start.elapsed() {
                 if elapsed < delta {
                     std::thread::sleep(delta - elapsed);

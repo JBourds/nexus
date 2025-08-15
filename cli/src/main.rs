@@ -54,7 +54,7 @@ fn main() -> Result<()> {
     let (tx, _) = mpsc::channel();
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     let (sess, kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
-    Kernel::new(sim, kernel_links)?.run(args.cmd, args.logs)?;
+    Kernel::new(sim, kernel_links, run_handles)?.run(args.cmd, args.logs)?;
     sess.join();
     Ok(())
 }
