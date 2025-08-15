@@ -3,10 +3,9 @@ use crate::{
     errors::RouterError,
     types::{Link, Node},
 };
-use fuse::{PID, errors::SocketError, socket};
+use fuse::{PID, socket};
 use std::{
     collections::{BTreeMap, HashMap, VecDeque},
-    io,
     os::unix::net::UnixDatagram,
     rc::Rc,
 };

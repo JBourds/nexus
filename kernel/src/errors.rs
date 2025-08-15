@@ -1,12 +1,8 @@
-use std::{
-    io,
-    process::{ExitStatus, Output},
-};
+use std::{io, process::Output};
 
 use config::ast;
 use fuse::{PID, errors::SocketError};
 
-use runner::RunHandle;
 use thiserror::Error;
 
 #[derive(Error, Debug)]

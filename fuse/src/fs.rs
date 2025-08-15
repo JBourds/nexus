@@ -1,5 +1,5 @@
 use crate::errors::{FsError, LinkError};
-use crate::{KernelLinks, LinkId, PID, socket};
+use crate::{KernelLinks, LinkId, PID};
 use config::ast;
 
 use fuser::ReplyWrite;
@@ -7,7 +7,7 @@ use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
     ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::{EACCES, EBADMSG, EBUSY, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
+use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
 use std::cmp::min;
 use std::ffi::OsStr;

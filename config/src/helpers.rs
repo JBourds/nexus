@@ -19,14 +19,6 @@ pub(crate) fn verify_nonnegative(val: f64) -> Result<f64> {
     }
 }
 
-pub(crate) fn parse_probability(val: f64) -> Result<f64> {
-    if !(0.0..=1.0).contains(&val) {
-        bail!("Probability most be between 0 and 1.")
-    } else {
-        Ok(val)
-    }
-}
-
 pub(crate) fn resolve_directory(config_root: &PathBuf, path: &PathBuf) -> Result<PathBuf> {
     let root = expand_home(path);
     let root = if root.is_relative() {
