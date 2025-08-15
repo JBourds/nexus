@@ -110,7 +110,10 @@ impl Router {
                         );
                         return Ok(());
                     };
-                    debug!("Recipients: {recipients:?}");
+                    debug!(
+                        "[TX] {node_handle}.{pid}.{link_name}: {}",
+                        String::from_utf8_lossy(&msg)
+                    );
                     // TODO: Use other route information to determine delays
                     // and mutations/drops
                     for Route { index_pointer, .. } in recipients {
