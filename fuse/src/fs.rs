@@ -1,5 +1,5 @@
 use crate::errors::{FsError, LinkError};
-use crate::{KernelLinks, LinkId, PID};
+use crate::{KernelLinks, LinkId, PID, socket};
 use config::ast;
 
 use fuser::ReplyWrite;
@@ -36,11 +36,16 @@ pub struct NexusFs {
     kernel_links: KernelLinks,
 }
 
+/// Necessary handles to identify each link.
 #[derive(Debug)]
 pub struct NexusLink {
-    pub pid: PID,
+    /// Node's name
     pub node: ast::NodeHandle,
+    /// Process ID of the protocol
+    pub pid: PID,
+    /// Link name (corresponds to file name shown)
     pub link: ast::LinkHandle,
+    /// Available link operations
     pub mode: LinkMode,
 }
 
@@ -324,15 +329,17 @@ impl Filesystem for NexusFs {
 
         // Serve unread parts of previous message first
         if let Some((read_ptr, buf)) = &mut file.unread_msg {
+            // EOF
+            if *read_ptr == buf.len() {
+                file.unread_msg = None;
+                reply.data(&[]);
+                return;
+            }
             let remaining = buf.len() - *read_ptr;
             let read_size = min(remaining, size as usize);
             let end = *read_ptr + read_size;
             reply.data(&buf.as_slice()[*read_ptr..end]);
-            if read_size == remaining {
-                file.unread_msg = None;
-            } else {
-                file.unread_msg = Some((end, std::mem::take(buf)));
-            }
+            file.unread_msg = Some((end, std::mem::take(buf)));
             return;
         }
 
@@ -371,9 +378,7 @@ impl Filesystem for NexusFs {
         // should be buffered in case the reader wants to read incrementally.
         let read_size = min(recv_size, size as usize);
         reply.data(&recv_buf[..read_size as usize]);
-        if read_size < recv_size {
-            file.unread_msg = Some((read_size, recv_buf));
-        }
+        file.unread_msg = Some((read_size, recv_buf));
     }
 
     fn write(
