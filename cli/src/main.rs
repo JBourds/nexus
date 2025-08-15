@@ -105,44 +105,44 @@ fn get_fs_links(
     let mut links = vec![];
     for runner::RunHandle {
         node: node_handle,
+        node_id,
         protocol: protocol_handle,
         process,
     } in handles
     {
-        let nodes = sim.nodes.get(node_handle).unwrap();
-        for node in nodes {
-            let protocol = node.protocols.get(protocol_handle).unwrap();
-            let pid = process.id();
-            let inbound = protocol.inbound_links();
-            let outbound = protocol.outbound_links();
+        let node = &sim.nodes.get(node_handle).unwrap()[*node_id];
+        let protocol = node.protocols.get(protocol_handle).unwrap();
+        let pid = process.id();
+        let inbound = protocol.inbound_links();
+        let outbound = protocol.outbound_links();
 
-            for link in inbound
-                .iter()
-                .chain(outbound.iter())
-                .collect::<HashSet<&ast::LinkHandle>>()
-                .into_iter()
-            {
-                let mode = match run_cmd {
-                    RunCmd::Simulate => {
-                        let file_cmd = match (inbound.contains(link), outbound.contains(link)) {
-                            (true, true) => O_RDWR,
-                            (true, _) => O_RDONLY,
-                            (_, true) => O_WRONLY,
-                            _ => unreachable!(),
-                        };
-                        LinkMode::try_from(file_cmd)?
-                    }
-                    RunCmd::Playback => LinkMode::PlaybackWrites,
-                };
+        for link in inbound
+            .iter()
+            .chain(outbound.iter())
+            .collect::<HashSet<&ast::LinkHandle>>()
+            .into_iter()
+        {
+            let mode = match run_cmd {
+                RunCmd::Simulate => {
+                    let file_cmd = match (inbound.contains(link), outbound.contains(link)) {
+                        (true, true) => O_RDWR,
+                        (true, _) => O_RDONLY,
+                        (_, true) => O_WRONLY,
+                        _ => unreachable!(),
+                    };
+                    LinkMode::try_from(file_cmd)?
+                }
+                RunCmd::Playback => LinkMode::PlaybackWrites,
+            };
 
-                links.push(NexusLink {
-                    pid,
-                    node: node_handle.clone(),
-                    link: link.clone(),
-                    mode,
-                });
-            }
+            links.push(NexusLink {
+                pid,
+                node: node_handle.clone(),
+                link: link.clone(),
+                mode,
+            });
         }
     }
+    println!("{links:#?}");
     Ok(links)
 }
