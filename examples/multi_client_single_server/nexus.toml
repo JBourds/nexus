@@ -1,10 +1,10 @@
-# Example of multiple nodes
-# with slightly different build parameters
+# Example of multiple identical nodes which just have
+# different ID parameters
 
 [params]
-timestep.length = 1          
-timestep.unit = "s"
-timestep.count = 5        
+timestep.length = 1        
+timestep.unit = "ns"
+timestep.count = 5000000000 
 seed = 42                       
 root = "~/simulations"  
 
