@@ -7,7 +7,7 @@ use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
     ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
+use libc::{EACCES, EBADMSG, EBUSY, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
 use std::cmp::min;
 use std::ffi::OsStr;
@@ -343,32 +343,16 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        let mut msg_size_buf = [0u8; core::mem::size_of::<usize>()];
-        match file.sock.recv(&mut msg_size_buf) {
-            Ok(n) if n == core::mem::size_of::<usize>() => {}
-            Ok(_) => {
-                reply.error(EBADMSG);
-                return;
-            }
+        // TODO: Do better than big hardcoded vector
+        let mut recv_buf = vec![0; 4096];
+        let recv_size = match file.sock.recv(&mut recv_buf) {
+            Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 reply.data(&[]);
                 return;
             }
-            Err(_) => {
-                reply.error(EBADMSG);
-                return;
-            }
-        }
-
-        let required_capacity = usize::from_ne_bytes(msg_size_buf);
-        let mut recv_buf = vec![0; required_capacity];
-        let recv_size = match file.sock.recv(recv_buf.as_mut_slice()) {
-            Ok(n) if n != required_capacity => {
-                reply.error(EBADMSG);
-                return;
-            }
-            Ok(n) => n,
-            Err(_) => {
+            Err(e) => {
+                eprintln!("{e:#?}");
                 reply.error(EBADMSG);
                 return;
             }
@@ -413,16 +397,18 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        let msg_len = data.len().to_ne_bytes();
-        if !(file
-            .sock
-            .send(&msg_len)
-            .is_ok_and(|bytes_written| bytes_written == msg_len.len())
-            && file
-                .sock
-                .send(data)
-                .is_ok_and(|bytes_written| bytes_written == data.len()))
-        {
+        let write_msg = |buf: &[u8]| -> bool {
+            match file.sock.send(buf) {
+                Ok(n) if n == buf.len() => true,
+                Ok(_) => false,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => true,
+                Err(_) => false,
+            }
+        };
+
+        // It's okay if we fail to write even if it's a half write
+        // since on reads we don't
+        if !write_msg(data) {
             reply.error(EBADMSG);
             return;
         };

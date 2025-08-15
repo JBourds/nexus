@@ -15,16 +15,6 @@ pub fn recv(
             pid,
             link_name: link_name.as_ref().to_string(),
         })
-        .map(|n_read| {
-            if n_read != data.len() {
-                Err(SocketError::ReadSizeMismatch {
-                    expected: data.len(),
-                    actual: n_read,
-                })
-            } else {
-                Ok(n_read)
-            }
-        })?
 }
 
 pub fn send(
@@ -40,14 +30,4 @@ pub fn send(
             pid,
             link_name: link_name.as_ref().to_string(),
         })
-        .map(|n_written| {
-            if n_written != data.len() {
-                Err(SocketError::WriteSizeMismatch {
-                    expected: data.len(),
-                    actual: n_written,
-                })
-            } else {
-                Ok(n_written)
-            }
-        })?
 }

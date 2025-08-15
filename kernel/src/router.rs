@@ -174,25 +174,13 @@ impl Router {
         link: LinkHandle,
         link_name: &A,
     ) -> Result<usize, RouterError> {
-        let len = data.len();
-        let msg_len = len.to_ne_bytes();
-        Self::send(socket, &msg_len, pid, link_name)?;
-        match Self::send(socket, data, pid, link_name) {
+        match socket::send(socket, data, pid, link_name).map_err(RouterError::FileError) {
             Ok(n_sent) => {
                 event!(target: "tx", Level::INFO, timestep, link, pid, tx = true, data);
                 Ok(n_sent)
             }
             err => err,
         }
-    }
-
-    fn send<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        data: &[u8],
-        pid: fuse::PID,
-        link_name: A,
-    ) -> Result<usize, RouterError> {
-        socket::send(socket, data, pid, link_name).map_err(RouterError::FileError)
     }
 
     #[instrument(skip(socket))]
@@ -203,23 +191,12 @@ impl Router {
         link: LinkHandle,
         link_name: &A,
     ) -> Result<Vec<u8>, RouterError> {
-        let mut msg_len = [0u8; core::mem::size_of::<usize>()];
-        Self::recv(socket, &mut msg_len, pid, link_name)?;
-        let required_capacity = usize::from_ne_bytes(msg_len);
-        debug!("Receiving {required_capacity} byte message");
-        let mut recv_buf = vec![0; required_capacity];
-        let data = recv_buf.as_mut_slice();
-        Self::recv(socket, data, pid, link_name)?;
-        event!(target: "rx", Level::INFO, timestep, link, pid, tx = false, data);
+        // TODO: Replace the hardcoded vector
+        let mut recv_buf = vec![0; 4096];
+        let nread =
+            socket::recv(socket, &mut recv_buf, pid, link_name).map_err(RouterError::FileError)?;
+        recv_buf.truncate(nread);
+        event!(target: "rx", Level::INFO, timestep, link, pid, tx = false, data = recv_buf.as_slice());
         Ok(recv_buf)
-    }
-
-    fn recv<A: AsRef<str> + std::fmt::Debug>(
-        socket: &mut UnixDatagram,
-        data: &mut [u8],
-        pid: fuse::PID,
-        link_name: &A,
-    ) -> Result<usize, RouterError> {
-        socket::recv(socket, data, pid, link_name).map_err(RouterError::FileError)
     }
 }
