@@ -1,5 +1,5 @@
-use crate::errors::{FsError, LinkError};
-use crate::{ChannelId, KernelLinks, PID};
+use crate::errors::{ChannelError, FsError};
+use crate::{ChannelId, KernelChannels, PID};
 use config::ast;
 
 use fuser::ReplyWrite;
@@ -31,26 +31,26 @@ pub struct NexusFs {
     #[allow(dead_code)]
     logger: Option<Sender<String>>,
     attr: FileAttr,
-    files: Vec<ast::LinkHandle>,
+    files: Vec<ast::ChannelHandle>,
     fs_links: HashMap<ChannelId, NexusFile>,
-    kernel_links: KernelLinks,
+    kernel_links: KernelChannels,
 }
 
-/// Necessary handles to identify each link.
+/// Necessary handles to identify each channel.
 #[derive(Debug)]
-pub struct NexusLink {
+pub struct NexusChannel {
     /// Node's name
     pub node: ast::NodeHandle,
     /// Process ID of the protocol
     pub pid: PID,
-    /// Link name (corresponds to file name shown)
-    pub link: ast::LinkHandle,
+    /// Channel name (corresponds to file name shown)
+    pub channel: ast::ChannelHandle,
     /// Available link operations
-    pub mode: LinkMode,
+    pub mode: ChannelMode,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum LinkMode {
+pub enum ChannelMode {
     ReadOnly,
     WriteOnly,
     ReadWrite,
@@ -59,7 +59,7 @@ pub enum LinkMode {
 
 #[derive(Debug)]
 struct NexusFile {
-    mode: LinkMode,
+    mode: ChannelMode,
     attr: FileAttr,
     sock: UnixDatagram,
     unread_msg: Option<(usize, Vec<u8>)>,
@@ -87,7 +87,7 @@ fn next_inode() -> u64 {
 }
 
 impl NexusFile {
-    fn new(sock: UnixDatagram, mode: LinkMode, ino: u64) -> Self {
+    fn new(sock: UnixDatagram, mode: ChannelMode, ino: u64) -> Self {
         let now = SystemTime::now();
         Self {
             mode,
@@ -148,42 +148,42 @@ impl NexusFs {
         &self.root
     }
 
-    /// Builder method to pre-allocate the domain socket links.
-    pub fn with_links(
+    /// Builder method to pre-allocate the domain sockets.
+    pub fn with_channels(
         mut self,
-        links: impl IntoIterator<Item = NexusLink>,
-    ) -> Result<Self, LinkError> {
-        for NexusLink {
+        channels: impl IntoIterator<Item = NexusChannel>,
+    ) -> Result<Self, ChannelError> {
+        for NexusChannel {
             pid,
             node,
-            link,
+            channel,
             mode,
-        } in links
+        } in channels
         {
-            let (link_side, kernel_side) =
-                UnixDatagram::pair().map_err(|_| LinkError::DatagramCreation)?;
-            link_side
+            let (fs_side, kernel_side) =
+                UnixDatagram::pair().map_err(|_| ChannelError::DatagramCreation)?;
+            fs_side
                 .set_nonblocking(true)
-                .map_err(|_| LinkError::DatagramCreation)?;
+                .map_err(|_| ChannelError::DatagramCreation)?;
             kernel_side
                 .set_nonblocking(true)
-                .map_err(|_| LinkError::DatagramCreation)?;
-            let key = (pid, link.clone());
+                .map_err(|_| ChannelError::DatagramCreation)?;
+            let key = (pid, channel.clone());
 
-            let inode = if let Some(index) = self.files.iter().position(|file| **file == link) {
+            let inode = if let Some(index) = self.files.iter().position(|file| **file == channel) {
                 index_to_inode(index)
             } else {
-                self.files.push(link);
+                self.files.push(channel);
                 next_inode()
             };
 
             if self
                 .fs_links
-                .insert(key.clone(), NexusFile::new(link_side, mode, inode))
+                .insert(key.clone(), NexusFile::new(fs_side, mode, inode))
                 .is_some()
                 || self.kernel_links.insert(key, (node, kernel_side)).is_some()
             {
-                return Err(LinkError::DuplicateLink);
+                return Err(ChannelError::DuplicateChannel);
             }
         }
         Ok(self)
@@ -192,7 +192,7 @@ impl NexusFs {
     /// Mount the filesystem without blocking, yield the background session it
     /// is mounted in, and return the hash map with one side of the underlying
     /// sockets for the kernel to use.
-    pub fn mount(mut self) -> Result<(BackgroundSession, KernelLinks), FsError> {
+    pub fn mount(mut self) -> Result<(BackgroundSession, KernelChannels), FsError> {
         let options = vec![
             MountOption::FSName("nexus".to_string()),
             MountOption::AutoUnmount,
@@ -289,10 +289,10 @@ impl Filesystem for NexusFs {
             return;
         }
         match (file.mode, flags & O_ACCMODE) {
-            (LinkMode::ReadWrite, _)
-            | (LinkMode::PlaybackWrites, _)
-            | (LinkMode::ReadOnly, O_RDONLY)
-            | (LinkMode::WriteOnly, O_WRONLY) => {}
+            (ChannelMode::ReadWrite, _)
+            | (ChannelMode::PlaybackWrites, _)
+            | (ChannelMode::ReadOnly, O_RDONLY)
+            | (ChannelMode::WriteOnly, O_WRONLY) => {}
             _ => {
                 reply.error(EACCES);
                 return;
@@ -392,7 +392,7 @@ impl Filesystem for NexusFs {
         };
 
         // Drop writes from file, only source of writes will be from the kernel
-        if file.mode == LinkMode::PlaybackWrites {
+        if file.mode == ChannelMode::PlaybackWrites {
             reply.written(data.len() as u32);
             return;
         }
@@ -456,8 +456,8 @@ impl Filesystem for NexusFs {
     }
 }
 
-impl TryFrom<i32> for LinkMode {
-    type Error = LinkError;
+impl TryFrom<i32> for ChannelMode {
+    type Error = ChannelError;
 
     fn try_from(value: i32) -> Result<Self, Self::Error> {
         match value {
