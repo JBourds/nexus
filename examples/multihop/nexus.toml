@@ -1,0 +1,54 @@
+# Simulate multiple nodes from a class communicating to the same channel
+
+[params]
+timestep.length = 1 
+timestep.unit = "s"
+timestep.count = 5000000000 
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.client_proxy]
+link = "ideal"
+
+[channels.proxy_server]
+link = "ideal"
+
+[nodes]
+
+[nodes.client]
+deployments = [{}]
+
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+inbound = ["client_proxy"]
+outbound = ["client_proxy"]
+
+[nodes.proxy]
+deployments = [{}]
+
+
+[[nodes.proxy.protocols]]
+
+name = "proxy"
+runner = "python3"
+runner_args = ["proxy.py"]
+inbound = ["client_proxy", "proxy_server"]
+outbound = ["client_proxy", "proxy_server"]
+
+[nodes.server]
+deployments = [{}]
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+inbound = ["proxy_server"]
+outbound = ["proxy_server"]
+
