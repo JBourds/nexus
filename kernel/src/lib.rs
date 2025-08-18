@@ -67,9 +67,10 @@ impl Kernel {
 
         // We need to resolve any internal channels as new channels over an
         // ideal link.
-        let (mut channel_names, mut channels) = unzip(sim.channels);
+        let (mut channel_names, channels) = unzip(sim.channels);
         let channel_handles = make_handles(channel_names.clone());
         let mut new_nodes = vec![];
+        let mut internal_channels = vec![];
         let mut internal_node_channel_handles = HashMap::new();
         for (handle, (node_name, node)) in node_names
             .clone()
@@ -80,18 +81,19 @@ impl Kernel {
             let (new_node, new_internals) =
                 Node::from_ast(node, handle, &channel_handles, &node_handles)
                     .map_err(KernelError::KernelInit)?;
-            let (internal_names, internal_channels) = unzip(new_internals);
+            let (new_internal_names, new_internal_channels) = unzip(new_internals);
             new_nodes.push(new_node);
-            channel_names.extend(internal_names.clone());
-            channels.extend(internal_channels);
+            channel_names.extend(new_internal_names.clone());
+            internal_channels.extend(new_internal_channels);
             for (handle, internal_name) in
-                (channel_names.len() - 1..).zip(internal_names.into_iter())
+                (channel_names.len() - 1..).zip(new_internal_names.into_iter())
             {
                 internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
             }
         }
 
-        let channels = Channel::from_ast(channels, &new_nodes).map_err(KernelError::KernelInit)?;
+        let channels = Channel::from_ast(channels, internal_channels, &new_nodes)
+            .map_err(KernelError::KernelInit)?;
 
         let lookup_channel =
             |pid: fuse::PID, channel_name: String, node: ast::NodeHandle, file: UnixDatagram| {
