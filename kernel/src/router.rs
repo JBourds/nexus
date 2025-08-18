@@ -1,5 +1,5 @@
 use crate::{
-    LinkId,
+    ChannelId,
     errors::RouterError,
     types::{Link, Node},
 };
@@ -42,8 +42,8 @@ pub(crate) struct Router {
     links: Vec<Link>,
     link_names: Vec<String>,
     endpoints: Vec<UnixDatagram>,
-    handles: Vec<LinkId>,
-    routing_table: HashMap<LinkId, Vec<Route>>,
+    handles: Vec<ChannelId>,
+    routing_table: HashMap<ChannelId, Vec<Route>>,
     mailboxes: Vec<VecDeque<Rc<Vec<u8>>>>,
     timestep: u64,
 }
@@ -56,7 +56,7 @@ impl Router {
         node_names: Vec<String>,
         links: Vec<Link>,
         link_names: Vec<String>,
-        handles: Vec<LinkId>,
+        handles: Vec<ChannelId>,
         endpoints: Vec<UnixDatagram>,
     ) -> Self {
         // TODO: Build an actual routing table here instead of delivering to

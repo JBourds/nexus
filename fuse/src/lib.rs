@@ -8,5 +8,5 @@ use config::ast;
 pub type Mode = i32;
 pub type PID = u32;
 pub type Inode = u64;
-pub type LinkId = (PID, ast::LinkHandle);
+pub type ChannelId = (PID, ast::LinkHandle);
 pub type KernelLinks = HashMap<(PID, ast::LinkHandle), (ast::NodeHandle, UnixDatagram)>;

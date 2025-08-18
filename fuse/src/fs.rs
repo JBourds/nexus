@@ -1,5 +1,5 @@
 use crate::errors::{FsError, LinkError};
-use crate::{KernelLinks, LinkId, PID};
+use crate::{ChannelId, KernelLinks, PID};
 use config::ast;
 
 use fuser::ReplyWrite;
@@ -32,7 +32,7 @@ pub struct NexusFs {
     logger: Option<Sender<String>>,
     attr: FileAttr,
     files: Vec<ast::LinkHandle>,
-    fs_links: HashMap<LinkId, NexusFile>,
+    fs_links: HashMap<ChannelId, NexusFile>,
     kernel_links: KernelLinks,
 }
 

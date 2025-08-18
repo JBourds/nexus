@@ -29,7 +29,7 @@ use crate::router::Router;
 /// - `fuse::PID`: Process identifier (executing node protocol)
 /// - `NodeHandle`: Node the process belongs to.
 /// - `LinkHandle`: Link the connection is over.
-pub type LinkId = (fuse::PID, NodeHandle, LinkHandle);
+pub type ChannelId = (fuse::PID, NodeHandle, LinkHandle);
 extern crate tracing;
 
 #[allow(unused)]
@@ -39,7 +39,7 @@ pub struct Kernel {
     timestep: TimestepConfig,
     links: Vec<Link>,
     nodes: Vec<Node>,
-    handles: Vec<LinkId>,
+    handles: Vec<ChannelId>,
     sockets: Vec<UnixDatagram>,
     link_names: Vec<String>,
     node_names: Vec<String>,
@@ -97,7 +97,7 @@ impl Kernel {
         let files = files
             .into_iter()
             .map(|((pid, link_name), (node, file))| lookup_link(pid, link_name, node, file))
-            .collect::<Result<HashMap<LinkId, UnixDatagram>, KernelError>>()?;
+            .collect::<Result<HashMap<ChannelId, UnixDatagram>, KernelError>>()?;
         let (handles, sockets) = unzip(files);
 
         Ok(Self {
