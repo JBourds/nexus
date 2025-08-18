@@ -37,6 +37,8 @@ pub enum ChannelType {
         ttl: Option<NonZeroU64>,
         /// Time unit `ttl` is in
         unit: TimeUnit,
+        /// Maximum message size in bytes
+        max_size: NonZeroU64,
         /// Should a sender be able to read their own writes?
         read_own_writes: bool,
     },
@@ -46,10 +48,10 @@ pub enum ChannelType {
         ttl: Option<NonZeroU64>,
         /// Time unit `ttl` is in
         unit: TimeUnit,
-        /// Number of buffered messages per node. If None, is infinite.
-        nbuffered: Option<NonZeroU64>,
         /// Maximum message size in bytes.
         max_size: NonZeroU64,
+        /// Number of buffered messages per node. If None, is infinite.
+        nbuffered: Option<NonZeroU64>,
     },
 }
 
