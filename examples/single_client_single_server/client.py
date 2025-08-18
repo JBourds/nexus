@@ -1,7 +1,7 @@
 import os
 import time
 
-nexus_sock = os.path.expanduser("~/nexus/ideal")
+nexus_sock = os.path.expanduser("~/nexus/direct")
 
 counter = 0
 while True:

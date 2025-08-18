@@ -7,7 +7,7 @@ them to preserve message boundaries.
 
 import os
 
-nexus_sock = os.path.expanduser("~/nexus/ideal")
+nexus_sock = os.path.expanduser("~/nexus/direct")
 
 counter = 0
 while True:

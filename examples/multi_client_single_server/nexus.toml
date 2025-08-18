@@ -1,5 +1,4 @@
-# Example of multiple identical nodes which just have
-# different ID parameters
+# Simulate multiple nodes from a class communicating to the same channel
 
 [params]
 timestep.length = 1        
@@ -7,6 +6,11 @@ timestep.unit = "ns"
 timestep.count = 5000000000 
 seed = 42                       
 root = "~/simulations"  
+
+[channels]
+
+[channels.direct]
+link = "ideal"
 
 [nodes]
 
@@ -22,8 +26,8 @@ deployments = [
 name = "client"
 runner = "python3"
 runner_args = ["client.py"]
-direct = [["server", "ideal"]]
-accepts = ["ideal"]
+inbound = ["direct"]
+outbound = ["direct"]
 
 
 [nodes.server]
@@ -34,5 +38,5 @@ deployments = [ {} ]
 name = "server"
 runner = "python3"
 runner_args = ["server.py"]
-direct = [["client", "ideal"]]
-accepts = ["ideal"]
+inbound = ["direct"]
+outbound = ["direct"]

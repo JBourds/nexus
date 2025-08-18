@@ -1,5 +1,4 @@
-# This configuration file is a simple example of two nodes, each running a
-# single protocol used to communicate with each other via a direct connection.
+# Simulate client/server communication over a perfect connection
 
 [params]
 timestep.length = 1          
@@ -7,6 +6,10 @@ timestep.unit = "s"
 timestep.count = 5        
 seed = 42                       
 root = "~/simulations"  
+
+[channels]
+
+[channels.direct]
 
 [nodes]
 
@@ -18,8 +21,8 @@ deployments = [ {} ]
 name = "client"
 runner = "python3"
 runner_args = ["client.py"]
-direct = [["server", "ideal"]]
-accepts = ["ideal"]
+outbound = ["direct"]
+inbound = ["direct"]
 
 
 [nodes.server]
@@ -30,5 +33,5 @@ deployments = [ {} ]
 name = "server"
 runner = "python3"
 runner_args = ["server.py"]
-direct = [["client", "ideal"]]
-accepts = ["ideal"]
+outbound = ["direct"]
+inbound = ["direct"]

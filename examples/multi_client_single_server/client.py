@@ -11,7 +11,7 @@ import sys
 import time
 
 client_num = int(sys.argv[1])
-nexus_sock = os.path.expanduser("~/nexus/ideal")
+nexus_sock = os.path.expanduser("~/nexus/direct")
 
 counter = 0
 while True:
