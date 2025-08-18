@@ -1,4 +1,4 @@
 [nodes]
 
 [nodes.main]
-position.coordinates = [{}]
+deployments = [{}]

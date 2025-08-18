@@ -17,19 +17,12 @@ root = "~/testnet/simulations"  # Root directory to store simulation results
 # gateway can send messages since it is the only satellite-enabled node)
 signal.shape = "direct"
 
-# Iridium 9603 transmission rate (176 kbps).
-transmission.rate = 176
-transmission.data = "kb"
-transmission.time = "seconds"
-
 delays.processing.rate = 60       
 
 packet_loss.rate = 0.3
 
 [links.lora]
 packet_loss.rate = 0.01
-transmission.rate = 1         
-transmission.data = "kb"
 
 signal.max_range = 4
 signal.offset = 2
@@ -48,7 +41,7 @@ packet_loss.rate = 0.05
 [nodes.gateway]
 
 internal_names = ["satellite"]
-position.coordinates = [{}]     # Defaults to all zeroes for position
+deployments = [{}]     # Defaults to all zeroes for position
 
 # The gateway node's satellite communication protocol which accepts packets
 # from the TDMA protocol and then transmits them via satellite.
@@ -99,15 +92,7 @@ indirect = ["lora"]
 [nodes.peripheral]
 
 # Place a peripheral 1km away in each direction
-position.coordinates = [
-    # These two declarations are equivalent
-    { point = [0, 1, 0], orientation = [20, 30, 40]},
-    { point = [1, 0, 0], orientation = { az = 20, el = 30, roll = 40}},
-    # These two declarations are equivalent. Omit orientation.
-    { point = { x = 0, y = -1, z = 0}},
-    [[-1, 0, 0]],
-]
-position.unit = "km"
+deployments = [ {} ]
 
 [[nodes.peripheral.protocols]]
 name = "tdma"
@@ -120,6 +105,7 @@ indirect = ["lora"]
 # The "backend" node is used to simulate the packaging of packets by the
 # Cloudloop server and storing the data in a Flask web server.
 [nodes.backend]
+deployments = [{}]
 
 # Backend node that receives the raw satellite packets and packages them up
 # like how Cloudloop does to then send to the flask app over HTTP request.

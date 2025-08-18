@@ -58,7 +58,6 @@ pub struct LinkName(pub String);
 pub struct Link {
     pub(super) inherit: Option<String>,
     pub(super) signal: Option<Signal>,
-    pub(super) transmission: Option<Rate>,
     pub(super) packet_loss: Option<DistanceProbVar>,
     pub(super) bit_error: Option<DistanceProbVar>,
     pub(super) delays: Option<Delays>,
@@ -93,7 +92,7 @@ pub struct ProtocolName(pub String);
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Deployment {
-    pub(super) coordinates: Option<Coordinate>,
+    pub(super) position: Option<Coordinate>,
     pub(super) extra_args: Option<Vec<String>>,
 }
 

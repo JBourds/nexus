@@ -8,7 +8,7 @@ root = "~/testnet/simulations"
 [nodes]
 
 [nodes.client]
-position.coordinates = [ {} ]
+deployments = [ {} ]
 
 [[nodes.client.protocols]]
 
@@ -20,7 +20,7 @@ accepts = ["ideal"]
 
 
 [nodes.server]
-position.coordinates = [ {} ]
+deployments = [ {} ]
 
 [[nodes.server.protocols]]
 

@@ -2,7 +2,7 @@
 [nodes.gateway]
 
 internal_names = ["satellite"]
-position.coordinates = [{}]
+deployments = [{}]
 
 [[nodes.gateway.protocols]]
 name = "satcom"

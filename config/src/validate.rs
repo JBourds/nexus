@@ -198,7 +198,7 @@ impl Simulation {
             If your simulation does not require a fixed position, satisfy this requirement \
             by placing a blank coordinate in the `positions` field.
 
-            Ex. `position.coordinates = [{{}}]"
+            Ex. `deployments = [{{}}]"
             );
         }
 
@@ -412,12 +412,6 @@ impl Link {
             .map(Signal::validate)
             .unwrap_or(Ok(ancestor.signal))
             .context("Unable to validate link signal")?;
-
-        let transmission = val
-            .transmission
-            .map(Rate::validate)
-            .unwrap_or(Ok(ancestor.transmission))
-            .context("Unable to validate link transmission rate")?;
         let bit_error = val
             .bit_error
             .map(DistanceProbVar::validate)
@@ -437,7 +431,6 @@ impl Link {
         };
         Ok(Self {
             signal,
-            transmission,
             bit_error,
             packet_loss,
             delays,
@@ -540,7 +533,7 @@ impl Node {
             bail!("Node cannot be defined without a single deployment location.");
         };
         for Deployment {
-            coordinates,
+            position,
             extra_args,
         } in deployments
         {
@@ -561,7 +554,7 @@ impl Node {
                     (name, protocol)
                 })
                 .collect::<HashMap<_, _>>();
-            let position = coordinates
+            let position = position
                 .map(Position::validate)
                 .unwrap_or(Ok(Position::default()))
                 .context("Failed to validate node coordinates.")?;

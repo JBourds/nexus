@@ -76,8 +76,8 @@ signal.shape = "omni"
 signal.unit = "meters"
 
 # Node transmission rate (defaults to maximum value able to be hold by u64)
-transmission.data = "bit"
-transmission.time = "s"
+delays.transmission.data = "bit"
+delays.transmission.time = "s"
 
 # Each value which depends on distance is characterized by its average value
 # and standard deviation, as well as a type of decay and the unit of distance. 
@@ -117,8 +117,7 @@ delays.propagation = { rate = 0, distance = "km" }
 # assigned index as a unique id which will be used to uniquely identify its 
 # output in the simulation folder.
 
-position.coordinates = [{}]
-position.unit = "meters"
+deployments = [{ position = { unit = "meters" } }]
 
 # Array of internal link names which act like ideal links but cannot be
 # received from any node outside of this one. Overrides existing link names,

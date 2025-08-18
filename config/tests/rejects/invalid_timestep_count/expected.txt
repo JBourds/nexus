@@ -3,7 +3,7 @@ Error {
     source: TomlError {
         message: "invalid value: integer `-1`, expected u64",
         raw: Some(
-            "[params]\ntimestep.count = -1\n\n[nodes]\n\n[nodes.main]\nposition.coordinates = [ {} ]\n\n[[nodes.main.protocols]]\n\nname = \"main\"\nrunner = \"make\"\n",
+            "[params]\ntimestep.count = -1\n\n[nodes]\n\n[nodes.main]\ndeployments = [ {} ]\n\n[[nodes.main.protocols]]\n\nname = \"main\"\nrunner = \"make\"\n",
         ),
         keys: [
             "params",

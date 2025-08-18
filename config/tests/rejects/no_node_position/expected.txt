@@ -1,4 +1,7 @@
 Error {
     context: "Failed to validate simulation parameters from config file.",
-    source: "Must have at least one node position defined to run a simulation. If your simulation does not require a fixed position, satisfy this requirement by placing a blank coordinate in the `positions` field.\n\n            Ex. `position.coordinates = [{}]",
+    source: Error {
+        context: "Failed to validate nodes",
+        source: "Node cannot be defined without a single deployment location.",
+    },
 }

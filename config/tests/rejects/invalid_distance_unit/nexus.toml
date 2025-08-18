@@ -6,7 +6,7 @@ signal.unit = "x"
 [nodes]
 
 [nodes.main]
-position.coordinates = [ {} ]
+deployments = [ {} ]
 
 [[nodes.main.protocols]]
 
