@@ -49,12 +49,15 @@ fn main() -> Result<()> {
     let sim = config::parse(args.config.into())?;
     setup_logging(&sim.params.root, args.cmd)?;
     let run_handles = runner::run(&sim)?;
-    let protocol_links = get_fs_links(&sim, &run_handles, args.cmd)?;
+    let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
 
     let (tx, _) = mpsc::channel();
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
-    let (sess, kernel_links) = fs.with_links(protocol_links)?.with_logger(tx).mount()?;
-    Kernel::new(sim, kernel_links, run_handles)?.run(args.cmd, args.logs)?;
+    let (sess, kernel_channels) = fs
+        .with_channels(protocol_channels)?
+        .with_logger(tx)
+        .mount()?;
+    Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;
     sess.join();
     Ok(())
 }
@@ -97,12 +100,12 @@ fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
     File::options().create(true).append(true).open(&path)
 }
 
-fn get_fs_links(
+fn get_fs_channels(
     sim: &ast::Simulation,
     handles: &[runner::RunHandle],
     run_cmd: RunCmd,
-) -> Result<Vec<NexusLink>, fuse::errors::LinkError> {
-    let mut links = vec![];
+) -> Result<Vec<NexusChannel>, fuse::errors::ChannelError> {
+    let mut channels = vec![];
     for runner::RunHandle {
         node: node_handle,
         node_id,
@@ -113,36 +116,38 @@ fn get_fs_links(
         let node = &sim.nodes.get(node_handle).unwrap()[*node_id];
         let protocol = node.protocols.get(protocol_handle).unwrap();
         let pid = process.id();
-        let inbound = protocol.inbound_links();
-        let outbound = protocol.outbound_links();
 
-        for link in inbound
+        for channel in protocol
+            .inbound
             .iter()
-            .chain(outbound.iter())
-            .collect::<HashSet<&ast::LinkHandle>>()
+            .chain(protocol.outbound.iter())
+            .collect::<HashSet<&ast::ChannelHandle>>()
             .into_iter()
         {
             let mode = match run_cmd {
                 RunCmd::Simulate => {
-                    let file_cmd = match (inbound.contains(link), outbound.contains(link)) {
+                    let file_cmd = match (
+                        protocol.inbound.contains(channel),
+                        protocol.outbound.contains(channel),
+                    ) {
                         (true, true) => O_RDWR,
                         (true, _) => O_RDONLY,
                         (_, true) => O_WRONLY,
                         _ => unreachable!(),
                     };
-                    LinkMode::try_from(file_cmd)?
+                    ChannelMode::try_from(file_cmd)?
                 }
-                RunCmd::Playback => LinkMode::PlaybackWrites,
+                RunCmd::Playback => ChannelMode::PlaybackWrites,
             };
 
-            links.push(NexusLink {
+            channels.push(NexusChannel {
                 pid,
                 node: node_handle.clone(),
-                link: link.clone(),
+                channel: channel.clone(),
                 mode,
             });
         }
     }
-    println!("{links:#?}");
-    Ok(links)
+    println!("{channels:#?}");
+    Ok(channels)
 }
