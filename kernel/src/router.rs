@@ -72,9 +72,8 @@ impl Router {
             .iter()
             .enumerate()
             .map(|(ch_index, ch)| {
-                ch.outbound
+                ch.inbound
                     .iter()
-                    .chain(ch.inbound.iter())
                     .flat_map(|node_handle| {
                         handles
                             .iter()
