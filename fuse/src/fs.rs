@@ -1,7 +1,7 @@
 use crate::errors::{ChannelError, FsError};
 use crate::{ChannelId, KernelChannels, PID};
 use config::ast;
-use tracing::{info, instrument};
+use tracing::{error, info, instrument};
 
 use fuser::ReplyWrite;
 use fuser::{
@@ -249,7 +249,7 @@ impl Default for NexusFs {
 }
 
 impl Filesystem for NexusFs {
-    #[instrument]
+    #[instrument(skip_all)]
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent != FUSE_ROOT_ID {
             reply.error(ENOENT);
@@ -263,7 +263,7 @@ impl Filesystem for NexusFs {
         }
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
@@ -283,7 +283,7 @@ impl Filesystem for NexusFs {
         }
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
@@ -314,7 +314,7 @@ impl Filesystem for NexusFs {
         reply.opened(index as u64, FOPEN_DIRECT_IO);
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     fn read(
         &mut self,
         req: &Request,
@@ -377,7 +377,7 @@ impl Filesystem for NexusFs {
         file.unread_msg = Some((read_size, recv_buf));
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     fn write(
         &mut self,
         req: &Request<'_>,
@@ -432,7 +432,7 @@ impl Filesystem for NexusFs {
         reply.written(bytes_written);
     }
 
-    #[instrument]
+    #[instrument(skip_all)]
     fn readdir(
         &mut self,
         _req: &Request,
