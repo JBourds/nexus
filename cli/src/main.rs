@@ -8,7 +8,7 @@ use std::{collections::HashSet, sync::mpsc};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
-use config::ast;
+use config::ast::{self, ChannelType};
 use fuse::fs::*;
 
 use clap::Parser;
@@ -145,7 +145,11 @@ fn get_fs_channels(
                 node: node_handle.clone(),
                 channel: channel.clone(),
                 mode,
-                max_msg_size: sim.channels.get(channel).unwrap().r#type.max_buf_size(),
+                max_msg_size: sim
+                    .channels
+                    .get(channel)
+                    .map(|ch| ch.r#type.max_buf_size())
+                    .unwrap_or(ChannelType::MSG_MAX_DEFAULT),
             });
         }
     }
