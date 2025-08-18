@@ -29,6 +29,8 @@ pub enum KernelError {
 
 #[derive(Error, Debug)]
 pub enum ConversionError {
+    #[error("Failed to convert channel `{0:#?}` from AST.")]
+    ChannelConversion(ast::Channel),
     #[error("Failed to convert channel `{0}` to handle")]
     ChannelHandleConversion(ast::ChannelHandle),
     #[error("Failed to convert node `{0}` to handle")]

@@ -8,13 +8,48 @@ use std::{
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
-pub use ast::Channel;
-
-use config::ast::{self, Cmd};
+use config::ast::{self, ChannelType, Cmd, Link};
 use tracing::instrument;
 
 pub type ChannelHandle = usize;
 pub type NodeHandle = usize;
+
+#[derive(Debug)]
+pub struct Channel {
+    pub link: Link,
+    pub r#type: ChannelType,
+    pub inbound: HashSet<NodeHandle>,
+    pub outbound: HashSet<NodeHandle>,
+}
+
+impl Channel {
+    #[instrument]
+    pub(super) fn from_ast(
+        channels: Vec<ast::Channel>,
+        nodes: &[Node],
+    ) -> Result<Vec<Self>, ConversionError> {
+        let mut channels = channels
+            .into_iter()
+            .map(|ch| Channel {
+                link: ch.link,
+                r#type: ch.r#type,
+                inbound: HashSet::new(),
+                outbound: HashSet::new(),
+            })
+            .collect::<Vec<_>>();
+        for (node_handle, node) in nodes.iter().enumerate() {
+            for protocol in node.protocols.iter() {
+                for channel_index in protocol.inbound.iter().copied() {
+                    channels[channel_index].inbound.insert(node_handle);
+                }
+                for channel_index in protocol.outbound.iter().copied() {
+                    channels[channel_index].outbound.insert(node_handle);
+                }
+            }
+        }
+        Ok(channels)
+    }
+}
 
 #[derive(Clone, Debug)]
 #[allow(unused)]
@@ -39,16 +74,21 @@ impl Node {
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
         node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
-    ) -> Result<(Self, Vec<ast::ChannelHandle>), ConversionError> {
+    ) -> Result<(Self, Vec<(ast::ChannelHandle, ast::Channel)>), ConversionError> {
         // Internal have their own namespace, copy the hashmap
         // and overwrite any existing links with internal names.
-        let new_handles = node.internal_names;
+        let new_handles = node
+            .internal_names
+            .clone()
+            .into_iter()
+            .map(|name| (name, ast::Channel::default()))
+            .collect::<Vec<_>>();
         let channel_handles = if !new_handles.is_empty() {
             &channel_handles
                 .clone()
                 .into_iter()
                 .chain(
-                    make_handles(new_handles.clone())
+                    make_handles(node.internal_names)
                         .into_iter()
                         .map(|(name, handle)| (name, handle + channel_handles.len())),
                 )

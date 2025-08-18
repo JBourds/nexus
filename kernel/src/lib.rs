@@ -47,6 +47,13 @@ pub struct Kernel {
 }
 
 impl Kernel {
+    /// Create the kernel instance.
+    ///
+    /// # Arguments
+    /// * `sim`: Simulation AST.
+    /// * `files`: List of mappings from open channels within an executing node
+    ///   protocol to the node it belongs to and its unix domain socket pair.
+    /// * `run_handles`: Handles used to monitor each executing program.
     pub fn new(
         sim: ast::Simulation,
         files: fuse::KernelChannels,
@@ -57,13 +64,11 @@ impl Kernel {
                 nodes.into_iter().map(move |node| (handle.clone(), node))
             }));
         let node_handles = make_handles(node_names.clone());
-        let (mut channel_names, channels) = unzip(sim.channels);
-        let channel_handles = make_handles(channel_names.clone());
 
-        // Internal channels have a higher priority namespace than global channels.
-        // These still need to be converted into integer handles. Internal channels
-        // are unique within a node, so create a mapping of (node, channel): handle
-        // which gets checked first when resolving string handles below.
+        // We need to resolve any internal channels as new channels over an
+        // ideal link.
+        let (mut channel_names, mut channels) = unzip(sim.channels);
+        let channel_handles = make_handles(channel_names.clone());
         let mut new_nodes = vec![];
         let mut internal_node_channel_handles = HashMap::new();
         for (handle, (node_name, node)) in node_names
@@ -72,17 +77,21 @@ impl Kernel {
             .zip(nodes.into_iter())
             .enumerate()
         {
-            let (new_node, internal_names) =
+            let (new_node, new_internals) =
                 Node::from_ast(node, handle, &channel_handles, &node_handles)
                     .map_err(KernelError::KernelInit)?;
+            let (internal_names, internal_channels) = unzip(new_internals);
             new_nodes.push(new_node);
             channel_names.extend(internal_names.clone());
+            channels.extend(internal_channels);
             for (handle, internal_name) in
                 (channel_names.len() - 1..).zip(internal_names.into_iter())
             {
                 internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
             }
         }
+
+        let channels = Channel::from_ast(channels, &new_nodes).map_err(KernelError::KernelInit)?;
 
         let lookup_channel =
             |pid: fuse::PID, channel_name: String, node: ast::NodeHandle, file: UnixDatagram| {
