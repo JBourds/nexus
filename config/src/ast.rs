@@ -39,6 +39,8 @@ pub enum ChannelType {
         ttl: Option<NonZeroU64>,
         /// Time unit `ttl` is in
         unit: TimeUnit,
+        /// Should a sender be able to read their own writes?
+        read_own_writes: bool,
     },
     /// Buffer some number of messages at a time.
     MsgBuffered {

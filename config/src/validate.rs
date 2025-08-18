@@ -95,12 +95,21 @@ impl Channel {
 impl ChannelType {
     fn validate(val: parse::ChannelType) -> Result<Self> {
         let val = match val {
-            parse::ChannelType::Live { ttl, unit } => {
+            parse::ChannelType::Live {
+                ttl,
+                unit,
+                read_own_writes,
+            } => {
                 let unit = unit
                     .map(TimeUnit::validate)
                     .unwrap_or(Ok(TimeUnit::default()))
                     .context("Failed to validate time unit when parsing channel type.")?;
-                Self::Live { ttl, unit }
+                let read_own_writes = read_own_writes.unwrap_or_default();
+                Self::Live {
+                    ttl,
+                    unit,
+                    read_own_writes,
+                }
             }
             parse::ChannelType::MsgBuffered {
                 ttl,

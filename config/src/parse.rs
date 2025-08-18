@@ -81,6 +81,7 @@ pub enum ChannelType {
     Live {
         ttl: Option<NonZeroU64>,
         unit: Option<Unit>,
+        read_own_writes: Option<bool>,
     },
     MsgBuffered {
         ttl: Option<NonZeroU64>,
