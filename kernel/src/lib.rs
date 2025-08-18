@@ -25,11 +25,11 @@ use types::*;
 use crate::errors::{ConversionError, KernelError};
 use crate::router::Router;
 
-/// Unique identifier for a link belonging to a node protocol
+/// Unique identifier for a channel belonging to a node protocol
 /// - `fuse::PID`: Process identifier (executing node protocol)
 /// - `NodeHandle`: Node the process belongs to.
-/// - `LinkHandle`: Link the connection is over.
-pub type ChannelId = (fuse::PID, NodeHandle, LinkHandle);
+/// - `ChannelHandle`: Channel the connection is over.
+pub type ChannelId = (fuse::PID, NodeHandle, ChannelHandle);
 extern crate tracing;
 
 #[allow(unused)]
@@ -37,11 +37,11 @@ pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
     timestep: TimestepConfig,
-    links: Vec<Link>,
+    channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
     sockets: Vec<UnixDatagram>,
-    link_names: Vec<String>,
+    channel_names: Vec<String>,
     node_names: Vec<String>,
     run_handles: Vec<RunHandle>,
 }
@@ -49,7 +49,7 @@ pub struct Kernel {
 impl Kernel {
     pub fn new(
         sim: ast::Simulation,
-        files: fuse::KernelLinks,
+        files: fuse::KernelChannels,
         run_handles: Vec<RunHandle>,
     ) -> Result<Self, KernelError> {
         let (node_names, nodes) =
@@ -57,15 +57,15 @@ impl Kernel {
                 nodes.into_iter().map(move |node| (handle.clone(), node))
             }));
         let node_handles = make_handles(node_names.clone());
-        let (mut link_names, links) = unzip(sim.links);
-        let link_handles = make_handles(link_names.clone());
+        let (mut channel_names, channels) = unzip(sim.channels);
+        let channel_handles = make_handles(channel_names.clone());
 
-        // Internal links have a higher priority namespace than global links.
-        // These still need to be converted into integer handles. Internal links
-        // are unique within a node, so create a mapping of (node, link): handle
+        // Internal channels have a higher priority namespace than global channels.
+        // These still need to be converted into integer handles. Internal channels
+        // are unique within a node, so create a mapping of (node, channel): handle
         // which gets checked first when resolving string handles below.
         let mut new_nodes = vec![];
-        let mut internal_node_link_handles = HashMap::new();
+        let mut internal_node_channel_handles = HashMap::new();
         for (handle, (node_name, node)) in node_names
             .clone()
             .into_iter()
@@ -73,30 +73,33 @@ impl Kernel {
             .enumerate()
         {
             let (new_node, internal_names) =
-                Node::from_ast(node, handle, &link_handles, &node_handles)
+                Node::from_ast(node, handle, &channel_handles, &node_handles)
                     .map_err(KernelError::KernelInit)?;
             new_nodes.push(new_node);
-            link_names.extend(internal_names.clone());
-            for (handle, internal_name) in (link_names.len() - 1..).zip(internal_names.into_iter())
+            channel_names.extend(internal_names.clone());
+            for (handle, internal_name) in
+                (channel_names.len() - 1..).zip(internal_names.into_iter())
             {
-                internal_node_link_handles.insert((node_name.clone(), internal_name), handle);
+                internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
             }
         }
 
-        let lookup_link =
-            |pid: fuse::PID, link_name: String, node: ast::NodeHandle, file: UnixDatagram| {
+        let lookup_channel =
+            |pid: fuse::PID, channel_name: String, node: ast::NodeHandle, file: UnixDatagram| {
                 let node_handle = *node_handles.get(&node).unwrap();
-                internal_node_link_handles
-                    .get(&(node, link_name.clone()))
-                    .or(link_handles.get(&link_name))
+                internal_node_channel_handles
+                    .get(&(node, channel_name.clone()))
+                    .or(channel_handles.get(&channel_name))
                     .ok_or(KernelError::KernelInit(
-                        ConversionError::LinkHandleConversion(link_name),
+                        ConversionError::ChannelHandleConversion(channel_name),
                     ))
-                    .map(|link_handle| ((pid, node_handle, *link_handle), file))
+                    .map(|channel_handle| ((pid, node_handle, *channel_handle), file))
             };
         let files = files
             .into_iter()
-            .map(|((pid, link_name), (node, file))| lookup_link(pid, link_name, node, file))
+            .map(|((pid, channel_name), (node, file))| {
+                lookup_channel(pid, channel_name, node, file)
+            })
             .collect::<Result<HashMap<ChannelId, UnixDatagram>, KernelError>>()?;
         let (handles, sockets) = unzip(files);
 
@@ -104,11 +107,11 @@ impl Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
-            links,
+            channels,
             nodes: new_nodes,
             handles,
             sockets,
-            link_names,
+            channel_names,
             node_names,
             run_handles,
         })
@@ -156,8 +159,8 @@ impl Kernel {
         let mut router = Router::new(
             self.nodes,
             self.node_names,
-            self.links,
-            self.link_names,
+            self.channels,
+            self.channel_names,
             self.handles,
             self.sockets,
         );

@@ -8,12 +8,12 @@ use std::{
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
-pub use ast::Link;
+pub use ast::Channel;
 
 use config::ast::{self, Cmd};
 use tracing::instrument;
 
-pub type LinkHandle = usize;
+pub type ChannelHandle = usize;
 pub type NodeHandle = usize;
 
 #[derive(Clone, Debug)]
@@ -28,9 +28,8 @@ pub struct Node {
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
-    pub accepts: HashSet<LinkHandle>,
-    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
-    pub indirect: HashSet<LinkHandle>,
+    pub inbound: HashSet<ChannelHandle>,
+    pub outbound: HashSet<ChannelHandle>,
 }
 
 impl Node {
@@ -38,30 +37,30 @@ impl Node {
     pub(super) fn from_ast(
         node: ast::Node,
         handle: NodeHandle,
-        link_handles: &HashMap<ast::LinkHandle, LinkHandle>,
-        node_handles: &HashMap<ast::NodeHandle, LinkHandle>,
-    ) -> Result<(Self, Vec<ast::LinkHandle>), ConversionError> {
+        channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+    ) -> Result<(Self, Vec<ast::ChannelHandle>), ConversionError> {
         // Internal have their own namespace, copy the hashmap
         // and overwrite any existing links with internal names.
         let new_handles = node.internal_names;
-        let link_handles = if !new_handles.is_empty() {
-            &link_handles
+        let channel_handles = if !new_handles.is_empty() {
+            &channel_handles
                 .clone()
                 .into_iter()
                 .chain(
                     make_handles(new_handles.clone())
                         .into_iter()
-                        .map(|(name, handle)| (name, handle + link_handles.len())),
+                        .map(|(name, handle)| (name, handle + channel_handles.len())),
                 )
-                .collect::<HashMap<ast::LinkHandle, LinkHandle>>()
+                .collect::<HashMap<ast::ChannelHandle, ChannelHandle>>()
         } else {
-            link_handles
+            channel_handles
         };
 
         let (_, protocols) = unzip(node.protocols);
         let protocols = protocols
             .into_iter()
-            .map(|protocol| NodeProtocol::from_ast(protocol, handle, link_handles, node_handles))
+            .map(|protocol| NodeProtocol::from_ast(protocol, handle, channel_handles, node_handles))
             .collect::<Result<_, ConversionError>>()?;
         Ok((
             Self {
@@ -78,44 +77,28 @@ impl NodeProtocol {
     pub(super) fn from_ast(
         node: ast::NodeProtocol,
         handle: NodeHandle,
-        link_handles: &HashMap<ast::LinkHandle, LinkHandle>,
-        node_handles: &HashMap<ast::NodeHandle, LinkHandle>,
+        channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
     ) -> Result<Self, ConversionError> {
-        let map_link_handles = |handles: HashSet<ast::LinkHandle>| -> Result<_, ConversionError> {
-            handles
-                .into_iter()
-                .map(|name| {
-                    link_handles
-                        .get(&name)
-                        .copied()
-                        .ok_or(ConversionError::LinkHandleConversion(name))
-                })
-                .collect::<Result<_, ConversionError>>()
-        };
-        let accepts = map_link_handles(node.accepts)?;
-        let indirect = map_link_handles(node.indirect)?;
-        let direct = node
-            .direct
-            .into_iter()
-            .map(|(key, handles)| {
-                let links = map_link_handles(handles)?;
-                let key = if matches!(key.as_str(), ast::Node::SELF) {
-                    handle
-                } else {
-                    node_handles
-                        .get(&key)
-                        .copied()
-                        .ok_or(ConversionError::NodeHandleConversion(key))?
-                };
-                Ok((key, links))
-            })
-            .collect::<Result<_, ConversionError>>()?;
+        let map_channel_handles =
+            |handles: HashSet<ast::ChannelHandle>| -> Result<_, ConversionError> {
+                handles
+                    .into_iter()
+                    .map(|name| {
+                        channel_handles
+                            .get(&name)
+                            .copied()
+                            .ok_or(ConversionError::ChannelHandleConversion(name))
+                    })
+                    .collect::<Result<_, ConversionError>>()
+            };
+        let inbound = map_channel_handles(node.inbound)?;
+        let outbound = map_channel_handles(node.outbound)?;
         Ok(Self {
             root: node.root,
             runner: node.runner,
-            accepts,
-            direct,
-            indirect,
+            inbound,
+            outbound,
         })
     }
 }

@@ -29,8 +29,8 @@ pub enum KernelError {
 
 #[derive(Error, Debug)]
 pub enum ConversionError {
-    #[error("Failed to convert link `{0}` to handle")]
-    LinkHandleConversion(ast::LinkHandle),
+    #[error("Failed to convert channel `{0}` to handle")]
+    ChannelHandleConversion(ast::ChannelHandle),
     #[error("Failed to convert node `{0}` to handle")]
     NodeHandleConversion(ast::NodeHandle),
 }
@@ -38,12 +38,12 @@ pub enum ConversionError {
 #[derive(Error, Debug)]
 pub enum RouterError {
     #[error(
-        "Failed to route message from node `{node_name}`, PID `{sender}`, to link `{link_name}` at timestep `{timestep}`"
+        "Failed to route message from node `{node_name}`, PID `{sender}`, to channel `{channel_name}` at timestep `{timestep}`"
     )]
     SendError {
         sender: PID,
         node_name: String,
-        link_name: String,
+        channel_name: String,
         timestep: u64,
         base: Box<Self>,
     },

@@ -1,7 +1,7 @@
 use crate::{
     ChannelId,
     errors::RouterError,
-    types::{Link, Node},
+    types::{Channel, Node},
 };
 use fuse::{PID, socket};
 use std::{
@@ -11,17 +11,17 @@ use std::{
 };
 use tracing::{Level, debug, error, event, instrument};
 
-use crate::types::LinkHandle;
+use crate::types::ChannelHandle;
 
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Message {
     sender: PID,
-    link: LinkHandle,
+    channel: ChannelHandle,
     buf: Vec<u8>,
 }
 
-/// Route information computed based on link parameters and number of
+/// Route information computed based on channel parameters and number of
 /// intermediaries representative of the entire route.
 #[derive(Debug, Default)]
 #[allow(dead_code)]
@@ -39,8 +39,8 @@ pub(crate) struct Router {
     queued: BTreeMap<u64, Message>,
     nodes: Vec<Node>,
     node_names: Vec<String>,
-    links: Vec<Link>,
-    link_names: Vec<String>,
+    channels: Vec<Channel>,
+    channel_names: Vec<String>,
     endpoints: Vec<UnixDatagram>,
     handles: Vec<ChannelId>,
     routing_table: HashMap<ChannelId, Vec<Route>>,
@@ -54,8 +54,8 @@ impl Router {
     pub fn new(
         nodes: Vec<Node>,
         node_names: Vec<String>,
-        links: Vec<Link>,
-        link_names: Vec<String>,
+        channels: Vec<Channel>,
+        channel_names: Vec<String>,
         handles: Vec<ChannelId>,
         endpoints: Vec<UnixDatagram>,
     ) -> Self {
@@ -80,8 +80,8 @@ impl Router {
         Self {
             nodes,
             node_names,
-            links,
-            link_names,
+            channels,
+            channel_names,
             handles,
             queued: BTreeMap::new(),
             routing_table,
@@ -93,24 +93,25 @@ impl Router {
 
     #[instrument(skip_all)]
     pub fn inbound(&mut self, index: usize) -> Result<(), RouterError> {
-        let (pid, node_handle, link_handle) = self.handles[index];
-        let link_name = &self.link_names[link_handle];
+        let (pid, node_handle, channel_handle) = self.handles[index];
+        let channel_name = &self.channel_names[channel_handle];
         let endpoint = &mut self.endpoints[index];
         loop {
-            match Self::recv_msg(endpoint, pid, self.timestep, link_handle, link_name) {
+            match Self::recv_msg(endpoint, pid, self.timestep, channel_handle, channel_name) {
                 Ok(recv_buf) => {
                     let msg = Rc::new(recv_buf);
-                    let Some(recipients) = self.routing_table.get(&(pid, node_handle, link_handle))
+                    let Some(recipients) =
+                        self.routing_table.get(&(pid, node_handle, channel_handle))
                     else {
                         error!(
                             "Couldn't find key {:?} in {:#?}",
-                            (pid, link_handle),
+                            (pid, channel_handle),
                             self.routing_table
                         );
                         return Ok(());
                     };
                     debug!(
-                        "[TX] {node_handle}.{pid}.{link_name}: {}",
+                        "[TX] {node_handle}.{pid}.{channel_name}: {}",
                         String::from_utf8_lossy(&msg)
                     );
                     // TODO: Use other route information to determine delays
@@ -133,12 +134,15 @@ impl Router {
     pub fn outbound(&mut self) -> Result<(), RouterError> {
         for (index, mailbox) in self.mailboxes.iter_mut().enumerate() {
             let endpoint = &mut self.endpoints[index];
-            let (pid, node_handle, link_handle) = self.handles[index];
-            let link_name = &self.link_names[link_handle];
+            let (pid, node_handle, channel_handle) = self.handles[index];
+            let channel_name = &self.channel_names[channel_handle];
             let timestep = self.timestep;
             while let Some(msg) = mailbox.pop_front() {
-                debug!("{pid}.{link_name} [RX]: {}", String::from_utf8_lossy(&msg));
-                match Self::send_msg(endpoint, &msg, pid, timestep, link_handle, link_name) {
+                debug!(
+                    "{pid}.{channel_name} [RX]: {}",
+                    String::from_utf8_lossy(&msg)
+                );
+                match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
                     Ok(_) => {}
                     Err(e) if e.recoverable() => {
                         mailbox.push_front(msg);
@@ -148,7 +152,7 @@ impl Router {
                         return Err(RouterError::SendError {
                             sender: pid,
                             node_name: self.node_names[node_handle].clone(),
-                            link_name: self.link_names[link_handle].clone(),
+                            channel_name: self.channel_names[channel_handle].clone(),
                             timestep,
                             base: Box::new(e),
                         });
@@ -170,12 +174,12 @@ impl Router {
         data: &[u8],
         pid: fuse::PID,
         timestep: u64,
-        link: LinkHandle,
-        link_name: &A,
+        channel: ChannelHandle,
+        channel_name: &A,
     ) -> Result<usize, RouterError> {
-        match socket::send(socket, data, pid, link_name).map_err(RouterError::FileError) {
+        match socket::send(socket, data, pid, channel_name).map_err(RouterError::FileError) {
             Ok(n_sent) => {
-                event!(target: "tx", Level::INFO, timestep, link, pid, tx = true, data);
+                event!(target: "tx", Level::INFO, timestep, channel, pid, tx = true, data);
                 Ok(n_sent)
             }
             err => err,
@@ -187,15 +191,15 @@ impl Router {
         socket: &mut UnixDatagram,
         pid: fuse::PID,
         timestep: u64,
-        link: LinkHandle,
-        link_name: &A,
+        channel: ChannelHandle,
+        channel_name: &A,
     ) -> Result<Vec<u8>, RouterError> {
         // TODO: Replace the hardcoded vector
         let mut recv_buf = vec![0; 4096];
-        let nread =
-            socket::recv(socket, &mut recv_buf, pid, link_name).map_err(RouterError::FileError)?;
+        let nread = socket::recv(socket, &mut recv_buf, pid, channel_name)
+            .map_err(RouterError::FileError)?;
         recv_buf.truncate(nread);
-        event!(target: "rx", Level::INFO, timestep, link, pid, tx = false, data = recv_buf.as_slice());
+        event!(target: "rx", Level::INFO, timestep, channel, pid, tx = false, data = recv_buf.as_slice());
         Ok(recv_buf)
     }
 }

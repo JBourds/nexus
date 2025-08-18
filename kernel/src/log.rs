@@ -8,14 +8,14 @@ use tracing::field::Visit;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::types::LinkHandle;
+use crate::types::ChannelHandle;
 
 #[derive(Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 struct BinaryLogRecord {
     timestep: u64,
     is_outbound: bool,
     pid: fuse::PID,
-    link: LinkHandle,
+    channel: ChannelHandle,
     data: Vec<u8>,
 }
 
@@ -32,8 +32,8 @@ impl Visit for LogVisitor {
             "timestep" => {
                 self.record.timestep = value;
             }
-            "link" => {
-                self.record.link = value as usize;
+            "channel" => {
+                self.record.channel = value as usize;
             }
             "pid" => {
                 self.record.pid = value as u32;
