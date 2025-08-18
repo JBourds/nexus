@@ -10,7 +10,7 @@ use std::{
     num::NonZeroU64,
     os::unix::net::UnixDatagram,
 };
-use tracing::{Level, debug, event, info, instrument};
+use tracing::{Level, debug, error, event, info, instrument};
 
 use crate::types::ChannelHandle;
 
@@ -147,19 +147,19 @@ impl Router {
                     {
                         let dst_node = self.handles[*handle_ptr].1;
                         if dst_node != src_node || channel.r#type.delivers_to_self() {
-                            info!(
+                            debug!(
                                 "Delivering from {} to {}",
                                 &self.node_names[src_node], &self.node_names[dst_node]
                             );
-                            info!(
-                                "[{}]",
+                            self.mailboxes[*handle_ptr].push_back(msg.clone());
+                            debug!(
+                                "Messages queued: [{}]",
                                 self.mailboxes
                                     .iter()
                                     .map(|m| format!("{}", m.len()))
                                     .collect::<Vec<_>>()
                                     .join(", ")
                             );
-                            self.mailboxes[*handle_ptr].push_back(msg.clone());
                         }
                     }
                 }
