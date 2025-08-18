@@ -2,6 +2,7 @@ use super::parse;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
+use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::{
@@ -566,6 +567,20 @@ impl Node {
             })
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
             .context("Unable to validate node protocols")?;
+
+        // Check that all internal names were used
+        let internal_names_used = protocols
+            .values()
+            .flat_map(|p| p.inbound.iter().chain(p.outbound.iter()))
+            .cloned()
+            .collect::<HashSet<_>>();
+        let difference = internal_names
+            .difference(&internal_names_used)
+            .collect::<Vec<_>>();
+        ensure!(
+            difference.is_empty(),
+            format!("Found unused internal channels: {difference:#?}")
+        );
 
         let mut nodes = vec![];
         let Some(deployments) = val.deployments else {
