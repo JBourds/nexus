@@ -41,6 +41,7 @@ pub struct DistanceTimeVar {
 pub struct DistanceProbVar {
     pub(super) rate: Option<meval::Expr>,
     pub(super) distance: Option<Unit>,
+    pub(super) size: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]

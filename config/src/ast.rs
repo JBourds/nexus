@@ -168,11 +168,13 @@ pub struct DistanceTimeVar {
     pub distance: DistanceUnit,
 }
 
-/// Expression of `x` (distance) which equals the probability of an event.
+/// Expression of `x` in `distance` units and `y` in `size` units which equals
+/// the probability of an event happening given a distance and payload size.
 #[derive(Clone, Debug, PartialEq)]
 pub struct DistanceProbVar {
     pub rate: meval::Expr,
     pub distance: DistanceUnit,
+    pub size: DataUnit,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -385,6 +387,7 @@ impl Default for DistanceProbVar {
         Self {
             rate: "0".parse().unwrap(),
             distance: DistanceUnit::default(),
+            size: DataUnit::default(),
         }
     }
 }

@@ -443,7 +443,16 @@ impl DistanceProbVar {
         } else {
             def.distance
         };
-        Ok(Self { rate, distance })
+        let size = if let Some(size) = val.size {
+            DataUnit::validate(size).context("Unable to validate size unit.")?
+        } else {
+            def.size
+        };
+        Ok(Self {
+            rate,
+            distance,
+            size,
+        })
     }
 }
 
