@@ -1,6 +1,7 @@
 use crate::errors::{ChannelError, FsError};
 use crate::{ChannelId, KernelChannels, PID};
 use config::ast;
+use tracing::{info, instrument};
 
 use fuser::ReplyWrite;
 use fuser::{
@@ -13,6 +14,7 @@ use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::io;
+use std::num::NonZeroU64;
 use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{SendError, Sender};
@@ -32,7 +34,7 @@ pub struct NexusFs {
     logger: Option<Sender<String>>,
     attr: FileAttr,
     files: Vec<ast::ChannelHandle>,
-    fs_links: HashMap<ChannelId, NexusFile>,
+    fs_channels: HashMap<ChannelId, NexusFile>,
     kernel_links: KernelChannels,
 }
 
@@ -47,6 +49,7 @@ pub struct NexusChannel {
     pub channel: ast::ChannelHandle,
     /// Available link operations
     pub mode: ChannelMode,
+    pub max_msg_size: NonZeroU64,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,6 +65,7 @@ struct NexusFile {
     mode: ChannelMode,
     attr: FileAttr,
     sock: UnixDatagram,
+    max_msg_size: NonZeroU64,
     unread_msg: Option<(usize, Vec<u8>)>,
 }
 
@@ -87,7 +91,7 @@ fn next_inode() -> u64 {
 }
 
 impl NexusFile {
-    fn new(sock: UnixDatagram, mode: ChannelMode, ino: u64) -> Self {
+    fn new(sock: UnixDatagram, max_msg_size: NonZeroU64, mode: ChannelMode, ino: u64) -> Self {
         let now = SystemTime::now();
         Self {
             mode,
@@ -108,6 +112,7 @@ impl NexusFile {
                 flags: 0,
                 blksize: 512,
             },
+            max_msg_size,
             sock,
             unread_msg: None,
         }
@@ -158,6 +163,7 @@ impl NexusFs {
             node,
             channel,
             mode,
+            max_msg_size,
         } in channels
         {
             let (fs_side, kernel_side) =
@@ -178,8 +184,11 @@ impl NexusFs {
             };
 
             if self
-                .fs_links
-                .insert(key.clone(), NexusFile::new(fs_side, mode, inode))
+                .fs_channels
+                .insert(
+                    key.clone(),
+                    NexusFile::new(fs_side, max_msg_size, mode, inode),
+                )
                 .is_some()
                 || self.kernel_links.insert(key, (node, kernel_side)).is_some()
             {
@@ -233,26 +242,28 @@ impl Default for NexusFs {
             attr: Self::root_attr(),
             logger: None,
             files: Vec::default(),
-            fs_links: HashMap::default(),
+            fs_channels: HashMap::default(),
             kernel_links: HashMap::default(),
         }
     }
 }
 
 impl Filesystem for NexusFs {
+    #[instrument]
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         if parent != FUSE_ROOT_ID {
             reply.error(ENOENT);
             return;
         }
         let key = (req.pid(), name.to_str().unwrap().to_string());
-        if let Some(file) = self.fs_links.get(&key) {
+        if let Some(file) = self.fs_channels.get(&key) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
             reply.error(ENOENT);
         }
     }
 
+    #[instrument]
     fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
@@ -263,7 +274,7 @@ impl Filesystem for NexusFs {
                     return;
                 };
                 let key = (req.pid(), name.clone());
-                let Some(file) = self.fs_links.get(&key) else {
+                let Some(file) = self.fs_channels.get(&key) else {
                     reply.error(EACCES);
                     return;
                 };
@@ -272,6 +283,7 @@ impl Filesystem for NexusFs {
         }
     }
 
+    #[instrument]
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
@@ -279,7 +291,7 @@ impl Filesystem for NexusFs {
             return;
         };
         let key = (req.pid(), file.clone());
-        let Some(file) = self.fs_links.get(&key) else {
+        let Some(file) = self.fs_channels.get(&key) else {
             reply.error(EACCES);
             return;
         };
@@ -302,6 +314,7 @@ impl Filesystem for NexusFs {
         reply.opened(index as u64, FOPEN_DIRECT_IO);
     }
 
+    #[instrument]
     fn read(
         &mut self,
         req: &Request,
@@ -322,7 +335,7 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
-        let Some(file) = self.fs_links.get_mut(&(req.pid(), file.clone())) else {
+        let Some(file) = self.fs_channels.get_mut(&(req.pid(), file.clone())) else {
             reply.error(EACCES);
             return;
         };
@@ -343,16 +356,14 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        // TODO: Do better than big hardcoded vector
-        let mut recv_buf = vec![0; 4096];
+        let mut recv_buf = vec![0; file.max_msg_size.get() as usize];
         let recv_size = match file.sock.recv(&mut recv_buf) {
             Ok(n) => n,
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                 reply.data(&[]);
                 return;
             }
-            Err(e) => {
-                eprintln!("{e:#?}");
+            Err(_) => {
                 reply.error(EBADMSG);
                 return;
             }
@@ -365,6 +376,7 @@ impl Filesystem for NexusFs {
         file.unread_msg = Some((read_size, recv_buf));
     }
 
+    #[instrument]
     fn write(
         &mut self,
         req: &Request<'_>,
@@ -386,7 +398,7 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
-        let Some(file) = self.fs_links.get(&(req.pid(), file.clone())) else {
+        let Some(file) = self.fs_channels.get(&(req.pid(), file.clone())) else {
             reply.error(EACCES);
             return;
         };
@@ -419,6 +431,7 @@ impl Filesystem for NexusFs {
         reply.written(bytes_written);
     }
 
+    #[instrument]
     fn readdir(
         &mut self,
         _req: &Request,

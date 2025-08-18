@@ -145,6 +145,7 @@ fn get_fs_channels(
                 node: node_handle.clone(),
                 channel: channel.clone(),
                 mode,
+                max_msg_size: sim.channels.get(channel).unwrap().r#type.max_buf_size(),
             });
         }
     }
