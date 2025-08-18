@@ -81,11 +81,11 @@ impl Rate {
 }
 
 impl Channel {
-    fn validate(val: parse::Channel, link_names: &HashSet<LinkHandle>) -> Result<Self> {
+    fn validate(val: parse::Channel, links: &HashMap<LinkHandle, Link>) -> Result<Self> {
         let link = val.link.map(|link| link.0).unwrap_or("ideal".to_string());
-        if !link_names.contains(&link) {
+        let Some(link) = links.get(&link).cloned() else {
             bail!("Could not find link \"{link}\" in simulated links.");
-        }
+        };
         let r#type =
             ChannelType::validate(val.r#type).context("Failed to validate channel type.")?;
         Ok(Self { link, r#type })
@@ -215,18 +215,6 @@ impl Simulation {
                     map
                 });
 
-        let link_names: HashSet<_> = links
-            .keys()
-            .cloned()
-            .chain(Some("ideal".to_string()))
-            .collect();
-        let channels: HashMap<_, _> = val
-            .channels
-            .into_iter()
-            .map(|(name, channel)| Channel::validate(channel, &link_names).map(|val| (name, val)))
-            .collect::<Result<_>>()
-            .context("Failed to validate channels.")?;
-
         // Now that the topological ordering is complete, process links in the
         // order we created
         let ordering = Self::trace_link_dependencies(&mut links)?;
@@ -242,7 +230,14 @@ impl Simulation {
             let _ = processed.insert(key.to_string(), res);
         }
 
-        let channel_handles = channels.keys().into_iter().cloned().collect::<HashSet<_>>();
+        let channels: HashMap<_, _> = val
+            .channels
+            .into_iter()
+            .map(|(name, channel)| Channel::validate(channel, &processed).map(|val| (name, val)))
+            .collect::<Result<_>>()
+            .context("Failed to validate channels.")?;
+
+        let channel_handles = channels.keys().cloned().collect::<HashSet<_>>();
         let nodes = val
             .nodes
             .into_iter()
@@ -267,7 +262,6 @@ impl Simulation {
 
         Ok(Self {
             params,
-            links: processed,
             nodes,
             channels,
         })

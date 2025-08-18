@@ -11,7 +11,6 @@ pub type ProtocolHandle = String;
 #[derive(Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
-    pub links: HashMap<LinkHandle, Link>,
     pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Vec<Node>>,
 }
@@ -26,7 +25,7 @@ pub struct Link {
 
 #[derive(Clone, Debug, Default)]
 pub struct Channel {
-    pub(super) link: LinkHandle,
+    pub(super) link: Link,
     pub(super) r#type: ChannelType,
 }
 
