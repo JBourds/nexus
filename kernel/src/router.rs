@@ -10,7 +10,7 @@ use std::{
     num::NonZeroU64,
     os::unix::net::UnixDatagram,
 };
-use tracing::{Level, debug, event, instrument};
+use tracing::{Level, debug, event, info, instrument};
 
 use crate::types::ChannelHandle;
 
@@ -34,8 +34,8 @@ pub(crate) struct Route {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Router {
-    /// map for messages queued in each timestep
-    queued: BTreeMap<Timestep, Vec<Message>>,
+    /// queued messages
+    queued: VecDeque<Message>,
     /// nodes in the simulation
     nodes: Vec<Node>,
     /// names for nodes (only used in debugging/printing)
@@ -80,9 +80,8 @@ impl Router {
                             .iter()
                             .enumerate()
                             .filter_map(|(index, (_, dst_node, dst_ch))| {
-                                let node_handle = *node_handle;
-                                if *dst_node == node_handle && *dst_ch == ch_index {
-                                    let src = &nodes[node_handle];
+                                if *dst_node == *node_handle && *dst_ch == ch_index {
+                                    let src = &nodes[*node_handle];
                                     let dst = &nodes[*dst_node];
                                     let (distance, unit) =
                                         Position::distance(&src.position, &dst.position);
@@ -107,7 +106,7 @@ impl Router {
             channel_names,
             routes,
             handles,
-            queued: BTreeMap::new(),
+            queued: VecDeque::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
             endpoints,
             timestep: 0,
@@ -149,6 +148,18 @@ impl Router {
                     {
                         let dst_node = self.handles[*handle_ptr].1;
                         if dst_node != src_node || channel.r#type.delivers_to_self() {
+                            info!(
+                                "Delivering from {} to {}",
+                                &self.node_names[src_node], &self.node_names[dst_node]
+                            );
+                            info!(
+                                "[{}]",
+                                self.mailboxes
+                                    .iter()
+                                    .map(|m| format!("{}", m.len()))
+                                    .collect::<Vec<_>>()
+                                    .join(", ")
+                            );
                             self.mailboxes[*handle_ptr].push_back(msg.clone());
                         }
                     }
@@ -238,6 +249,7 @@ impl Router {
         let mut recv_buf = vec![0; buf_sz.get() as usize];
         let nread = socket::recv(socket, &mut recv_buf, pid, channel_name)
             .map_err(RouterError::FileError)?;
+        debug!("Read {nread}");
         recv_buf.truncate(nread);
         event!(target: "rx", Level::INFO, timestep, channel, pid, tx = false, data = recv_buf.as_slice());
         Ok(recv_buf)
