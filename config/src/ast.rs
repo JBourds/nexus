@@ -57,6 +57,22 @@ pub enum ChannelType {
 
 impl ChannelType {
     pub const MSG_MAX_DEFAULT: NonZeroU64 = NonZeroU64::new(4096).unwrap();
+
+    pub fn max_buf_size(&self) -> NonZeroU64 {
+        match self {
+            ChannelType::Live { max_size, .. } => *max_size,
+            ChannelType::MsgBuffered { max_size, .. } => *max_size,
+        }
+    }
+
+    pub fn delivers_to_self(&self) -> bool {
+        match self {
+            ChannelType::Live {
+                read_own_writes, ..
+            } => *read_own_writes,
+            _ => false,
+        }
+    }
 }
 
 impl Default for ChannelType {
@@ -261,14 +277,34 @@ impl DelayCalculator {
             Self::timesteps_required(amount, data_unit, self.processing, self.ts_config);
         let (trans_num, trans_den) =
             Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config);
-        let prop_timesteps = self.propagation_delay(distance, distance_unit);
+        let prop_timesteps = self.propagation_timesteps_f64(distance, distance_unit);
         let mut num = proc_num * trans_den + trans_num * proc_den;
         let den = proc_den * trans_den;
         num += (prop_timesteps * den as f64) as u64;
         num.div_ceil(den)
     }
 
-    fn propagation_delay(&self, distance: f64, unit: DistanceUnit) -> f64 {
+    pub fn processing_timesteps_u64(&self, amount: u64, data_unit: DataUnit) -> (u64, u64) {
+        Self::timesteps_required(amount, data_unit, self.processing, self.ts_config)
+    }
+
+    pub fn transmission_timesteps_u64(&self, amount: u64, data_unit: DataUnit) -> (u64, u64) {
+        Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config)
+    }
+
+    pub fn processing_timesteps_f64(&self, amount: u64, data_unit: DataUnit) -> f64 {
+        let (num, den) =
+            Self::timesteps_required(amount, data_unit, self.processing, self.ts_config);
+        num as f64 / den as f64
+    }
+
+    pub fn transmission_timesteps_f64(&self, amount: u64, data_unit: DataUnit) -> f64 {
+        let (num, den) =
+            Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config);
+        num as f64 / den as f64
+    }
+
+    pub fn propagation_timesteps_f64(&self, distance: f64, unit: DistanceUnit) -> f64 {
         let func = self.propagation.rate.clone().bind("x").unwrap();
         // Number of `distance_unit` / `time_unit` for value of `distance`
         let dist_time_units = func(distance);
