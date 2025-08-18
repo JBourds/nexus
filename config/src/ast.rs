@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
@@ -25,8 +26,8 @@ pub struct Link {
 
 #[derive(Clone, Debug, Default)]
 pub struct Channel {
-    pub(super) link: Link,
-    pub(super) r#type: ChannelType,
+    pub link: Link,
+    pub r#type: ChannelType,
 }
 
 #[derive(Clone, Debug)]
@@ -72,7 +73,7 @@ impl Default for ChannelType {
 #[derive(Clone, Debug)]
 pub struct Node {
     pub position: Position,
-    pub internal_names: Vec<ProtocolHandle>,
+    pub internal_names: Vec<ChannelHandle>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
 }
 
@@ -145,11 +146,11 @@ pub struct Params {
     pub root: PathBuf,
 }
 
-#[derive(Clone)]
+#[derive(Clone, Default)]
 pub struct DelayCalculator {
     pub transmission: Rate,
     pub processing: Rate,
-    pub propagation: Rc<dyn Fn(f64, DistanceUnit) -> f64>,
+    pub propagation: DistanceTimeVar,
     pub ts_config: TimestepConfig,
 }
 
@@ -260,11 +261,39 @@ impl DelayCalculator {
             Self::timesteps_required(amount, data_unit, self.processing, self.ts_config);
         let (trans_num, trans_den) =
             Self::timesteps_required(amount, data_unit, self.transmission, self.ts_config);
-        let prop_timesteps = (self.propagation)(distance, distance_unit);
+        let prop_timesteps = self.propagation_delay(distance, distance_unit);
         let mut num = proc_num * trans_den + trans_num * proc_den;
         let den = proc_den * trans_den;
         num += (prop_timesteps * den as f64) as u64;
         num.div_ceil(den)
+    }
+
+    fn propagation_delay(&self, distance: f64, unit: DistanceUnit) -> f64 {
+        let func = self.propagation.rate.clone().bind("x").unwrap();
+        // Number of `distance_unit` / `time_unit` for value of `distance`
+        let dist_time_units = func(distance);
+        let (distance_prop_greater, distance_ratio) =
+            DistanceUnit::ratio(self.propagation.distance, unit);
+        // Scale distance units
+        let scalar = 10u64
+            .checked_pow(distance_ratio.try_into().unwrap())
+            .expect("Exponentiation overflow.") as f64;
+        let (distance_num, distance_den) = if distance_prop_greater {
+            (dist_time_units, scalar)
+        } else {
+            (dist_time_units * scalar, 1.0)
+        };
+        // Scale time units
+        let (time_prop_greater, time_ratio) =
+            TimeUnit::ratio(self.propagation.time, self.ts_config.unit);
+        let scalar = 10_u64
+            .checked_pow(time_ratio.try_into().unwrap())
+            .expect("Exponentiation overflow.") as f64;
+        if time_prop_greater {
+            distance_num * scalar / distance_den
+        } else {
+            distance_num / distance_den * scalar
+        }
     }
 }
 
@@ -358,17 +387,6 @@ impl Default for TimestepConfig {
             length: Self::DEFAULT_TIMESTEP_LEN,
             unit: TimeUnit::default(),
             count: Self::DEFAULT_TIMESTEP_COUNT,
-        }
-    }
-}
-
-impl Default for DelayCalculator {
-    fn default() -> Self {
-        Self {
-            transmission: Default::default(),
-            processing: Default::default(),
-            propagation: Rc::new(|_, _| 0.0),
-            ts_config: Default::default(),
         }
     }
 }

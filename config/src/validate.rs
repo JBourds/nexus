@@ -5,6 +5,8 @@ use crate::parse::Deployment;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -335,42 +337,13 @@ impl Delays {
 
 impl DelayCalculator {
     pub(crate) fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
-        let DistanceTimeVar {
-            rate,
-            time,
-            distance: distance_unit,
-        } = delays.propagation;
-        let Ok(func) = rate.bind("x") else {
+        if delays.propagation.rate.clone().bind("x").is_err() {
             bail!("Link rates must be a one variable function of distance \"x\"");
         };
         Ok(Self {
             transmission: delays.transmission,
             processing: delays.processing,
-            propagation: Rc::new(move |distance: f64, unit: DistanceUnit| {
-                // Number of `distance_unit` / `time_unit` for value of `distance`
-                let dist_time_units = func(distance);
-                let (distance_prop_greater, distance_ratio) =
-                    DistanceUnit::ratio(distance_unit, unit);
-                // Scale distance units
-                let scalar = 10u64
-                    .checked_pow(distance_ratio.try_into().unwrap())
-                    .expect("Exponentiation overflow.") as f64;
-                let (distance_num, distance_den) = if distance_prop_greater {
-                    (dist_time_units, scalar)
-                } else {
-                    (dist_time_units * scalar, 1.0)
-                };
-                // Scale time units
-                let (time_prop_greater, time_ratio) = TimeUnit::ratio(time, ts_config.unit);
-                let scalar = 10_u64
-                    .checked_pow(time_ratio.try_into().unwrap())
-                    .expect("Exponentiation overflow.") as f64;
-                if time_prop_greater {
-                    distance_num * scalar / distance_den
-                } else {
-                    distance_num / distance_den * scalar
-                }
-            }),
+            propagation: delays.propagation,
             ts_config,
         })
     }
