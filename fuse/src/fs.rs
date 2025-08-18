@@ -372,6 +372,7 @@ impl Filesystem for NexusFs {
         // Reads should not be forced to be one shot. Anything unread
         // should be buffered in case the reader wants to read incrementally.
         let read_size = min(recv_size, size as usize);
+        recv_buf.truncate(recv_size);
         reply.data(&recv_buf[..read_size as usize]);
         file.unread_msg = Some((read_size, recv_buf));
     }
