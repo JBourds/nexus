@@ -1,8 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;

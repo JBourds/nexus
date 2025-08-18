@@ -4,9 +4,6 @@ use crate::helpers::*;
 use crate::parse::Deployment;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::sync::Arc;
-use std::sync::RwLock;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,

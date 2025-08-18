@@ -123,9 +123,6 @@ pub struct Signal {
 }
 
 #[derive(Debug, Default, Deserialize)]
-pub struct NodeName(pub String);
-
-#[derive(Debug, Default, Deserialize)]
 pub struct ProtocolName(pub String);
 
 #[derive(Debug, Default, Deserialize)]
@@ -158,16 +155,6 @@ pub struct Coordinate {
     pub(super) orientation: Option<Orientation>,
     pub(super) unit: Option<Unit>,
 }
-
-#[derive(Debug, Default, Deserialize)]
-pub struct DirectConnection {
-    pub(super) node: NodeName,
-    pub(super) link: LinkName,
-}
-
-#[derive(Debug, Default, Deserialize)]
-#[allow(dead_code)]
-pub struct IndirectConnection(pub String);
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
