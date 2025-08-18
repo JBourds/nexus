@@ -80,6 +80,51 @@ impl Rate {
     }
 }
 
+impl Channel {
+    fn validate(val: parse::Channel, link_names: &HashSet<LinkHandle>) -> Result<Self> {
+        let link = val.link.map(|link| link.0).unwrap_or("ideal".to_string());
+        if !link_names.contains(&link) {
+            bail!("Could not find link \"{link}\" in simulated links.");
+        }
+        let r#type =
+            ChannelType::validate(val.r#type).context("Failed to validate channel type.")?;
+        Ok(Self { link, r#type })
+    }
+}
+
+impl ChannelType {
+    fn validate(val: parse::ChannelType) -> Result<Self> {
+        let val = match val {
+            parse::ChannelType::Live { ttl, unit } => {
+                let unit = unit
+                    .map(TimeUnit::validate)
+                    .unwrap_or(Ok(TimeUnit::default()))
+                    .context("Failed to validate time unit when parsing channel type.")?;
+                Self::Live { ttl, unit }
+            }
+            parse::ChannelType::MsgBuffered {
+                ttl,
+                unit,
+                nbuffered,
+                max_size,
+            } => {
+                let unit = unit
+                    .map(TimeUnit::validate)
+                    .unwrap_or(Ok(TimeUnit::default()))
+                    .context("Failed to validate time unit when parsing channel type.")?;
+                let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
+                Self::MsgBuffered {
+                    ttl,
+                    unit,
+                    nbuffered,
+                    max_size,
+                }
+            }
+        };
+        Ok(val)
+    }
+}
+
 impl Simulation {
     /// Guaranteed to not have a cycle because it only traces links with a
     /// common ancestor to the default link, which is a sink node.
@@ -96,23 +141,9 @@ impl Simulation {
         }
     }
 
-    pub(crate) fn validate(config_root: &PathBuf, val: parse::Simulation) -> Result<Self> {
-        let params = Params::validate(config_root, val.params)
-            .context("Unable to validate simulation parameters")?;
-
-        // Convert all the links to lowercase
-        let mut links =
-            val.links
-                .into_iter()
-                .fold(HashMap::new(), |mut map, (mut name, mut link)| {
-                    name.make_ascii_lowercase();
-                    if let Some(ref mut inherit) = link.inherit {
-                        inherit.make_ascii_lowercase();
-                    }
-                    map.insert(name, link);
-                    map
-                });
-
+    fn trace_link_dependencies(
+        links: &mut HashMap<LinkHandle, parse::Link>,
+    ) -> Result<Vec<LinkHandle>> {
         // Create a dependency graph mapping links to children
         let mut link_dependencies = HashMap::new();
         for (name, link) in links.iter_mut() {
@@ -155,15 +186,43 @@ impl Simulation {
                 "Detected one or more cycles in the inheritance relations found in the following keys: {keys:?}"
             );
         }
+        Ok(ordering)
+    }
+
+    pub(crate) fn validate(config_root: &PathBuf, val: parse::Simulation) -> Result<Self> {
+        let params = Params::validate(config_root, val.params)
+            .context("Unable to validate simulation parameters")?;
+
+        // Convert all the links to lowercase
+        let mut links =
+            val.links
+                .into_iter()
+                .fold(HashMap::new(), |mut map, (mut name, mut link)| {
+                    name.make_ascii_lowercase();
+                    if let Some(ref mut inherit) = link.inherit {
+                        inherit.make_ascii_lowercase();
+                    }
+                    map.insert(name, link);
+                    map
+                });
+
+        let link_names: HashSet<_> = links
+            .keys()
+            .cloned()
+            .chain(Some("ideal".to_string()))
+            .collect();
+        let channels: HashMap<_, _> = val
+            .channels
+            .into_iter()
+            .map(|(name, channel)| Channel::validate(channel, &link_names).map(|val| (name, val)))
+            .collect::<Result<_>>()
+            .context("Failed to validate channels.")?;
 
         // Now that the topological ordering is complete, process links in the
         // order we created
+        let ordering = Self::trace_link_dependencies(&mut links)?;
         let mut processed = HashMap::new();
         let _ = processed.insert(Link::DEFAULT.to_string(), Link::default());
-        let link_handles = ordering
-            .clone()
-            .into_iter()
-            .collect::<HashSet<LinkHandle>>();
         // Skip 1 for the default link we insert since that will always be first
         for key in ordering.iter().skip(1) {
             let link = links
@@ -174,17 +233,12 @@ impl Simulation {
             let _ = processed.insert(key.to_string(), res);
         }
 
-        let node_handles = val
-            .nodes
-            .keys()
-            .map(|s| s.to_string())
-            .collect::<HashSet<String>>();
+        let channel_handles = channels.keys().into_iter().cloned().collect::<HashSet<_>>();
         let nodes = val
             .nodes
             .into_iter()
             .map(|(key, node)| {
-                Node::validate(config_root, node, &node_handles, &link_handles)
-                    .map(|nodes| (key, nodes))
+                Node::validate(config_root, node, &channel_handles).map(|nodes| (key, nodes))
             })
             .collect::<Result<HashMap<NodeHandle, Vec<Node>>>>()
             .context("Failed to validate nodes")?;
@@ -206,6 +260,7 @@ impl Simulation {
             params,
             links: processed,
             nodes,
+            channels,
         })
     }
 }
@@ -483,21 +538,20 @@ impl Node {
     fn validate(
         config_root: &PathBuf,
         val: parse::Node,
-        node_handles: &HashSet<NodeHandle>,
-        link_handles: &HashSet<LinkHandle>,
+        channel_handles: &HashSet<ChannelHandle>,
     ) -> Result<Vec<Self>> {
         // No duplicate internal names
         let mut internal_names = HashSet::new();
         if let Some(names) = val.internal_names {
             for name in names {
                 if !internal_names.insert(name.0.to_lowercase()) {
-                    bail!("Node contains duplicate links with name \"{}\"", name.0);
+                    bail!("Node contains duplicate channels with name \"{}\"", name.0);
                 }
             }
         }
 
-        // These can be duplicated with internal links
-        let valid_links = link_handles
+        // These can be duplicated with internal channels
+        let valid_channels = channel_handles
             .iter()
             .map(|s| s.to_lowercase())
             .chain(internal_names.clone())
@@ -522,7 +576,7 @@ impl Node {
             .into_iter()
             .map(|protocol| {
                 let name = protocol.name.clone();
-                NodeProtocol::validate(config_root, protocol, node_handles, &valid_links)
+                NodeProtocol::validate(config_root, protocol, &valid_channels)
                     .map(|validated| (name, validated))
             })
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
@@ -613,81 +667,51 @@ impl NodeProtocol {
     fn validate(
         config_root: &PathBuf,
         val: parse::NodeProtocol,
-        node_handles: &HashSet<NodeHandle>,
-        link_handles: &HashSet<LinkHandle>,
+        channel_handles: &HashSet<ChannelHandle>,
     ) -> Result<Self> {
         let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
         let runner = Cmd {
             cmd: val.runner,
             args: val.runner_args.unwrap_or_default(),
         };
-        let mut accepts = HashSet::new();
-        let node_accepts = val.accepts.unwrap_or_default();
-        for link in node_accepts.into_iter() {
-            if !link_handles.contains(&link.0) {
-                bail!(
-                    "Protocol \"{}\" accepts nonexistent link \"{}\".",
-                    val.name,
-                    link.0
-                )
-            }
-            let _ = accepts.insert(link.0);
-        }
-        // Ensure:
-        // 1. There are no nonexistent nodes or links in the list.
-        // 2. There are no duplicate entries for a given (node, link) pair.
-        let mut direct = HashMap::new();
-        let node_direct_connections = val.direct.unwrap_or_default();
-        for conn in node_direct_connections.into_iter() {
-            if !node_handles.contains(&conn.node.0) && conn.node.0 != Node::SELF {
-                bail!(
-                    "Protocol \"{}\" has link \"{}\" to nonexistent node \"{}\".",
-                    val.name,
-                    conn.link.0,
-                    conn.node.0,
-                )
-            }
-            let entry = direct.entry(conn.node.0.clone()).or_insert(HashSet::new());
-            if !link_handles.contains(&conn.link.0.clone()) {
-                bail!(
-                    "Protocol \"{}\" has nonexistent link \"{}\" to node \"{}\".",
-                    val.name,
-                    conn.link.0,
-                    conn.node.0,
-                )
-            } else if !entry.insert(conn.link.0.clone()) {
-                bail!(
-                    "Protocol \"{}\" has duplicate link \"{}\" to node \"{}\".",
-                    val.name,
-                    conn.link.0,
-                    conn.node.0,
-                )
-            }
-        }
-        let mut indirect = HashSet::new();
-        let node_indirect_connections = val.indirect.unwrap_or_default();
-        for link in node_indirect_connections.into_iter() {
-            if !link_handles.contains(&link.0) {
-                bail!(
-                    "Protocol \"{}\" has nonexistent indirect link \"{}\".",
-                    val.name,
-                    link.0,
-                )
-            }
-            if !indirect.insert(link.0.clone()) {
-                bail!(
-                    "Protocol \"{}\" has duplicate indirect link \"{}\".",
-                    val.name,
-                    link.0,
-                )
-            }
-        }
+        let outbound = val
+            .outbound
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ch| {
+                if channel_handles.contains(&ch.0) {
+                    Ok(ch.0)
+                } else {
+                    bail!(
+                        "Could not find outbound channel \"{}\" in protocol \"{}\"",
+                        ch.0,
+                        val.name
+                    )
+                }
+            })
+            .collect::<Result<_>>()?;
+        let inbound = val
+            .inbound
+            .unwrap_or_default()
+            .into_iter()
+            .map(|ch| {
+                if channel_handles.contains(&ch.0) {
+                    Ok(ch.0)
+                } else {
+                    bail!(
+                        "Could not find inbound channel \"{}\" in protocol \"{}\"",
+                        ch.0,
+                        val.name
+                    )
+                }
+            })
+            .collect::<Result<_>>()?;
+
         Ok(Self {
             root,
             runner,
-            accepts,
-            direct,
-            indirect,
+            outbound,
+            inbound,
         })
     }
 }

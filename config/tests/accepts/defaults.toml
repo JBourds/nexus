@@ -102,6 +102,11 @@ packet_loss = { rate = 0, distance = "cm" }
 delays.processing = { data = "b", time = "s" }
 delays.propagation = { rate = 0, distance = "km" }
 
+[channels]
+
+[channels.ch_ideal]
+link = "ideal"
+
 [nodes]
 
 # The default node which all other nodes inherit from

@@ -3,6 +3,11 @@
 [links.invalid]
 signal.unit = "x"
 
+[channels]
+
+[channels.unused]
+link = "invalid"
+
 [nodes]
 
 [nodes.main]

@@ -1,0 +1,57 @@
+# Designed to simulate a MAC layer CSMA protocol with a few nodes at once.
+# Each node has the perception of reading/writing to the same "ethernet" file
+# during the simulation and, due to the characteristics of the link, will
+# instantly see reads/writes.
+
+[params]
+timestep.length = 1          
+timestep.unit = "ms"
+timestep.count = 10000        
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.ethernet]
+link = "ethernet"
+type = { type = "live" }
+
+[links]
+
+[links.ethernet.delays.transmission]
+rate = 100000000
+data = "bit"
+time = "s"
+
+[links.ethernet.delays.processing]
+rate = 1000000
+data = "bit"
+time = "s"
+
+[links.ethernet.delays.propagation]
+rate = "3e8 * x"
+time = "s"
+distance = "m"
+
+[links.ethernet.bit_error]
+rate = "1e-9"
+distance = "m"
+
+[nodes]
+
+[nodes.main]
+deployments = [ 
+    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
+    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
+    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
+    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
+]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "python3"
+runner_args = ["node.py"]
+outbound = ["ethernet"]
+inbound = ["ethernet"]
+

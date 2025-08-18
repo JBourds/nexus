@@ -1,0 +1,42 @@
+# Simulate multiple nodes from a class communicating to the same channel
+
+[params]
+timestep.length = 1        
+timestep.unit = "ns"
+timestep.count = 5000000000 
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.direct]
+link = "ideal"
+
+[nodes]
+
+[nodes.client]
+deployments = [ 
+    { extra_args = ["1"] }, 
+    { extra_args = ["2"] },
+]
+
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+inbound = ["direct"]
+outbound = ["direct"]
+
+
+[nodes.server]
+deployments = [ {} ]
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+inbound = ["direct"]
+outbound = ["direct"]

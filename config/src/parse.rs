@@ -1,11 +1,12 @@
 use serde::Deserialize;
-use std::collections::HashMap;
+use std::{collections::HashMap, num::NonZeroU64};
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Simulation {
     pub(super) params: Params,
     pub(super) links: HashMap<String, Link>,
     pub(super) nodes: HashMap<String, Node>,
+    pub(super) channels: HashMap<String, Channel>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -16,7 +17,7 @@ pub struct Params {
     pub(super) root: String,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct Unit(pub String);
 
 #[derive(Debug, Default, Deserialize)]
@@ -50,7 +51,7 @@ pub struct Rate {
     pub(super) time: Option<Unit>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 pub struct LinkName(pub String);
 
 #[derive(Debug, Default, Deserialize)]
@@ -61,6 +62,42 @@ pub struct Link {
     pub(super) packet_loss: Option<DistanceProbVar>,
     pub(super) bit_error: Option<DistanceProbVar>,
     pub(super) delays: Option<Delays>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize)]
+pub struct ChannelName(pub String);
+
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct Channel {
+    pub(super) link: Option<LinkName>,
+    pub(super) r#type: ChannelType,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "type")]
+pub enum ChannelType {
+    Live {
+        ttl: Option<NonZeroU64>,
+        unit: Option<Unit>,
+    },
+    MsgBuffered {
+        ttl: Option<NonZeroU64>,
+        unit: Option<Unit>,
+        nbuffered: Option<NonZeroU64>,
+        max_size: Option<NonZeroU64>,
+    },
+}
+
+impl Default for ChannelType {
+    fn default() -> Self {
+        Self::MsgBuffered {
+            ttl: None,
+            unit: None,
+            nbuffered: None,
+            max_size: None,
+        }
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -145,7 +182,6 @@ pub struct NodeProtocol {
     pub(super) root: String,
     pub(super) runner: String,
     pub(super) runner_args: Option<Vec<String>>,
-    pub(super) accepts: Option<Vec<LinkName>>,
-    pub(super) direct: Option<Vec<DirectConnection>>,
-    pub(super) indirect: Option<Vec<LinkName>>,
+    pub(super) outbound: Option<Vec<ChannelName>>,
+    pub(super) inbound: Option<Vec<ChannelName>>,
 }

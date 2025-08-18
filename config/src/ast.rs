@@ -1,18 +1,18 @@
+use std::collections::{HashMap, HashSet};
+use std::num::NonZeroU64;
 use std::path::PathBuf;
 use std::rc::Rc;
-use std::{
-    collections::{HashMap, HashSet},
-    num::NonZeroU64,
-};
 
-pub type NodeHandle = String;
 pub type LinkHandle = String;
+pub type ChannelHandle = String;
+pub type NodeHandle = String;
 pub type ProtocolHandle = String;
 
 #[derive(Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
     pub links: HashMap<LinkHandle, Link>,
+    pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Vec<Node>>,
 }
 
@@ -22,6 +22,50 @@ pub struct Link {
     pub bit_error: DistanceProbVar,
     pub packet_loss: DistanceProbVar,
     pub delays: DelayCalculator,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Channel {
+    pub(super) link: LinkHandle,
+    pub(super) r#type: ChannelType,
+}
+
+#[derive(Clone, Debug)]
+pub enum ChannelType {
+    /// No channel buffering other than transmission time,
+    /// allow reading during transmissions.
+    Live {
+        /// Time to live once it has reached destination
+        ttl: Option<NonZeroU64>,
+        /// Time unit `ttl` is in
+        unit: TimeUnit,
+    },
+    /// Buffer some number of messages at a time.
+    MsgBuffered {
+        /// Time to live once it has reached destination
+        ttl: Option<NonZeroU64>,
+        /// Time unit `ttl` is in
+        unit: TimeUnit,
+        /// Number of buffered messages per node. If None, is infinite.
+        nbuffered: Option<NonZeroU64>,
+        /// Maximum message size in bytes.
+        max_size: NonZeroU64,
+    },
+}
+
+impl ChannelType {
+    pub const MSG_MAX_DEFAULT: NonZeroU64 = NonZeroU64::new(4096).unwrap();
+}
+
+impl Default for ChannelType {
+    fn default() -> Self {
+        Self::MsgBuffered {
+            ttl: None,
+            unit: TimeUnit::Seconds,
+            nbuffered: None,
+            max_size: Self::MSG_MAX_DEFAULT,
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -35,9 +79,8 @@ pub struct Node {
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
-    pub accepts: HashSet<LinkHandle>,
-    pub direct: HashMap<NodeHandle, HashSet<LinkHandle>>,
-    pub indirect: HashSet<LinkHandle>,
+    pub outbound: HashSet<ChannelHandle>,
+    pub inbound: HashSet<ChannelHandle>,
 }
 
 #[derive(Clone, Debug)]
@@ -219,27 +262,6 @@ impl DelayCalculator {
         let den = proc_den * trans_den;
         num += (prop_timesteps * den as f64) as u64;
         num.div_ceil(den)
-    }
-}
-
-impl NodeProtocol {
-    pub fn links(&self) -> HashSet<LinkHandle> {
-        let mut links = self.outbound_links();
-        links.extend(self.inbound_links());
-        links
-    }
-
-    pub fn outbound_links(&self) -> HashSet<LinkHandle> {
-        let mut links = HashSet::new();
-        for link_set in self.direct.values() {
-            links.extend(link_set.iter().cloned());
-        }
-        links.extend(self.indirect.iter().cloned());
-        links
-    }
-
-    pub fn inbound_links(&self) -> HashSet<LinkHandle> {
-        self.accepts.clone()
     }
 }
 
