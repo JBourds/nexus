@@ -3,6 +3,7 @@ use crate::{
     errors::RouterError,
     types::{Channel, Node},
 };
+use config::ast::{DistanceUnit, Position};
 use fuse::{PID, socket};
 use std::{
     collections::{BTreeMap, VecDeque},
@@ -23,6 +24,13 @@ pub(crate) struct Message {
     buf: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub(crate) struct Route {
+    handle_ptr: usize,
+    distance: f64,
+    unit: DistanceUnit,
+}
+
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Router {
@@ -36,8 +44,8 @@ pub(crate) struct Router {
     channels: Vec<Channel>,
     /// names for channels (only used in debugging/printing)
     channel_names: Vec<String>,
-    /// per-channel vector with the indices of every handle associated with it
-    routes: Vec<Vec<usize>>,
+    /// per-channel vector with the pre-computed route information
+    routes: Vec<Vec<Route>>,
     /// actual unix domain sockets being read/written from
     endpoints: Vec<UnixDatagram>,
     /// all the unique keys for each channel file
@@ -67,19 +75,28 @@ impl Router {
                 ch.outbound
                     .iter()
                     .chain(ch.inbound.iter())
-                    .copied()
                     .flat_map(|node_handle| {
-                        handles.iter().enumerate().filter_map(
-                            move |(index, (_, dst_node, dst_ch))| {
+                        handles
+                            .iter()
+                            .enumerate()
+                            .filter_map(|(index, (_, dst_node, dst_ch))| {
+                                let node_handle = *node_handle;
                                 if *dst_node == node_handle && *dst_ch == ch_index {
-                                    Some(index)
+                                    let src = &nodes[node_handle];
+                                    let dst = &nodes[*dst_node];
+                                    let (distance, unit) =
+                                        Position::distance(&src.position, &dst.position);
+                                    Some(Route {
+                                        handle_ptr: index,
+                                        distance,
+                                        unit,
+                                    })
                                 } else {
                                     None
                                 }
-                            },
-                        )
+                            })
                     })
-                    .collect::<Vec<usize>>()
+                    .collect::<Vec<_>>()
             })
             .collect::<Vec<_>>();
 
@@ -124,10 +141,15 @@ impl Router {
                         String::from_utf8_lossy(&msg.buf)
                     );
 
-                    for handle in self.routes[channel_handle].iter().copied() {
-                        let dst_node = self.handles[handle].1;
+                    for Route {
+                        handle_ptr,
+                        distance,
+                        unit,
+                    } in self.routes[channel_handle].iter()
+                    {
+                        let dst_node = self.handles[*handle_ptr].1;
                         if dst_node != src_node || channel.r#type.delivers_to_self() {
-                            self.mailboxes[handle].push_back(msg.clone());
+                            self.mailboxes[*handle_ptr].push_back(msg.clone());
                         }
                     }
                 }
