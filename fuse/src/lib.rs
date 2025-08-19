@@ -9,9 +9,18 @@ use std::{
 
 use config::ast;
 
+use crate::fs::ControlSignal;
+
 pub type Mode = i32;
 pub type PID = u32;
 pub type Inode = u64;
 pub type ChannelId = (PID, ast::ChannelHandle);
-pub type KernelChannels =
-    HashMap<(PID, ast::ChannelHandle), (ast::NodeHandle, Sender<()>, Receiver<()>, UnixDatagram)>;
+pub type KernelChannels = HashMap<
+    (PID, ast::ChannelHandle),
+    (
+        ast::NodeHandle,
+        Sender<ControlSignal>,
+        Receiver<()>,
+        UnixDatagram,
+    ),
+>;

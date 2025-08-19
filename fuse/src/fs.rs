@@ -68,7 +68,17 @@ struct NexusFile {
     max_msg_size: NonZeroU64,
     unread_msg: Option<(usize, Vec<u8>)>,
     request: Sender<()>,
-    receive: Receiver<()>,
+    receive: Receiver<ControlSignal>,
+}
+
+/// Way for the sender to attach information for the FS to use regarding how
+/// a file's buffer should be handled (ex. Whether it gets saved and reread in
+/// the case of a partial read).
+#[derive(Clone, Copy, Debug)]
+pub enum ControlSignal {
+    Nothing,
+    Shared,
+    Exclusive,
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
@@ -97,7 +107,7 @@ impl NexusFile {
         sock: UnixDatagram,
         max_msg_size: NonZeroU64,
         tx: Sender<()>,
-        rx: Receiver<()>,
+        rx: Receiver<ControlSignal>,
         mode: ChannelMode,
         ino: u64,
     ) -> Self {
@@ -374,10 +384,22 @@ impl Filesystem for NexusFs {
         }
 
         // Main thread could shutdown in the middle of a request
-        if file.request.send(()).is_err() || file.receive.recv().is_err() {
+        if file.request.send(()).is_err() {
             reply.error(ESHUTDOWN);
             return;
         }
+        let allow_incremental_reads = match file.receive.recv() {
+            Ok(ControlSignal::Shared) => false,
+            Ok(ControlSignal::Exclusive) => true,
+            Ok(ControlSignal::Nothing) => {
+                reply.data(&[]);
+                return;
+            }
+            Err(_) => {
+                reply.error(ESHUTDOWN);
+                return;
+            }
+        };
         let mut recv_buf = vec![0; file.max_msg_size.get() as usize];
         let recv_size = match file.sock.recv(&mut recv_buf) {
             Ok(n) => n,
@@ -391,12 +413,12 @@ impl Filesystem for NexusFs {
             }
         };
 
-        // Reads should not be forced to be one shot. Anything unread
-        // should be buffered in case the reader wants to read incrementally.
         let read_size = min(recv_size, size as usize);
         recv_buf.truncate(recv_size);
         reply.data(&recv_buf[..read_size as usize]);
-        file.unread_msg = Some((read_size, recv_buf));
+        if allow_incremental_reads {
+            file.unread_msg = Some((read_size, recv_buf));
+        }
     }
 
     #[instrument(skip_all)]

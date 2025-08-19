@@ -4,6 +4,7 @@ pub mod log;
 mod router;
 mod types;
 
+use fuse::fs::ControlSignal;
 use mio::unix::SourceFd;
 
 use helpers::{make_handles, unzip};
@@ -41,7 +42,7 @@ pub struct Kernel {
     channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
-    responses: Vec<Sender<()>>,
+    responses: Vec<Sender<ControlSignal>>,
     requests: Vec<Receiver<()>>,
     sockets: Vec<UnixDatagram>,
     channel_names: Vec<String>,
@@ -101,7 +102,7 @@ impl Kernel {
         let lookup_channel = |pid: fuse::PID,
                               channel_name: String,
                               node: ast::NodeHandle,
-                              tx: Sender<()>,
+                              tx: Sender<ControlSignal>,
                               rx: Receiver<()>,
                               file: UnixDatagram| {
             let node_handle = *node_handles.get(&node).unwrap();
@@ -118,7 +119,10 @@ impl Kernel {
             .map(|((pid, channel_name), (node, tx, rx, file))| {
                 lookup_channel(pid, channel_name, node, tx, rx, file)
             })
-            .collect::<Result<HashMap<ChannelId, (Sender<()>, Receiver<()>, UnixDatagram)>, KernelError>>()?;
+            .collect::<Result<
+                HashMap<ChannelId, (Sender<ControlSignal>, Receiver<()>, UnixDatagram)>,
+                KernelError,
+            >>()?;
         let (handles, files) = unzip(files);
         let (responses, requests, sockets) = files.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
@@ -219,8 +223,8 @@ impl Kernel {
                 self.requests.iter().zip(self.responses.iter()).enumerate()
             {
                 while requests.try_recv().is_ok() {
-                    router.outbound(index).map_err(KernelError::RouterError)?;
-                    let _ = responses.send(());
+                    let _ =
+                        responses.send(router.outbound(index).map_err(KernelError::RouterError)?);
                 }
             }
             router.step().map_err(KernelError::RouterError)?;
