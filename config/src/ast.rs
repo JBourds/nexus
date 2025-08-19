@@ -213,6 +213,7 @@ pub struct DistanceProbVar {
 impl DistanceProbVar {
     /// Simulates a single sampling of a probability variable using distance
     /// and data amounts ("x" and "y").
+    /// Returns `true` if the event happens, and `false` otherwise
     pub fn sample(
         &self,
         distance: f64,
@@ -242,7 +243,7 @@ impl DistanceProbVar {
         };
         let prob = func(distance, data).clamp(0.0, 1.0);
         let random: f64 = rng.random_range(0.0..=1.0);
-        prob <= random
+        prob > random
     }
 }
 
