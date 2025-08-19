@@ -110,8 +110,14 @@ impl ChannelType {
                 Self::Shared {
                     ttl,
                     unit,
-                    max_size,
                     read_own_writes,
+                    buf: Vec::with_capacity(
+                        max_size
+                            .get()
+                            .try_into()
+                            .expect("usize should be able to convert to u64"),
+                    ),
+                    expiration: None,
                 }
             }
             parse::ChannelType::Exclusive {
