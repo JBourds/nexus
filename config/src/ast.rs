@@ -280,7 +280,14 @@ impl DelayCalculator {
         let prop_timesteps = self.propagation_timesteps_f64(distance, distance_unit);
         let mut num = proc_num * trans_den + trans_num * proc_den;
         let den = proc_den * trans_den;
-        num += (prop_timesteps * den as f64) as u64;
+        // If this takes any time at all, make sure the numerator has something
+        // so the event doesn't happen instantaneously.
+        let added_timesteps = prop_timesteps * den as f64;
+        if added_timesteps as u64 == 0 && added_timesteps > 0.0 {
+            num += 1
+        } else {
+            num += (prop_timesteps * den as f64) as u64;
+        }
         num.div_ceil(den)
     }
 
