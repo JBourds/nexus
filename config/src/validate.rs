@@ -415,6 +415,11 @@ impl DistanceProbVar {
     fn validate(val: parse::DistanceProbVar) -> Result<Self> {
         let def = Self::default();
         let rate = val.rate.unwrap_or(def.rate);
+        if rate.clone().bind2("x", "y").is_err() {
+            bail!(
+                "Distance probability variable must be a function of \"x\" (distance) and \"y\" (data)"
+            );
+        }
         let distance = if let Some(distance) = val.distance {
             DistanceUnit::validate(distance).context("Unable to validate distance unit.")?
         } else {
