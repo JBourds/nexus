@@ -9,6 +9,31 @@ pub fn format_u8_buf(buf: &[u8]) -> String {
     }
 }
 
+/// Flip bits when `flips` evaluates to true.
+/// Returns a tuple with the number of times iterated and the number of bits
+/// flipped.
+pub fn flip_bits(buf: &mut [u8], flips: impl IntoIterator<Item = bool>) -> (usize, usize) {
+    let mut flips = flips.into_iter();
+    let mut count = 0;
+    let mut flipped = 0;
+    for byte in buf {
+        for index in 0..u8::BITS {
+            match flips.next() {
+                Some(true) => {
+                    count += 1;
+                    flipped += 1;
+                    *byte ^= 1 << index;
+                }
+                Some(false) => {
+                    count += 1;
+                }
+                None => return (count, flipped),
+            }
+        }
+    }
+    (count, flipped)
+}
+
 pub fn make_handles<T>(iter: impl IntoIterator<Item = T>) -> HashMap<T, usize>
 where
     T: Hash + Eq,
