@@ -58,6 +58,13 @@ pub enum ChannelType {
 impl ChannelType {
     pub const MSG_MAX_DEFAULT: NonZeroU64 = NonZeroU64::new(4096).unwrap();
 
+    pub fn ttl(&self) -> Option<NonZeroU64> {
+        match self {
+            ChannelType::Live { ttl, .. } => *ttl,
+            ChannelType::MsgBuffered { ttl, .. } => *ttl,
+        }
+    }
+
     pub fn max_buf_size(&self) -> NonZeroU64 {
         match self {
             ChannelType::Live { max_size, .. } => *max_size,
