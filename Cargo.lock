@@ -257,6 +257,7 @@ dependencies = [
  "pretty_assertions",
  "serde",
  "toml",
+ "tracing",
 ]
 
 [[package]]
