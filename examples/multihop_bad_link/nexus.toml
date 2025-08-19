@@ -1,0 +1,73 @@
+# Simulate multiple nodes from a class communicating to the same channel
+
+[params]
+timestep.length = 10
+timestep.unit = "ms"
+timestep.count = 5000
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.client_proxy]
+link = "unreliable"
+type = { type = "exclusive", ttl = 100, unit = "ms" }
+
+[channels.proxy_server]
+link = "unreliable"
+
+[links]
+
+[links.unreliable.bit_error]
+rate = "0.01"
+
+[links.unreliable.packet_loss]
+
+[links.unreliable.delays.transmission]
+rate = 1
+data = "kb"
+time = "s"
+
+[links.unreliable.delays.processing]
+rate = 1
+data = "kb"
+time = "s"
+
+[nodes]
+
+[nodes.client]
+deployments = [{}]
+internal_names = ["display"]
+
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+inbound = ["client_proxy", "display"]
+outbound = ["client_proxy", "display"]
+
+[nodes.proxy]
+deployments = [{}]
+
+
+[[nodes.proxy.protocols]]
+
+name = "proxy"
+runner = "python3"
+runner_args = ["proxy.py"]
+inbound = ["client_proxy", "proxy_server"]
+outbound = ["client_proxy", "proxy_server"]
+
+[nodes.server]
+deployments = [{}]
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+inbound = ["proxy_server"]
+outbound = ["proxy_server"]
+
