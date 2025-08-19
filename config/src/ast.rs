@@ -328,18 +328,18 @@ impl DelayCalculator {
     pub fn propagation_timesteps_f64(&self, distance: f64, unit: DistanceUnit) -> f64 {
         let func = self.propagation.rate.clone().bind("x").unwrap();
         // Number of `distance_unit` / `time_unit` for value of `distance`
-        let dist_time_units = func(distance);
-        let (should_scale_down, distance_ratio) =
-            DistanceUnit::ratio(self.propagation.distance, unit);
+        let (should_scale_down, ratio) = DistanceUnit::ratio(self.propagation.distance, unit);
         // Scale distance units
         let scalar = 10u64
-            .checked_pow(distance_ratio.try_into().unwrap())
+            .checked_pow(ratio.try_into().unwrap())
             .expect("Exponentiation overflow.") as f64;
-        let (distance_num, distance_den) = if should_scale_down {
-            (dist_time_units, scalar)
+        let distance = if should_scale_down {
+            distance / scalar
         } else {
-            (dist_time_units * scalar, 1.0)
+            distance * scalar
         };
+        let time_units = func(distance);
+
         // Scale time units
         let (should_scale_down, time_ratio) =
             TimeUnit::ratio(self.propagation.time, self.ts_config.unit);
@@ -347,9 +347,9 @@ impl DelayCalculator {
             .checked_pow(time_ratio.try_into().unwrap())
             .expect("Exponentiation overflow.") as f64;
         if should_scale_down {
-            distance_num / distance_den * scalar
+            time_units / scalar
         } else {
-            distance_num * scalar / distance_den
+            time_units * scalar
         }
     }
 }
@@ -533,7 +533,7 @@ mod tests {
             processing,
             propagation,
         };
-        let calculator = DelayCalculator::validate(delays, ts_config).unwrap();
+        let mut calculator = DelayCalculator::validate(delays, ts_config).unwrap();
         use DataUnit::*;
         use DistanceUnit::*;
         let tests = [
@@ -636,6 +636,38 @@ mod tests {
             ),
         ];
         for (distance, amount, data_unit, distance_unit, expected) in tests {
+            assert_eq!(
+                calculator.timestep_delay(distance, amount, data_unit, distance_unit),
+                expected
+            );
+        }
+
+        // Test nonlinear expressions
+        calculator.propagation = DistanceTimeVar {
+            rate: "5 * x^2".parse().unwrap(),
+            time: TimeUnit::Seconds,
+            distance: DistanceUnit::Meters,
+        };
+        let tests = [
+            // Distance conversions (propagation distances)
+            (0.1, 0, Bit, Millimeters, 1),
+            (1.0, 0, Bit, Millimeters, 1),
+            (100.0, 0, Bit, Millimeters, 1),
+            (10000.0, 0, Bit, Millimeters, 5),
+            (0.1, 0, Bit, Centimeters, 1),
+            (1.0, 0, Bit, Centimeters, 1),
+            (100.0, 0, Bit, Centimeters, 5),
+            (10000.0, 0, Bit, Centimeters, 50000),
+            (0.1, 0, Bit, Meters, 1),
+            (1.0, 0, Bit, Meters, 5),
+            (100.0, 0, Bit, Meters, 50000),
+            (10000.0, 0, Bit, Meters, 500000000),
+            (0.1, 0, Bit, Kilometers, 50000),
+            (1.0, 0, Bit, Kilometers, 5000000),
+            (100.0, 0, Bit, Kilometers, 50000000000),
+        ];
+        for (distance, amount, data_unit, distance_unit, expected) in tests {
+            dbg!((distance, amount, data_unit, distance_unit, expected));
             assert_eq!(
                 calculator.timestep_delay(distance, amount, data_unit, distance_unit),
                 expected
