@@ -227,37 +227,39 @@ impl Router {
         Ok(())
     }
 
-    pub fn outbound(&mut self) -> Result<(), RouterError> {
-        for (index, mailbox) in self.mailboxes.iter_mut().enumerate() {
-            let endpoint = &mut self.endpoints[index];
-            let (pid, node_handle, channel_handle) = self.handles[index];
-            let channel_name = &self.channel_names[channel_handle];
-            let timestep = self.timestep;
-            while let Some((expiration, msg)) = mailbox.pop_front() {
-                info!(
-                    "{pid}.{channel_name} <Now: {}, Expiration: {expiration:?}> [RX]: {}",
-                    self.timestep,
-                    format_u8_buf(&msg)
-                );
-                if expiration.is_some_and(|exp| exp.get() < self.timestep) {
-                    warn!("Message dropped!");
-                    continue;
+    pub fn outbound(&mut self, index: usize) -> Result<(), RouterError> {
+        let mailbox = &mut self.mailboxes[index];
+        let endpoint = &mut self.endpoints[index];
+        let (pid, node_handle, channel_handle) = self.handles[index];
+        let channel_name = &self.channel_names[channel_handle];
+        let timestep = self.timestep;
+        // Keep trying to send until we either get an unexpired message or error
+        while let Some((expiration, msg)) = mailbox.pop_front() {
+            info!(
+                "{pid}.{channel_name} <Now: {}, Expiration: {expiration:?}> [RX]: {}",
+                self.timestep,
+                format_u8_buf(&msg)
+            );
+            if expiration.is_some_and(|exp| exp.get() < self.timestep) {
+                warn!("Message dropped!");
+                continue;
+            }
+            match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
+                Ok(_) => {
+                    break;
                 }
-                match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
-                    Ok(_) => {}
-                    Err(e) if e.recoverable() => {
-                        mailbox.push_front((expiration, msg));
-                        break;
-                    }
-                    Err(e) => {
-                        return Err(RouterError::SendError {
-                            sender: pid,
-                            node_name: self.node_names[node_handle].clone(),
-                            channel_name: self.channel_names[channel_handle].clone(),
-                            timestep,
-                            base: Box::new(e),
-                        });
-                    }
+                Err(e) if e.recoverable() => {
+                    mailbox.push_front((expiration, msg));
+                    break;
+                }
+                Err(e) => {
+                    return Err(RouterError::SendError {
+                        sender: pid,
+                        node_name: self.node_names[node_handle].clone(),
+                        channel_name: self.channel_names[channel_handle].clone(),
+                        timestep,
+                        base: Box::new(e),
+                    });
                 }
             }
         }

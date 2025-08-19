@@ -10,6 +10,7 @@ use helpers::{make_handles, unzip};
 use mio::{Events, Interest, Poll, Token};
 use rand::{SeedableRng, rngs::StdRng};
 use std::os::fd::AsRawFd;
+use std::sync::mpsc::{Receiver, Sender};
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -40,6 +41,8 @@ pub struct Kernel {
     channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
+    responses: Vec<Sender<()>>,
+    requests: Vec<Receiver<()>>,
     sockets: Vec<UnixDatagram>,
     channel_names: Vec<String>,
     node_names: Vec<String>,
@@ -95,24 +98,37 @@ impl Kernel {
         let channels = Channel::from_ast(channels, internal_channels, &new_nodes)
             .map_err(KernelError::KernelInit)?;
 
-        let lookup_channel =
-            |pid: fuse::PID, channel_name: String, node: ast::NodeHandle, file: UnixDatagram| {
-                let node_handle = *node_handles.get(&node).unwrap();
-                internal_node_channel_handles
-                    .get(&(node, channel_name.clone()))
-                    .or(channel_handles.get(&channel_name))
-                    .ok_or(KernelError::KernelInit(
-                        ConversionError::ChannelHandleConversion(channel_name),
-                    ))
-                    .map(|channel_handle| ((pid, node_handle, *channel_handle), file))
-            };
+        let lookup_channel = |pid: fuse::PID,
+                              channel_name: String,
+                              node: ast::NodeHandle,
+                              tx: Sender<()>,
+                              rx: Receiver<()>,
+                              file: UnixDatagram| {
+            let node_handle = *node_handles.get(&node).unwrap();
+            internal_node_channel_handles
+                .get(&(node, channel_name.clone()))
+                .or(channel_handles.get(&channel_name))
+                .ok_or(KernelError::KernelInit(
+                    ConversionError::ChannelHandleConversion(channel_name),
+                ))
+                .map(|channel_handle| ((pid, node_handle, *channel_handle), (tx, rx, file)))
+        };
         let files = files
             .into_iter()
-            .map(|((pid, channel_name), (node, file))| {
-                lookup_channel(pid, channel_name, node, file)
+            .map(|((pid, channel_name), (node, tx, rx, file))| {
+                lookup_channel(pid, channel_name, node, tx, rx, file)
             })
-            .collect::<Result<HashMap<ChannelId, UnixDatagram>, KernelError>>()?;
-        let (handles, sockets) = unzip(files);
+            .collect::<Result<HashMap<ChannelId, (Sender<()>, Receiver<()>, UnixDatagram)>, KernelError>>()?;
+        let (handles, files) = unzip(files);
+        let (responses, requests, sockets) = files.into_iter().fold(
+            (Vec::new(), Vec::new(), Vec::new()),
+            |(mut requests, mut responses, mut sockets), (tx, rx, socket)| {
+                requests.push(tx);
+                responses.push(rx);
+                sockets.push(socket);
+                (requests, responses, sockets)
+            },
+        );
 
         Ok(Self {
             root: sim.params.root,
@@ -121,6 +137,8 @@ impl Kernel {
             channels,
             nodes: new_nodes,
             handles,
+            requests,
+            responses,
             sockets,
             channel_names,
             node_names,
@@ -194,7 +212,16 @@ impl Kernel {
                 let Token(index) = event.token();
                 router.inbound(index).map_err(KernelError::RouterError)?;
             }
-            router.outbound().map_err(KernelError::RouterError)?;
+            // In order to implement a write timeout the kernel needs to hold
+            // onto
+            for (index, (requests, responses)) in
+                self.requests.iter().zip(self.responses.iter()).enumerate()
+            {
+                while requests.try_recv().is_ok() {
+                    router.outbound(index).map_err(KernelError::RouterError)?;
+                    let _ = responses.send(());
+                }
+            }
             router.step().map_err(KernelError::RouterError)?;
             self.run_handles = Self::check_handles(self.run_handles)?;
 

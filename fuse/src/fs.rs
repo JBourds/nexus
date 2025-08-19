@@ -17,7 +17,7 @@ use std::io;
 use std::num::NonZeroU64;
 use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{SendError, Sender};
+use std::sync::mpsc::{self, Receiver, SendError, Sender};
 use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -67,6 +67,8 @@ struct NexusFile {
     sock: UnixDatagram,
     max_msg_size: NonZeroU64,
     unread_msg: Option<(usize, Vec<u8>)>,
+    request: Sender<()>,
+    receive: Receiver<()>,
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
@@ -91,7 +93,14 @@ fn next_inode() -> u64 {
 }
 
 impl NexusFile {
-    fn new(sock: UnixDatagram, max_msg_size: NonZeroU64, mode: ChannelMode, ino: u64) -> Self {
+    fn new(
+        sock: UnixDatagram,
+        max_msg_size: NonZeroU64,
+        tx: Sender<()>,
+        rx: Receiver<()>,
+        mode: ChannelMode,
+        ino: u64,
+    ) -> Self {
         let now = SystemTime::now();
         Self {
             mode,
@@ -112,6 +121,8 @@ impl NexusFile {
                 flags: 0,
                 blksize: 512,
             },
+            request: tx,
+            receive: rx,
             max_msg_size,
             sock,
             unread_msg: None,
@@ -183,14 +194,20 @@ impl NexusFs {
                 next_inode()
             };
 
+            let (fs_tx, kernel_rx) = mpsc::channel();
+            let (kernel_tx, fs_rx) = mpsc::channel();
+
             if self
                 .fs_channels
                 .insert(
                     key.clone(),
-                    NexusFile::new(fs_side, max_msg_size, mode, inode),
+                    NexusFile::new(fs_side, max_msg_size, fs_tx, fs_rx, mode, inode),
                 )
                 .is_some()
-                || self.kernel_links.insert(key, (node, kernel_side)).is_some()
+                || self
+                    .kernel_links
+                    .insert(key, (node, kernel_tx, kernel_rx, kernel_side))
+                    .is_some()
             {
                 return Err(ChannelError::DuplicateChannel);
             }
@@ -356,6 +373,8 @@ impl Filesystem for NexusFs {
             return;
         }
 
+        file.request.send(()).unwrap();
+        file.receive.recv().unwrap();
         let mut recv_buf = vec![0; file.max_msg_size.get() as usize];
         let recv_size = match file.sock.recv(&mut recv_buf) {
             Ok(n) => n,
