@@ -403,9 +403,9 @@ impl DistanceUnit {
     pub fn power(&self) -> usize {
         match self {
             DistanceUnit::Millimeters => 0,
-            DistanceUnit::Centimeters => 3,
-            DistanceUnit::Meters => 6,
-            DistanceUnit::Kilometers => 9,
+            DistanceUnit::Centimeters => 2,
+            DistanceUnit::Meters => 4,
+            DistanceUnit::Kilometers => 7,
         }
     }
 }
