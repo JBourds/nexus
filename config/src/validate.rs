@@ -359,8 +359,8 @@ impl DelayCalculator {
     ) -> (u64, u64) {
         // Determine which data unit is larger (higher magnitude), and how many
         // left shifts are needed to align them.
-        let (data_tx_greater, data_ratio) = DataUnit::ratio(rate.data, unit);
-        let (data_num, data_den) = if data_tx_greater {
+        let (should_scale_down, data_ratio) = DataUnit::ratio(rate.data, unit);
+        let (data_num, data_den) = if should_scale_down {
             (
                 amount,
                 rate.rate
@@ -377,14 +377,14 @@ impl DelayCalculator {
         };
         // Determine which time unit is larger (higher magnitude), and how many
         // powers of 10 the difference is by.
-        let (time_tx_greater, time_ratio) = TimeUnit::ratio(rate.time, config.unit);
+        let (should_scale_down, time_ratio) = TimeUnit::ratio(rate.time, config.unit);
         let scalar = 10_u64
             .checked_pow(time_ratio.try_into().unwrap())
             .expect("Exponentiation overflow.");
-        if time_tx_greater {
-            (data_num * scalar, data_den)
-        } else {
+        if should_scale_down {
             (data_num, data_den * scalar)
+        } else {
+            (data_num * scalar, data_den)
         }
     }
 }
