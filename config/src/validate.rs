@@ -95,7 +95,7 @@ impl Channel {
 impl ChannelType {
     fn validate(val: parse::ChannelType) -> Result<Self> {
         let val = match val {
-            parse::ChannelType::Live {
+            parse::ChannelType::Shared {
                 ttl,
                 unit,
                 max_size,
@@ -107,14 +107,14 @@ impl ChannelType {
                     .context("Failed to validate time unit when parsing channel type.")?;
                 let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
                 let read_own_writes = read_own_writes.unwrap_or_default();
-                Self::Live {
+                Self::Shared {
                     ttl,
                     unit,
                     max_size,
                     read_own_writes,
                 }
             }
-            parse::ChannelType::MsgBuffered {
+            parse::ChannelType::Exclusive {
                 ttl,
                 unit,
                 nbuffered,
@@ -125,7 +125,7 @@ impl ChannelType {
                     .unwrap_or(Ok(TimeUnit::default()))
                     .context("Failed to validate time unit when parsing channel type.")?;
                 let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
-                Self::MsgBuffered {
+                Self::Exclusive {
                     ttl,
                     unit,
                     nbuffered,

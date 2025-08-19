@@ -78,13 +78,13 @@ pub struct Channel {
 #[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields, rename_all = "snake_case", tag = "type")]
 pub enum ChannelType {
-    Live {
+    Shared {
         ttl: Option<NonZeroU64>,
         unit: Option<Unit>,
         max_size: Option<NonZeroU64>,
         read_own_writes: Option<bool>,
     },
-    MsgBuffered {
+    Exclusive {
         ttl: Option<NonZeroU64>,
         unit: Option<Unit>,
         max_size: Option<NonZeroU64>,
@@ -94,7 +94,7 @@ pub enum ChannelType {
 
 impl Default for ChannelType {
     fn default() -> Self {
-        Self::MsgBuffered {
+        Self::Exclusive {
             ttl: None,
             unit: None,
             nbuffered: None,

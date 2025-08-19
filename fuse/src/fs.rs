@@ -1,7 +1,7 @@
 use crate::errors::{ChannelError, FsError};
 use crate::{ChannelId, KernelChannels, PID};
 use config::ast;
-use tracing::{error, info, instrument};
+use tracing::instrument;
 
 use fuser::ReplyWrite;
 use fuser::{

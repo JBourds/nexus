@@ -32,7 +32,7 @@ pub struct Channel {
 pub enum ChannelType {
     /// No channel buffering other than transmission time,
     /// allow reading during transmissions.
-    Live {
+    Shared {
         /// Time to live once it has reached destination
         ttl: Option<NonZeroU64>,
         /// Time unit `ttl` is in
@@ -43,7 +43,7 @@ pub enum ChannelType {
         read_own_writes: bool,
     },
     /// Buffer some number of messages at a time.
-    MsgBuffered {
+    Exclusive {
         /// Time to live once it has reached destination
         ttl: Option<NonZeroU64>,
         /// Time unit `ttl` is in
@@ -60,28 +60,28 @@ impl ChannelType {
 
     pub fn ttl(&self) -> Option<NonZeroU64> {
         match self {
-            ChannelType::Live { ttl, .. } => *ttl,
-            ChannelType::MsgBuffered { ttl, .. } => *ttl,
+            ChannelType::Shared { ttl, .. } => *ttl,
+            ChannelType::Exclusive { ttl, .. } => *ttl,
         }
     }
 
     pub fn max_buffered(&self) -> Option<NonZeroU64> {
         match self {
-            ChannelType::Live { .. } => Some(NonZeroU64::new(1).unwrap()),
-            ChannelType::MsgBuffered { nbuffered, .. } => *nbuffered,
+            ChannelType::Shared { .. } => Some(NonZeroU64::new(1).unwrap()),
+            ChannelType::Exclusive { nbuffered, .. } => *nbuffered,
         }
     }
 
     pub fn max_buf_size(&self) -> NonZeroU64 {
         match self {
-            ChannelType::Live { max_size, .. } => *max_size,
-            ChannelType::MsgBuffered { max_size, .. } => *max_size,
+            ChannelType::Shared { max_size, .. } => *max_size,
+            ChannelType::Exclusive { max_size, .. } => *max_size,
         }
     }
 
     pub fn delivers_to_self(&self) -> bool {
         match self {
-            ChannelType::Live {
+            ChannelType::Shared {
                 read_own_writes, ..
             } => *read_own_writes,
             _ => false,
@@ -91,7 +91,7 @@ impl ChannelType {
 
 impl Default for ChannelType {
     fn default() -> Self {
-        Self::MsgBuffered {
+        Self::Exclusive {
             ttl: None,
             unit: TimeUnit::Seconds,
             nbuffered: None,

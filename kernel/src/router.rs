@@ -158,8 +158,8 @@ impl Router {
                         format_u8_buf(&recv_buf)
                     );
                     match channel.r#type {
-                        config::ast::ChannelType::Live { .. } => unimplemented!(),
-                        config::ast::ChannelType::MsgBuffered { .. } => {
+                        config::ast::ChannelType::Shared { .. } => unimplemented!(),
+                        config::ast::ChannelType::Exclusive { .. } => {
                             for Route {
                                 handle_ptr,
                                 distance,
