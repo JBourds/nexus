@@ -53,6 +53,9 @@ pub enum ChannelType {
         max_size: NonZeroU64,
         /// Number of buffered messages per node. If None, is infinite.
         nbuffered: Option<NonZeroU64>,
+        /// Should a sender be able to read their own writes?
+        /// eg. In an internal link.
+        read_own_writes: bool,
     },
 }
 
@@ -85,7 +88,19 @@ impl ChannelType {
             ChannelType::Shared {
                 read_own_writes, ..
             } => *read_own_writes,
-            _ => false,
+            ChannelType::Exclusive {
+                read_own_writes, ..
+            } => *read_own_writes,
+        }
+    }
+
+    pub fn new_internal() -> Self {
+        Self::Exclusive {
+            ttl: None,
+            unit: TimeUnit::Seconds,
+            nbuffered: None,
+            max_size: Self::MSG_MAX_DEFAULT,
+            read_own_writes: true,
         }
     }
 }
@@ -97,6 +112,7 @@ impl Default for ChannelType {
             unit: TimeUnit::Seconds,
             nbuffered: None,
             max_size: Self::MSG_MAX_DEFAULT,
+            read_own_writes: false,
         }
     }
 }

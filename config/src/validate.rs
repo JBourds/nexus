@@ -119,17 +119,20 @@ impl ChannelType {
                 unit,
                 nbuffered,
                 max_size,
+                read_own_writes,
             } => {
                 let unit = unit
                     .map(TimeUnit::validate)
                     .unwrap_or(Ok(TimeUnit::default()))
                     .context("Failed to validate time unit when parsing channel type.")?;
                 let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
+                let read_own_writes = read_own_writes.unwrap_or_default();
                 Self::Exclusive {
                     ttl,
                     unit,
                     nbuffered,
                     max_size,
+                    read_own_writes,
                 }
             }
         };

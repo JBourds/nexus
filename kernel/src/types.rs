@@ -54,11 +54,11 @@ impl Channel {
         Ok(channels)
     }
 
-    pub(super) fn internal(handle: NodeHandle) -> Self {
+    pub(super) fn new_internal(handle: NodeHandle) -> Self {
         let set = [handle].into_iter().collect::<HashSet<_>>();
         Self {
             link: Link::default(),
-            r#type: ChannelType::default(),
+            r#type: ChannelType::new_internal(),
             inbound: set.clone(),
             outbound: set,
         }
@@ -95,7 +95,7 @@ impl Node {
             .internal_names
             .clone()
             .into_iter()
-            .map(|name| (name, Channel::internal(handle)))
+            .map(|name| (name, Channel::new_internal(handle)))
             .collect::<Vec<_>>();
         let channel_handles = if !new_handles.is_empty() {
             &channel_handles
