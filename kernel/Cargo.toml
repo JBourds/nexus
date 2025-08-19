@@ -12,5 +12,5 @@ tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
-rand = "0.9"
+rand = { workspace = true }
 mio = {version = "1.0.4", features = ["os-poll", "os-ext"] }

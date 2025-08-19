@@ -255,6 +255,7 @@ dependencies = [
  "home",
  "meval",
  "pretty_assertions",
+ "rand",
  "serde",
  "toml",
  "tracing",
