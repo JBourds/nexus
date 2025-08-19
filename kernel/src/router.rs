@@ -6,6 +6,7 @@ use crate::{
 };
 use config::ast::{DataUnit, DistanceUnit, Position};
 use fuse::socket;
+use rand::rngs::StdRng;
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::VecDeque, num::NonZeroU64, os::unix::net::UnixDatagram};
 use tracing::{Level, debug, event, info, instrument, warn};
@@ -76,6 +77,8 @@ pub(crate) struct Router {
     /// past. Uses the niche optimization that the ttl for a channel cannot be
     /// 0, which means we can use an Option<T> here with no overhead!
     mailboxes: Vec<VecDeque<(Option<NonZeroU64>, Vec<u8>)>>,
+    /// Random number generator to use
+    rng: StdRng,
 }
 
 impl Router {
@@ -88,6 +91,7 @@ impl Router {
         channel_names: Vec<String>,
         handles: Vec<ChannelId>,
         endpoints: Vec<UnixDatagram>,
+        rng: StdRng,
     ) -> Self {
         let handles_count = handles.len();
         let routes = channels
@@ -133,6 +137,7 @@ impl Router {
             processing: BinaryHeap::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
             endpoints,
+            rng,
         }
     }
 
@@ -176,14 +181,16 @@ impl Router {
                                         "Delivering from {} to {}",
                                         &self.node_names[src_node], &self.node_names[dst_node]
                                     );
-                                    let entry = Self::timestamp_message(
+                                    if let Some(entry) = Self::prepare_message(
                                         channel,
                                         self.timestep,
                                         msg.clone(),
                                         *distance,
                                         *distance_unit,
-                                    );
-                                    self.transmitting.push(entry);
+                                        &mut self.rng,
+                                    ) {
+                                        self.transmitting.push(entry);
+                                    }
                                 }
                             }
                         }
@@ -294,19 +301,37 @@ impl Router {
         Ok(())
     }
 
-    fn timestamp_message(
+    /// Calculate the timestamps the message should be moved from one queue to
+    /// another. Perform link simulation to simulate:
+    ///   - bit errors
+    ///   - dropped packets
+    fn prepare_message(
         channel: &Channel,
         timestep: u64,
         msg: Message,
         distance: f64,
         distance_unit: DistanceUnit,
-    ) -> (
+        rng: &mut StdRng,
+    ) -> Option<(
         Reverse<u64>,
         Reverse<u64>,
         Reverse<u64>,
         Option<NonZeroU64>,
         Message,
-    ) {
+    )> {
+        if channel.link.packet_loss.sample(
+            distance,
+            distance_unit,
+            msg.buf
+                .len()
+                .try_into()
+                .expect("usize should be able to to fit in u64"),
+            DataUnit::Byte,
+            rng,
+        ) {
+            info!("Packet dropped");
+            return None;
+        }
         let sz: u64 = msg
             .buf
             .len()
@@ -325,13 +350,13 @@ impl Router {
             .r#type
             .ttl()
             .map(|ttl| ttl.saturating_add(proc_deadline));
-        (
+        Some((
             Reverse(trans_deadline),
             Reverse(prop_deadline),
             Reverse(proc_deadline),
             expiration,
             msg,
-        )
+        ))
     }
 
     #[instrument(skip(socket, data), err)]

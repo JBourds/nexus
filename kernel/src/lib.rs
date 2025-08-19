@@ -202,6 +202,7 @@ impl Kernel {
             self.channel_names,
             self.handles,
             self.sockets,
+            self.rng,
         );
         let mut frame_time_exceeded: u64 = 0;
         for timestep in 0..self.timestep.count.into() {
