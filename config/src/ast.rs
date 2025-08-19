@@ -222,6 +222,24 @@ impl DistanceProbVar {
         data_unit: DataUnit,
         rng: &mut rand::rngs::StdRng,
     ) -> bool {
+        self.probability(distance, distance_unit, data, data_unit) > rng.random_range(0.0..=1.0)
+    }
+
+    /// # Safety
+    /// This function is entirely safe to use and will never cause major issues.
+    /// If the value for `prob` is not properly constrained from 0.0 - 1.0 this
+    /// will give bogus results though.
+    pub unsafe fn sample_unchecked(&self, prob: f64, rng: &mut rand::rngs::StdRng) -> bool {
+        prob > rng.random_range(0.0..=1.0)
+    }
+
+    pub fn probability(
+        &self,
+        distance: f64,
+        distance_unit: DistanceUnit,
+        data: u64,
+        data_unit: DataUnit,
+    ) -> f64 {
         let func = self.rate.clone().bind2("x", "y").unwrap();
         let (should_scale_down, ratio) = DistanceUnit::ratio(self.distance, distance_unit);
         let scalar = 10u64
@@ -241,9 +259,7 @@ impl DistanceProbVar {
         } else {
             data as f64 * scalar
         };
-        let prob = func(distance, data).clamp(0.0, 1.0);
-        let random: f64 = rng.random_range(0.0..=1.0);
-        prob > random
+        func(distance, data).clamp(0.0, 1.0)
     }
 }
 
