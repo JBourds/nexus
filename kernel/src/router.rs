@@ -12,14 +12,13 @@ use std::{
     num::NonZeroU64,
     os::unix::net::UnixDatagram,
 };
-use tracing::{Level, debug, error, event, info, instrument};
+use tracing::{Level, debug, error, event, info, instrument, warn};
 
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
 
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
-#[allow(dead_code)]
 pub(crate) struct Message {
     handle_ptr: usize,
     buf: Vec<u8>,
@@ -59,19 +58,28 @@ pub(crate) struct Router {
         Reverse<Timestep>,
         Reverse<Timestep>,
         Reverse<Timestep>,
+        Option<NonZeroU64>,
         Message,
     )>,
     /// Messages in the "propagating" stage. Contains the timestep
     /// the message should be removed from the queue and the message.
     /// Also contains the timestep the message should be removed from
     /// the processing queue.
-    propagating: BinaryHeap<(Reverse<Timestep>, Reverse<Timestep>, Message)>,
+    propagating: BinaryHeap<(
+        Reverse<Timestep>,
+        Reverse<Timestep>,
+        Option<NonZeroU64>,
+        Message,
+    )>,
     /// Messages in the "processing" stage. Simulates delay after
     /// reception from destination. Contains the timestep
     /// the message should be removed from the queue and the message.
-    processing: BinaryHeap<(Reverse<Timestep>, Message)>,
+    processing: BinaryHeap<(Reverse<Timestep>, Option<NonZeroU64>, Message)>,
     /// Per-handle file mailbox with buffered messages ready to be read.
-    mailboxes: Vec<VecDeque<Vec<u8>>>,
+    /// Also contains an optional TTL which marks it as expired if it is in the
+    /// past. Uses the niche optimization that the ttl for a channel cannot be
+    /// 0, which means we can use an Option<T> here with no overhead!
+    mailboxes: Vec<VecDeque<(Option<NonZeroU64>, Vec<u8>)>>,
 }
 
 impl Router {
@@ -193,13 +201,17 @@ impl Router {
                                     .delays
                                     .processing_timesteps_f64(sz, unit)
                                     .round() as u64;
+                            let expiration = channel
+                                .r#type
+                                .ttl()
+                                .map(|ttl| ttl.saturating_add(proc_deadline));
                             let entry = (
                                 Reverse(trans_deadline),
                                 Reverse(prop_deadline),
                                 Reverse(proc_deadline),
+                                expiration,
                                 msg.clone(),
                             );
-                            info!("New entry: {entry:?}");
                             self.transmitting.push(entry);
                         }
                     }
@@ -221,12 +233,20 @@ impl Router {
             let (pid, node_handle, channel_handle) = self.handles[index];
             let channel_name = &self.channel_names[channel_handle];
             let timestep = self.timestep;
-            while let Some(msg) = mailbox.pop_front() {
-                info!("{pid}.{channel_name} [RX]: {}", format_u8_buf(&msg));
+            while let Some((expiration, msg)) = mailbox.pop_front() {
+                info!(
+                    "{pid}.{channel_name} <Now: {}, Expiration: {expiration:?}> [RX]: {}",
+                    self.timestep,
+                    format_u8_buf(&msg)
+                );
+                if expiration.is_some_and(|exp| exp.get() < self.timestep) {
+                    warn!("Message dropped!");
+                    continue;
+                }
                 match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
                     Ok(_) => {}
                     Err(e) if e.recoverable() => {
-                        mailbox.push_front(msg);
+                        mailbox.push_front((expiration, msg));
                         break;
                     }
                     Err(e) => {
@@ -249,47 +269,33 @@ impl Router {
         while self
             .transmitting
             .peek()
-            .is_some_and(|(ts, _, _, _)| ts.0 <= self.timestep)
+            .is_some_and(|(ts, _, _, _, _)| ts.0 <= self.timestep)
         {
-            let Some((trans_ts, prop_ts, proc_ts, msg)) = self.transmitting.pop() else {
+            let Some((_, prop_ts, proc_ts, expiration, msg)) = self.transmitting.pop() else {
                 return Err(RouterError::StepError);
             };
-            debug!(
-                "transmitting -> propagating {:?}",
-                (trans_ts.0, prop_ts.0, proc_ts.0)
-            );
-            self.propagating.push((prop_ts, proc_ts, msg));
+            self.propagating.push((prop_ts, proc_ts, expiration, msg));
         }
         while self
             .propagating
             .peek()
-            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
+            .is_some_and(|(ts, _, _, _)| ts.0 <= self.timestep)
         {
-            let Some((prop_ts, proc_ts, msg)) = self.propagating.pop() else {
+            let Some((_, proc_ts, expiration, msg)) = self.propagating.pop() else {
                 return Err(RouterError::StepError);
             };
-            debug!("propagating -> processing {:?}", (prop_ts.0, proc_ts.0));
-            self.processing.push((proc_ts, msg));
+            self.processing.push((proc_ts, expiration, msg));
         }
         while self
             .processing
             .peek()
-            .is_some_and(|(ts, _)| ts.0 <= self.timestep)
+            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
         {
-            let Some((proc_ts, msg)) = self.processing.pop() else {
+            let Some((_, expiration, msg)) = self.processing.pop() else {
                 return Err(RouterError::StepError);
             };
-            debug!("propagating -> mailbox {:?}", proc_ts.0);
-            self.mailboxes[msg.handle_ptr].push_back(msg.buf);
+            self.mailboxes[msg.handle_ptr].push_back((expiration, msg.buf));
         }
-        info!(
-            "Messages queued: [{}]",
-            self.mailboxes
-                .iter()
-                .map(|m| format!("{}", m.len()))
-                .collect::<Vec<_>>()
-                .join(", ")
-        );
         Ok(())
     }
 
