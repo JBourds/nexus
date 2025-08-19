@@ -490,7 +490,7 @@ mod tests {
         let ts_config = TimestepConfig {
             length: 1,
             unit: TimeUnit::Seconds,
-            count: NonZeroU64::new(1000).unwrap(),
+            count: NonZeroU64::new(1000000).unwrap(),
         };
         let transmission = Rate {
             rate: 200,
@@ -513,17 +513,108 @@ mod tests {
             propagation,
         };
         let calculator = DelayCalculator::validate(delays, ts_config).unwrap();
+        use DataUnit::*;
+        use DistanceUnit::*;
         let tests = [
-            ((0.0001, 0, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((0.0, 1, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((0.0, 100, DataUnit::Bit, DistanceUnit::Kilometers), 1),
-            ((1.0, 0, DataUnit::Bit, DistanceUnit::Kilometers), 5),
-            ((1.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 7),
-            ((1.4, 200, DataUnit::Bit, DistanceUnit::Kilometers), 9),
-            ((1.9, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
-            ((2.0, 200, DataUnit::Bit, DistanceUnit::Kilometers), 12),
+            // Data unit conversions
+            (0.0, 200, Byte, Kilometers, (2.0 * 8.0_f64).ceil() as u64),
+            (
+                0.0,
+                200,
+                Kilobit,
+                Kilometers,
+                (2.0 * 1024.0_f64).ceil() as u64,
+            ),
+            (
+                0.0,
+                200,
+                Kilobyte,
+                Kilometers,
+                (2.0 * 8.0 * 1024.0_f64).ceil() as u64,
+            ),
+            (
+                0.0,
+                200,
+                Megabit,
+                Kilometers,
+                (2.0 * 1024.0 * 1024.0_f64).ceil() as u64,
+            ),
+            (
+                0.0,
+                200,
+                Megabyte,
+                Kilometers,
+                (2.0 * 8.0 * 1024.0 * 1024.0_f64).ceil() as u64,
+            ),
+            (
+                0.0,
+                200,
+                Gigabit,
+                Kilometers,
+                (2.0 * 1024.0 * 1024.0 * 1024.0_f64).ceil() as u64,
+            ),
+            (
+                0.0,
+                200,
+                Gigabyte,
+                Kilometers,
+                (2.0 * 8.0 * 1024.0 * 1024.0 * 1024.0_f64).ceil() as u64,
+            ),
+            // Distance conversions (propagation distances)
+            (0.0, 0, Bit, Millimeters, 0),
+            (0.001, 0, Bit, Millimeters, 1),
+            (1.0, 0, Bit, Millimeters, 1),
+            (100.0, 0, Bit, Millimeters, 1),
+            (100.0 * 100.0, 0, Bit, Millimeters, 1),
+            (100.0 * 100.0 * 99.0, 0, Bit, Millimeters, 1),
+            (100.0 * 100.0 * 100.0, 0, Bit, Millimeters, 1),
+            (100.0 * 100.0 * 200.0, 0, Bit, Millimeters, 1),
+            (100.0 * 100.0 * 201.0, 0, Bit, Millimeters, 2),
+            (100.0 * 100.0 * 300.0, 0, Bit, Millimeters, 2),
+            (100.0 * 100.0 * 400.0, 0, Bit, Millimeters, 2),
+            (100.0 * 100.0 * 400.0001, 0, Bit, Millimeters, 2),
+            (100.0 * 100.0 * 1000.0, 0, Bit, Millimeters, 5),
+            (100.0 * 100.0 * 1001.0, 0, Bit, Millimeters, 6),
+            // Full pipeline (numerator/denominator conversions)
+            (0.0001, 0, Bit, Kilometers, 1),
+            (0.0, 1, Bit, Kilometers, 1),
+            (0.0, 100, Bit, Kilometers, 1),
+            (1.0, 0, Bit, Kilometers, 5),
+            (1.0, 200, Bit, Kilometers, 7),
+            (1.4, 200, Bit, Kilometers, 9),
+            (1.9, 200, Bit, Kilometers, 12),
+            (2.0, 200, Bit, Kilometers, 12),
+            // Conversions on both units
+            (
+                0.0001,
+                1,
+                Kilobyte,
+                Meters,
+                (2.0 * 1024.0 * 8.0 / 200.0_f64).ceil() as u64,
+            ),
+            (
+                1.0,
+                1,
+                Kilobyte,
+                Meters,
+                (2.0 * 1024.0 * 8.0 / 200.0_f64).ceil() as u64,
+            ),
+            (
+                100.0,
+                1,
+                Kilobyte,
+                Meters,
+                (2.0 * 1024.0 * 8.0 / 200.0_f64).ceil() as u64 + 1,
+            ),
+            (
+                1000.0,
+                1,
+                Kilobyte,
+                Meters,
+                (2.0 * 1024.0 * 8.0 / 200.0_f64).ceil() as u64 + 5,
+            ),
         ];
-        for ((distance, amount, data_unit, distance_unit), expected) in tests.into_iter() {
+        for (distance, amount, data_unit, distance_unit, expected) in tests {
             assert_eq!(
                 calculator.timestep_delay(distance, amount, data_unit, distance_unit),
                 expected
