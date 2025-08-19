@@ -4,7 +4,7 @@ use crate::{
     helpers::format_u8_buf,
     types::{Channel, Node},
 };
-use config::ast::{DataUnit, DistanceUnit, Position};
+use config::ast::{DataUnit, DistanceProbVar, DistanceUnit, Position};
 use fuse::socket;
 use rand::rngs::StdRng;
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -308,7 +308,7 @@ impl Router {
     fn prepare_message(
         channel: &Channel,
         timestep: u64,
-        msg: Message,
+        mut msg: Message,
         distance: f64,
         distance_unit: DistanceUnit,
         rng: &mut StdRng,
@@ -319,24 +319,33 @@ impl Router {
         Option<NonZeroU64>,
         Message,
     )> {
-        if channel.link.packet_loss.sample(
-            distance,
-            distance_unit,
-            msg.buf
-                .len()
-                .try_into()
-                .expect("usize should be able to to fit in u64"),
-            DataUnit::Byte,
-            rng,
-        ) {
-            info!("Packet dropped");
-            return None;
-        }
         let sz: u64 = msg
             .buf
             .len()
             .try_into()
             .expect("usize should be able to become a u64");
+        let mut sample =
+            |var: &DistanceProbVar| var.sample(distance, distance_unit, sz, DataUnit::Byte, rng);
+        if sample(&channel.link.packet_loss) {
+            info!("Packet dropped");
+            return None;
+        }
+
+        let bit_error_prob =
+            channel
+                .link
+                .bit_error
+                .probability(distance, distance_unit, sz, DataUnit::Byte);
+        if bit_error_prob != 0.0 {
+            for byte in msg.buf.iter_mut() {
+                for index in 0..u8::BITS {
+                    if unsafe { channel.link.bit_error.sample_unchecked(bit_error_prob, rng) } {
+                        *byte ^= 1 << index;
+                    }
+                }
+            }
+        }
+
         let unit = DataUnit::Byte;
         let delays = &channel.link.delays;
         let trans_deadline = timestep + delays.transmission_timesteps_f64(sz, unit).round() as u64;
