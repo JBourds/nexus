@@ -14,7 +14,7 @@ root = "~/simulations"
 
 [channels.ethernet]
 link = "ethernet"
-type = { type = "live", ttl = 1, unit = "s" }
+type = { type = "shared", ttl = 1, unit = "s" }
 
 [links]
 
