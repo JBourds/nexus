@@ -157,30 +157,35 @@ impl Router {
                         "[TX] {src_node}.{pid}.{channel_name}: {}",
                         format_u8_buf(&recv_buf)
                     );
-                    for Route {
-                        handle_ptr,
-                        distance,
-                        unit: distance_unit,
-                    } in self.routes[channel_handle].iter()
-                    {
-                        let msg = Message {
-                            handle_ptr: *handle_ptr,
-                            buf: recv_buf.clone(),
-                        };
-                        let dst_node = self.handles[*handle_ptr].1;
-                        if dst_node != src_node || channel.r#type.delivers_to_self() {
-                            debug!(
-                                "Delivering from {} to {}",
-                                &self.node_names[src_node], &self.node_names[dst_node]
-                            );
-                            let entry = Self::timestamp_message(
-                                channel,
-                                self.timestep,
-                                msg.clone(),
-                                *distance,
-                                *distance_unit,
-                            );
-                            self.transmitting.push(entry);
+                    match channel.r#type {
+                        config::ast::ChannelType::Live { .. } => unimplemented!(),
+                        config::ast::ChannelType::MsgBuffered { .. } => {
+                            for Route {
+                                handle_ptr,
+                                distance,
+                                unit: distance_unit,
+                            } in self.routes[channel_handle].iter()
+                            {
+                                let msg = Message {
+                                    handle_ptr: *handle_ptr,
+                                    buf: recv_buf.clone(),
+                                };
+                                let dst_node = self.handles[*handle_ptr].1;
+                                if dst_node != src_node || channel.r#type.delivers_to_self() {
+                                    debug!(
+                                        "Delivering from {} to {}",
+                                        &self.node_names[src_node], &self.node_names[dst_node]
+                                    );
+                                    let entry = Self::timestamp_message(
+                                        channel,
+                                        self.timestep,
+                                        msg.clone(),
+                                        *distance,
+                                        *distance_unit,
+                                    );
+                                    self.transmitting.push(entry);
+                                }
+                            }
                         }
                     }
                 }
@@ -209,7 +214,11 @@ impl Router {
                 format_u8_buf(&msg)
             );
             if expiration.is_some_and(|exp| exp.get() < self.timestep) {
-                warn!("Message dropped!");
+                warn!(
+                    "Message dropped due to timeout (Now: {}, Expiration: {})!",
+                    self.timestep,
+                    expiration.unwrap().get()
+                );
                 continue;
             }
             match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
@@ -264,7 +273,23 @@ impl Router {
             let Some((_, expiration, msg)) = self.processing.pop() else {
                 return Err(RouterError::StepError);
             };
-            self.mailboxes[msg.handle_ptr].push_back((expiration, msg.buf));
+            let (_, _, channel_index) = self.handles[msg.handle_ptr];
+            // TODO: Better way to make sure we don't count old messages without
+            // requiring a linear operation every timestep on every message
+            let mut mailbox = std::mem::take(&mut self.mailboxes[msg.handle_ptr])
+                .into_iter()
+                .filter(|(exp, _)| exp.is_none_or(|exp| exp.get() >= self.timestep))
+                .collect::<VecDeque<_>>();
+            if self.channels[channel_index]
+                .r#type
+                .max_buffered()
+                .is_none_or(|n| n.get() as usize > mailbox.len())
+            {
+                mailbox.push_back((expiration, msg.buf));
+            } else {
+                warn!("Message dropped due to full queue!");
+            }
+            let _ = std::mem::replace(&mut self.mailboxes[msg.handle_ptr], mailbox);
         }
         Ok(())
     }
