@@ -5,14 +5,10 @@ use crate::{
     types::{Channel, Node},
 };
 use config::ast::{DataUnit, DistanceUnit, Position};
-use fuse::{PID, socket};
+use fuse::socket;
 use std::{cmp::Reverse, collections::BinaryHeap};
-use std::{
-    collections::{BTreeMap, VecDeque},
-    num::NonZeroU64,
-    os::unix::net::UnixDatagram,
-};
-use tracing::{Level, debug, error, event, info, instrument, warn};
+use std::{collections::VecDeque, num::NonZeroU64, os::unix::net::UnixDatagram};
+use tracing::{Level, debug, event, info, instrument, warn};
 
 use crate::types::ChannelHandle;
 
@@ -177,40 +173,12 @@ impl Router {
                                 "Delivering from {} to {}",
                                 &self.node_names[src_node], &self.node_names[dst_node]
                             );
-                            let sz: u64 = msg
-                                .buf
-                                .len()
-                                .try_into()
-                                .expect("usize should be able to become a u64");
-                            let unit = DataUnit::Byte;
-                            let trans_deadline = self.timestep
-                                + channel
-                                    .link
-                                    .delays
-                                    .transmission_timesteps_f64(sz, unit)
-                                    .round() as u64;
-                            let prop_deadline = trans_deadline
-                                + channel
-                                    .link
-                                    .delays
-                                    .propagation_timesteps_f64(*distance, *distance_unit)
-                                    .round() as u64;
-                            let proc_deadline = prop_deadline
-                                + channel
-                                    .link
-                                    .delays
-                                    .processing_timesteps_f64(sz, unit)
-                                    .round() as u64;
-                            let expiration = channel
-                                .r#type
-                                .ttl()
-                                .map(|ttl| ttl.saturating_add(proc_deadline));
-                            let entry = (
-                                Reverse(trans_deadline),
-                                Reverse(prop_deadline),
-                                Reverse(proc_deadline),
-                                expiration,
+                            let entry = Self::timestamp_message(
+                                channel,
+                                self.timestep,
                                 msg.clone(),
+                                *distance,
+                                *distance_unit,
                             );
                             self.transmitting.push(entry);
                         }
@@ -299,6 +267,46 @@ impl Router {
             self.mailboxes[msg.handle_ptr].push_back((expiration, msg.buf));
         }
         Ok(())
+    }
+
+    fn timestamp_message(
+        channel: &Channel,
+        timestep: u64,
+        msg: Message,
+        distance: f64,
+        distance_unit: DistanceUnit,
+    ) -> (
+        Reverse<u64>,
+        Reverse<u64>,
+        Reverse<u64>,
+        Option<NonZeroU64>,
+        Message,
+    ) {
+        let sz: u64 = msg
+            .buf
+            .len()
+            .try_into()
+            .expect("usize should be able to become a u64");
+        let unit = DataUnit::Byte;
+        let delays = &channel.link.delays;
+        let trans_deadline = timestep + delays.transmission_timesteps_f64(sz, unit).round() as u64;
+        let prop_deadline = trans_deadline
+            + delays
+                .propagation_timesteps_f64(distance, distance_unit)
+                .round() as u64;
+        let proc_deadline =
+            prop_deadline + delays.processing_timesteps_f64(sz, unit).round() as u64;
+        let expiration = channel
+            .r#type
+            .ttl()
+            .map(|ttl| ttl.saturating_add(proc_deadline));
+        (
+            Reverse(trans_deadline),
+            Reverse(prop_deadline),
+            Reverse(proc_deadline),
+            expiration,
+            msg,
+        )
     }
 
     #[instrument(skip(socket, data), err)]
