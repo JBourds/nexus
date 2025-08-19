@@ -8,7 +8,7 @@ use fuser::{
     BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
     ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
 };
-use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
+use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, ESHUTDOWN, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
 use std::cmp::min;
 use std::ffi::OsStr;
@@ -373,8 +373,11 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        file.request.send(()).unwrap();
-        file.receive.recv().unwrap();
+        // Main thread could shutdown in the middle of a request
+        if file.request.send(()).is_err() || file.receive.recv().is_err() {
+            reply.error(ESHUTDOWN);
+            return;
+        }
         let mut recv_buf = vec![0; file.max_msg_size.get() as usize];
         let recv_size = match file.sock.recv(&mut recv_buf) {
             Ok(n) => n,

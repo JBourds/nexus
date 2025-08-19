@@ -153,6 +153,5 @@ fn get_fs_channels(
             });
         }
     }
-    println!("{channels:#?}");
     Ok(channels)
 }
