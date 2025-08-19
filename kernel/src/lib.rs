@@ -130,25 +130,35 @@ impl Kernel {
 
     #[instrument(skip_all)]
     fn check_handles(handles: Vec<RunHandle>) -> Result<Vec<RunHandle>, KernelError> {
-        handles
-            .into_iter()
-            .map(|mut handle| {
-                if let Ok(Some(_)) = handle.process.try_wait() {
-                    error!("Process prematurely exited");
-                    let pid = handle.process.id();
-                    let output = handle.process.wait_with_output().unwrap();
-                    Err(KernelError::ProcessExit {
-                        node: handle.node,
-                        node_id: handle.node_id,
-                        protocol: handle.protocol,
-                        pid,
-                        output,
-                    })
-                } else {
-                    Ok(handle)
-                }
-            })
-            .collect::<Result<_, KernelError>>()
+        let mut process_error = None;
+        let mut good_handles = vec![];
+        for mut handle in handles {
+            if process_error.is_some() {
+                let _ = handle.process.kill();
+            }
+            if let Ok(Some(_)) = handle.process.try_wait() {
+                error!("Process prematurely exited");
+                let pid = handle.process.id();
+                let output = handle.process.wait_with_output().unwrap();
+                process_error = Some(KernelError::ProcessExit {
+                    node: handle.node,
+                    node_id: handle.node_id,
+                    protocol: handle.protocol,
+                    pid,
+                    output,
+                });
+            } else {
+                good_handles.push(handle);
+            }
+        }
+        if let Some(e) = process_error {
+            for mut handle in good_handles {
+                let _ = handle.process.kill();
+            }
+            Err(e)
+        } else {
+            Ok(good_handles)
+        }
     }
 
     #[instrument(skip_all)]
