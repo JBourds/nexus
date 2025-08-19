@@ -65,6 +65,13 @@ impl ChannelType {
         }
     }
 
+    pub fn max_buffered(&self) -> Option<NonZeroU64> {
+        match self {
+            ChannelType::Live { .. } => Some(NonZeroU64::new(1).unwrap()),
+            ChannelType::MsgBuffered { nbuffered, .. } => *nbuffered,
+        }
+    }
+
     pub fn max_buf_size(&self) -> NonZeroU64 {
         match self {
             ChannelType::Live { max_size, .. } => *max_size,
