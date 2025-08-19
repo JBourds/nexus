@@ -181,13 +181,13 @@ impl Router {
                                     .delays
                                     .transmission_timesteps_f64(sz, unit)
                                     .round() as u64;
-                            let prop_deadline = self.timestep
+                            let prop_deadline = trans_deadline
                                 + channel
                                     .link
                                     .delays
                                     .propagation_timesteps_f64(*distance, *distance_unit)
                                     .round() as u64;
-                            let proc_deadline = self.timestep
+                            let proc_deadline = prop_deadline
                                 + channel
                                     .link
                                     .delays
