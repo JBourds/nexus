@@ -53,6 +53,8 @@ pub enum RouterError {
     Busy,
     #[error("Error encountered with socket file: `{0:#?}`")]
     FileError(SocketError),
+    #[error("Impossible error encountered during `step` function!")]
+    StepError,
 }
 
 impl RouterError {

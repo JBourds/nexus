@@ -3,8 +3,9 @@ use crate::{
     errors::RouterError,
     types::{Channel, Node},
 };
-use config::ast::{DistanceUnit, Position};
+use config::ast::{DataUnit, DistanceUnit, Position};
 use fuse::{PID, socket};
+use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{
     collections::{BTreeMap, VecDeque},
     num::NonZeroU64,
@@ -16,11 +17,10 @@ use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
 #[allow(dead_code)]
 pub(crate) struct Message {
-    sender: PID,
-    channel: ChannelHandle,
+    handle_ptr: usize,
     buf: Vec<u8>,
 }
 
@@ -34,26 +34,43 @@ pub(crate) struct Route {
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Router {
-    /// queued messages
-    queued: VecDeque<Message>,
-    /// nodes in the simulation
-    nodes: Vec<Node>,
-    /// names for nodes (only used in debugging/printing)
-    node_names: Vec<String>,
-    /// channels in the simulation
-    channels: Vec<Channel>,
-    /// names for channels (only used in debugging/printing)
-    channel_names: Vec<String>,
-    /// per-channel vector with the pre-computed route information
-    routes: Vec<Vec<Route>>,
-    /// actual unix domain sockets being read/written from
-    endpoints: Vec<UnixDatagram>,
-    /// all the unique keys for each channel file
-    handles: Vec<ChannelId>,
-    /// per-handle file mailbox with buffered messages
-    mailboxes: Vec<VecDeque<Message>>,
-    /// current simulation timestep
+    /// Current simulation timestep.
     timestep: Timestep,
+    /// Nodes in the simulation.
+    nodes: Vec<Node>,
+    /// Names for nodes (only used in debugging/printing).
+    node_names: Vec<String>,
+    /// Channels in the simulation.
+    channels: Vec<Channel>,
+    /// Names for channels (only used in debugging/printing).
+    channel_names: Vec<String>,
+    /// Per-channel vector with the pre-computed route information,
+    routes: Vec<Vec<Route>>,
+    /// Actual unix domain sockets being read/written from.
+    endpoints: Vec<UnixDatagram>,
+    /// All the unique keys for each channel file.
+    handles: Vec<ChannelId>,
+    /// Messages in the "transmitting" stage. Contains the timestep
+    /// the message should be removed from the queue and the message.
+    /// Also contains the timestep the message should be removed from
+    /// the next two queues.
+    transmitting: BinaryHeap<(
+        Reverse<Timestep>,
+        Reverse<Timestep>,
+        Reverse<Timestep>,
+        Message,
+    )>,
+    /// Messages in the "propagating" stage. Contains the timestep
+    /// the message should be removed from the queue and the message.
+    /// Also contains the timestep the message should be removed from
+    /// the processing queue.
+    propagating: BinaryHeap<(Reverse<Timestep>, Reverse<Timestep>, Message)>,
+    /// Messages in the "processing" stage. Simulates delay after
+    /// reception from destination. Contains the timestep
+    /// the message should be removed from the queue and the message.
+    processing: BinaryHeap<(Reverse<Timestep>, Message)>,
+    /// Per-handle file mailbox with buffered messages ready to be read.
+    mailboxes: Vec<VecDeque<Vec<u8>>>,
 }
 
 impl Router {
@@ -99,16 +116,18 @@ impl Router {
             .collect::<Vec<_>>();
 
         Self {
+            timestep: 0,
             nodes,
             node_names,
             channels,
             channel_names,
             routes,
             handles,
-            queued: VecDeque::new(),
+            transmitting: BinaryHeap::new(),
+            propagating: BinaryHeap::new(),
+            processing: BinaryHeap::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
             endpoints,
-            timestep: 0,
         }
     }
 
@@ -129,37 +148,56 @@ impl Router {
                 channel_name,
             ) {
                 Ok(recv_buf) => {
-                    let msg = Message {
-                        sender: pid,
-                        channel: channel_handle,
-                        buf: recv_buf,
-                    };
-                    debug!(
-                        "[TX] {src_node}.{pid}.{channel_name}: {}",
-                        String::from_utf8_lossy(&msg.buf)
-                    );
-
+                    let msg_len = recv_buf.len();
+                    info!("[TX] {src_node}.{pid}.{channel_name}: <{msg_len} byte butter>",);
                     for Route {
                         handle_ptr,
                         distance,
-                        unit,
+                        unit: distance_unit,
                     } in self.routes[channel_handle].iter()
                     {
+                        let msg = Message {
+                            handle_ptr: *handle_ptr,
+                            buf: recv_buf.clone(),
+                        };
                         let dst_node = self.handles[*handle_ptr].1;
                         if dst_node != src_node || channel.r#type.delivers_to_self() {
                             debug!(
                                 "Delivering from {} to {}",
                                 &self.node_names[src_node], &self.node_names[dst_node]
                             );
-                            self.mailboxes[*handle_ptr].push_back(msg.clone());
-                            debug!(
-                                "Messages queued: [{}]",
-                                self.mailboxes
-                                    .iter()
-                                    .map(|m| format!("{}", m.len()))
-                                    .collect::<Vec<_>>()
-                                    .join(", ")
+                            let sz: u64 = msg
+                                .buf
+                                .len()
+                                .try_into()
+                                .expect("usize should be able to become a u64");
+                            let unit = DataUnit::Byte;
+                            let trans_deadline = self.timestep
+                                + channel
+                                    .link
+                                    .delays
+                                    .transmission_timesteps_f64(sz, unit)
+                                    .round() as u64;
+                            let prop_deadline = self.timestep
+                                + channel
+                                    .link
+                                    .delays
+                                    .propagation_timesteps_f64(*distance, *distance_unit)
+                                    .round() as u64;
+                            let proc_deadline = self.timestep
+                                + channel
+                                    .link
+                                    .delays
+                                    .processing_timesteps_f64(sz, unit)
+                                    .round() as u64;
+                            let entry = (
+                                Reverse(trans_deadline),
+                                Reverse(prop_deadline),
+                                Reverse(proc_deadline),
+                                msg.clone(),
                             );
+                            info!("New entry: {entry:?}");
+                            self.transmitting.push(entry);
                         }
                     }
                 }
@@ -181,18 +219,9 @@ impl Router {
             let channel_name = &self.channel_names[channel_handle];
             let timestep = self.timestep;
             while let Some(msg) = mailbox.pop_front() {
-                debug!(
-                    "{pid}.{channel_name} [RX]: {}",
-                    String::from_utf8_lossy(&msg.buf)
-                );
-                match Self::send_msg(
-                    endpoint,
-                    &msg.buf,
-                    pid,
-                    timestep,
-                    channel_handle,
-                    channel_name,
-                ) {
+                let msg_len = msg.len();
+                info!("{pid}.{channel_name} [RX]: <{msg_len} byte buffer>",);
+                match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
                     Ok(_) => {}
                     Err(e) if e.recoverable() => {
                         mailbox.push_front(msg);
@@ -215,6 +244,50 @@ impl Router {
 
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
+        while self
+            .transmitting
+            .peek()
+            .is_some_and(|(ts, _, _, _)| ts.0 <= self.timestep)
+        {
+            let Some((trans_ts, prop_ts, proc_ts, msg)) = self.transmitting.pop() else {
+                return Err(RouterError::StepError);
+            };
+            debug!(
+                "transmitting -> propagating {:?}",
+                (trans_ts.0, prop_ts.0, proc_ts.0)
+            );
+            self.propagating.push((prop_ts, proc_ts, msg));
+        }
+        while self
+            .propagating
+            .peek()
+            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
+        {
+            let Some((prop_ts, proc_ts, msg)) = self.propagating.pop() else {
+                return Err(RouterError::StepError);
+            };
+            debug!("propagating -> processing {:?}", (prop_ts.0, proc_ts.0));
+            self.processing.push((proc_ts, msg));
+        }
+        while self
+            .processing
+            .peek()
+            .is_some_and(|(ts, _)| ts.0 <= self.timestep)
+        {
+            let Some((proc_ts, msg)) = self.processing.pop() else {
+                return Err(RouterError::StepError);
+            };
+            debug!("propagating -> mailbox {:?}", proc_ts.0);
+            self.mailboxes[msg.handle_ptr].push_back(msg.buf);
+        }
+        info!(
+            "Messages queued: [{}]",
+            self.mailboxes
+                .iter()
+                .map(|m| format!("{}", m.len()))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
         Ok(())
     }
 
@@ -248,7 +321,6 @@ impl Router {
         let mut recv_buf = vec![0; buf_sz.get() as usize];
         let nread = socket::recv(socket, &mut recv_buf, pid, channel_name)
             .map_err(RouterError::FileError)?;
-        debug!("Read {nread}");
         recv_buf.truncate(nread);
         event!(target: "rx", Level::INFO, timestep, channel, pid, tx = false, data = recv_buf.as_slice());
         Ok(recv_buf)
