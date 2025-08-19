@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
@@ -207,6 +208,42 @@ pub struct DistanceProbVar {
     pub rate: meval::Expr,
     pub distance: DistanceUnit,
     pub size: DataUnit,
+}
+
+impl DistanceProbVar {
+    /// Simulates a single sampling of a probability variable using distance
+    /// and data amounts ("x" and "y").
+    pub fn sample(
+        &self,
+        distance: f64,
+        distance_unit: DistanceUnit,
+        data: u64,
+        data_unit: DataUnit,
+        rng: &mut rand::rngs::StdRng,
+    ) -> bool {
+        let func = self.rate.clone().bind2("x", "y").unwrap();
+        let (should_scale_down, ratio) = DistanceUnit::ratio(self.distance, distance_unit);
+        let scalar = 10u64
+            .checked_pow(ratio.try_into().unwrap())
+            .expect("Exponentiation overflow.") as f64;
+        let distance = if should_scale_down {
+            distance / scalar
+        } else {
+            distance * scalar
+        };
+        let (should_scale_down, lshifts) = DataUnit::ratio(self.size, data_unit);
+        let scalar = 1u64
+            .checked_shl(lshifts.try_into().unwrap())
+            .expect("Exponentiation overflow.") as f64;
+        let data = if should_scale_down {
+            data as f64 / scalar
+        } else {
+            data as f64 * scalar
+        };
+        let prob = func(distance, data).clamp(0.0, 1.0);
+        let random: f64 = rng.random_range(0.0..=1.0);
+        prob <= random
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
