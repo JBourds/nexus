@@ -1,6 +1,7 @@
 use crate::{
     ChannelId,
     errors::RouterError,
+    helpers::format_u8_buf,
     types::{Channel, Node},
 };
 use config::ast::{DataUnit, DistanceUnit, Position};
@@ -148,8 +149,10 @@ impl Router {
                 channel_name,
             ) {
                 Ok(recv_buf) => {
-                    let msg_len = recv_buf.len();
-                    info!("[TX] {src_node}.{pid}.{channel_name}: <{msg_len} byte butter>",);
+                    info!(
+                        "[TX] {src_node}.{pid}.{channel_name}: {}",
+                        format_u8_buf(&recv_buf)
+                    );
                     for Route {
                         handle_ptr,
                         distance,
@@ -219,8 +222,7 @@ impl Router {
             let channel_name = &self.channel_names[channel_handle];
             let timestep = self.timestep;
             while let Some(msg) = mailbox.pop_front() {
-                let msg_len = msg.len();
-                info!("{pid}.{channel_name} [RX]: <{msg_len} byte buffer>",);
+                info!("{pid}.{channel_name} [RX]: {}", format_u8_buf(&msg));
                 match Self::send_msg(endpoint, &msg, pid, timestep, channel_handle, channel_name) {
                     Ok(_) => {}
                     Err(e) if e.recoverable() => {

@@ -2,6 +2,13 @@
 use std::collections::HashMap;
 use std::hash::Hash;
 
+pub fn format_u8_buf(buf: &[u8]) -> String {
+    match core::str::from_utf8(buf) {
+        Ok(s) => s.to_string(),
+        Err(_) => format!("<{} bytes>", buf.len()),
+    }
+}
+
 pub fn make_handles<T>(iter: impl IntoIterator<Item = T>) -> HashMap<T, usize>
 where
     T: Hash + Eq,
