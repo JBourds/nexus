@@ -1,0 +1,141 @@
+# Units are specified in string form for each of the following:
+
+# Data Units
+
+# - "bit" ("b")
+# - "kilobit" ("Kb")
+# - "megabit" ("Mb")
+# - "gigabit" ("Gb")
+# - "byte" ("B")
+# - "kilobyte" ("KB")
+# - "megabyte" ("MB")
+# - "gigabyte" ("GB")
+
+# Time Units
+
+# - "hours" ("m")
+# - "minutes" ("m")
+# - "seconds" ("s")
+# - "milliseconds" ("ms")
+# - "microseconds" ("us")
+# - "nanoseconds" ("ns")
+
+# Distance Units
+
+#   - "meters" (or "m")
+#   - "kilometers" (or "km")
+#   - "feet"
+#   - "yards"
+#   - "miles" ("mi")
+
+[params]
+
+# Quantity of timestep units for each step (defaults to 10)
+timestep.length = 1             
+
+# NOTE: Simulation timestep unit should be set carefully
+# based on other simulation parameters.
+timestep.unit = "seconds"
+
+# Total number of timesteps to take
+timestep.count = 1000000
+
+# Random seed for simulation
+seed = 42
+
+# Root directory to store simulation results 
+# into (will create a new subdirectory each run)
+root = "~/testnet/simulations" 
+
+[links]
+
+# Default link which links implicitly inherit from
+# This cannot be overrode, and does not get sourced from
+# a config TOML like other links. It is provided purely
+# for example purposes and to show what the default
+# behavior is.
+[links.ideal]
+
+# Network Parameters
+
+# Control how far the signal can reach.
+#   - "max": Maximum distance packets can possible be delivered to.
+#   - "offset": Offset to use when performing distance degradation
+#   calculations (effective distance is equal to Max {0, Distance - Offset}).
+signal.max_range = inf
+signal.offset = inf
+
+# Signal shape can be any of the following:
+#   - "omni": Circle around node location
+#   - "cone": TODO
+#   - "direct": Link can only communicate via a direct link to another node.
+signal.shape = "omni"
+
+# Uses the same units as in `Error Rates` and `Network Delays` section
+# Unit for distance
+signal.unit = "meters"
+
+# Node transmission rate (defaults to maximum value able to be hold by u64)
+delays.transmission.data = "bit"
+delays.transmission.time = "s"
+
+# Each value which depends on distance is characterized by its average value
+# and standard deviation, as well as a type of decay and the unit of distance. 
+# Decays:
+# - "flat": The value is the actual delay.
+# - "linear": The value is linear based on distance.
+# - "log": The value is logarithmic based on distance, where the
+#            provided value is the base for the logarithm.
+# - "exp": The value is exponential based on distance, where the
+#            provided value is the base of the exponent.
+
+# Error Rates
+
+# Probability of bit flipping in the transfer.
+bit_error = { rate = 0, distance = "m" }          
+
+# Probability of experiencing packet loss
+packet_loss = { rate = 0, distance = "cm" }
+
+# Network Delays
+
+delays.processing = { data = "b", time = "s" }
+delays.propagation = { rate = 0, distance = "km" }
+
+[channels]
+
+[channels.ch_ideal]
+link = "ideal"
+
+[nodes]
+
+# The default node which all other nodes inherit from
+[nodes.default]
+
+# Instances of node classes have their positions specified by a pair of numbers.
+# These correspond to the x, y, z point of the node on a 3D cartesian space
+# along with the azimuth, elevation, and roll of the nodes. All these values
+# default to 0 when omitted. Coordinates can be specifed as a tuple of values
+# (ex. `[<x>, <y>, <z>]`) or in object form (ex. `{x = <x>, y = <y>, z = <z>}`).
+
+# At build time, each instance of the node protocols will be 
+# assigned index as a unique id which will be used to uniquely identify its 
+# output in the simulation folder.
+
+deployments = [{ position = { unit = "meters" } }]
+
+# Array of internal link names which act like ideal links but cannot be
+# received from any node outside of this one. Overrides existing link names,
+# and is subject to the same naming restrictions as links.
+internal_names = []
+
+# TODO: Add power to simulation
+# default_charge = 1.0    # Start fully charged
+# idle_power = 0.001      # Percentage of charge used per second
+# idle_charging = 0.005   # Percentage of charge recovered per second
+# ...other charging params
+
+[[nodes.default.protocols]]
+name = "main"
+runner = "make"
+
