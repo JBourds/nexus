@@ -170,12 +170,7 @@ impl Simulation {
         for (name, link) in links.iter_mut() {
             // Resolve/check inheritance relation here
             let inherit = match link.inherit.as_ref() {
-                Some(other) => {
-                    if other == Link::DIRECT || other == Link::INDIRECT {
-                        bail!("Cannot use reserved link name \"{}\"", Link::DIRECT);
-                    }
-                    other.to_string()
-                }
+                Some(other) => other.to_string(),
                 None => Link::DEFAULT.to_string(),
             };
             link.inherit = Some(inherit.clone());
@@ -226,12 +221,19 @@ impl Simulation {
                     map.insert(name, link);
                     map
                 });
+        if links.contains_key(Link::DEFAULT) {
+            bail!(
+                "Error to define a link with the name \"ideal\". This link is present by default in the link namespace and cannot be changed."
+            );
+        }
 
         // Now that the topological ordering is complete, process links in the
         // order we created
         let ordering = Self::trace_link_dependencies(&mut links)?;
         let mut processed = HashMap::new();
-        let _ = processed.insert(Link::DEFAULT.to_string(), Link::default());
+        let _ = processed
+            .insert(Link::DEFAULT.to_string(), Link::default())
+            .is_some();
         // Skip 1 for the default link we insert since that will always be first
         for key in ordering.iter().skip(1) {
             let link = links
@@ -449,8 +451,6 @@ impl DistanceProbVar {
 
 impl Link {
     const DEFAULT: &'static str = "ideal";
-    const DIRECT: &'static str = "direct";
-    const INDIRECT: &'static str = "indirect";
 
     /// Ensure provided values for links are valid and
     /// resolve inheritance.
