@@ -2,11 +2,12 @@ use crate::{
     ChannelId,
     errors::RouterError,
     helpers::{flip_bits, format_u8_buf},
-    types::{Channel, Node},
+    types::{Channel, Node, NodeHandle},
 };
 use config::ast::{ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position};
 use fuse::{fs::ControlSignal, socket};
 use rand::rngs::StdRng;
+use std::collections::HashMap;
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::VecDeque, num::NonZeroU64, os::unix::net::UnixDatagram};
 use tracing::{Level, debug, event, info, instrument, warn};
@@ -42,7 +43,7 @@ pub(crate) struct Router {
     /// Names for channels (only used in debugging/printing).
     channel_names: Vec<String>,
     /// Per-channel vector with the pre-computed route information,
-    routes: Vec<Vec<Route>>,
+    routes: Vec<HashMap<NodeHandle, Vec<Route>>>,
     /// Actual unix domain sockets being read/written from.
     endpoints: Vec<UnixDatagram>,
     /// All the unique keys for each channel file.
@@ -98,29 +99,39 @@ impl Router {
             .iter()
             .enumerate()
             .map(|(ch_index, ch)| {
-                ch.subscribers
+                // For every channel, map every publishing node to the set of
+                // precomputed routes it has with every receiving node
+                ch.publishers
                     .iter()
-                    .flat_map(|node_handle| {
-                        handles
-                            .iter()
-                            .enumerate()
-                            .filter_map(|(index, (_, dst_node, dst_ch))| {
-                                if *dst_node == *node_handle && *dst_ch == ch_index {
-                                    let src = &nodes[*node_handle];
-                                    let dst = &nodes[*dst_node];
-                                    let (distance, unit) =
-                                        Position::distance(&src.position, &dst.position);
-                                    Some(Route {
-                                        handle_ptr: index,
-                                        distance,
-                                        unit,
-                                    })
-                                } else {
-                                    None
-                                }
-                            })
+                    .map(|src_node| {
+                        (
+                            *src_node,
+                            handles
+                                .iter()
+                                .enumerate()
+                                .filter_map(|(handle_ptr, (_, dst_node, dst_ch))| {
+                                    if ch_index == *dst_ch
+                                        && (ch.subscribers.contains(dst_node)
+                                            || *src_node == *dst_node
+                                                && ch.r#type.delivers_to_self())
+                                    {
+                                        let src = &nodes[*src_node];
+                                        let dst = &nodes[*dst_node];
+                                        let (distance, unit) =
+                                            Position::distance(&src.position, &dst.position);
+                                        Some(Route {
+                                            handle_ptr,
+                                            distance,
+                                            unit,
+                                        })
+                                    } else {
+                                        None
+                                    }
+                                })
+                                .collect::<Vec<_>>(),
+                        )
                     })
-                    .collect::<Vec<_>>()
+                    .collect::<HashMap<_, _>>()
             })
             .collect::<Vec<_>>();
 
@@ -166,7 +177,7 @@ impl Router {
                         handle_ptr,
                         distance,
                         unit: distance_unit,
-                    } in self.routes[channel_handle].iter()
+                    } in self.routes[channel_handle][&src_node].iter()
                     {
                         let msg = Message {
                             handle_ptr: *handle_ptr,
