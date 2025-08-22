@@ -19,9 +19,16 @@ use crate::types::ChannelHandle;
 pub type Timestep = u64;
 
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
-pub(crate) struct Message {
+pub(crate) struct AddressedMsg {
     handle_ptr: usize,
+    msg: Msg,
+}
+
+#[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
+pub(crate) struct Msg {
+    src: NodeHandle,
     buf: Rc<[u8]>,
+    expiration: Option<NonZeroU64>,
 }
 
 #[derive(Clone, Debug)]
@@ -45,18 +52,19 @@ pub(crate) struct Router {
     /// Names for channels (only used in debugging/printing).
     channel_names: Vec<String>,
     /// Per-channel vector with the pre-computed route information,
+    /// Maps each publisher from the channel to the map of subscribers -> routes.
     routes: Vec<HashMap<NodeHandle, Vec<Route>>>,
     /// Actual unix domain sockets being read/written from.
     endpoints: Vec<UnixDatagram>,
     /// All the unique keys for each channel file.
     handles: Vec<ChannelId>,
-    /// Messages queued to become active at a specific timestep.
-    queued: BinaryHeap<(Reverse<Timestep>, Option<NonZeroU64>, Message)>,
+    /// AddressedMsgs queued to become active at a specific timestep.
+    queued: BinaryHeap<(Reverse<Timestep>, AddressedMsg)>,
     /// Per-handle file mailbox with buffered messages ready to be read.
     /// Also contains an optional TTL which marks it as expired if it is in the
     /// past. Uses the niche optimization that the ttl for a channel cannot be
     /// 0, which means we can use an Option<T> here with no overhead!
-    mailboxes: Vec<VecDeque<(Option<NonZeroU64>, Rc<[u8]>)>>,
+    mailboxes: Vec<VecDeque<Msg>>,
     /// Random number generator to use
     rng: StdRng,
 }
@@ -180,12 +188,15 @@ impl Router {
                                         *distance,
                                         *distance_unit,
                                     );
-                                    let msg = Message {
+                                    let msg = AddressedMsg {
                                         handle_ptr: *handle_ptr,
-                                        buf: Rc::clone(&buf),
+                                        msg: Msg {
+                                            src: src_node,
+                                            buf: Rc::clone(&buf),
+                                            expiration,
+                                        },
                                     };
-                                    self.queued
-                                        .push((Reverse(becomes_active_at), expiration, msg));
+                                    self.queued.push((Reverse(becomes_active_at), msg));
                                 }
                             }
                         }
@@ -219,15 +230,15 @@ impl Router {
                                                 *distance,
                                                 *distance_unit,
                                             );
-                                        let msg = Message {
+                                        let msg = AddressedMsg {
                                             handle_ptr: *handle_ptr,
-                                            buf: buf.into(),
+                                            msg: Msg {
+                                                src: src_node,
+                                                buf: buf.into(),
+                                                expiration,
+                                            },
                                         };
-                                        self.queued.push((
-                                            Reverse(becomes_active_at),
-                                            expiration,
-                                            msg,
-                                        ));
+                                        self.queued.push((Reverse(becomes_active_at), msg));
                                     }
                                 }
                             }
@@ -253,43 +264,113 @@ impl Router {
         let channel_name = &self.channel_names[channel_handle];
         let timestep = self.timestep;
 
-        match &mut channel.r#type {
+        match &channel.r#type {
             // Query the current data present in the medium.
-            ChannelType::Shared { .. } => {
-                todo!()
-                // if let Err(e) =
-                //     Self::send_msg(endpoint, buf, pid, timestep, channel_handle, channel_name)
-                // {
-                //     return Err(RouterError::SendError {
-                //         sender: pid,
-                //         node_name: self.node_names[node_handle].clone(),
-                //         channel_name: self.channel_names[channel_handle].clone(),
-                //         timestep,
-                //         base: Box::new(e),
-                //     });
-                // }
-                // Ok(ControlSignal::Shared)
+            ChannelType::Shared { max_size, .. } => {
+                if mailbox.is_empty() {
+                    return Ok(ControlSignal::Nothing);
+                }
+
+                if mailbox.len() == 1 {
+                    let msg = mailbox.get(0).unwrap();
+                    let Route { distance, unit, .. } =
+                        self.routes[channel_handle][&msg.src][node_handle];
+                    if let Some(buf) = Self::send_through_channel(
+                        channel,
+                        Cow::from(msg.buf.as_ref()),
+                        distance,
+                        unit,
+                        &mut self.rng,
+                    ) {
+                        match Self::send_msg(
+                            endpoint,
+                            &buf,
+                            pid,
+                            timestep,
+                            channel_handle,
+                            channel_name,
+                        ) {
+                            Ok(_) => Ok(ControlSignal::Exclusive),
+                            Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
+                            Err(e) => Err(RouterError::SendError {
+                                sender: pid,
+                                node_name: self.node_names[node_handle].clone(),
+                                channel_name: self.channel_names[channel_handle].clone(),
+                                timestep,
+                                base: Box::new(e),
+                            }),
+                        }
+                    } else {
+                        Ok(ControlSignal::Nothing)
+                    }
+                } else if mailbox.len() > 1 {
+                    // See what messages reach the requester
+                    let filtered = mailbox.iter().filter_map(|msg| {
+                        let Route { distance, unit, .. } =
+                            self.routes[channel_handle][&msg.src][node_handle];
+                        Self::send_through_channel(
+                            channel,
+                            Cow::from(msg.buf.as_ref()),
+                            distance,
+                            unit,
+                            &mut self.rng,
+                        )
+                    });
+                    // Combine all the signals together
+                    let buf = filtered.fold(
+                        Vec::with_capacity(max_size.get().try_into().unwrap()),
+                        |mut v, msg| {
+                            let smaller_index = std::cmp::min(v.len(), msg.len());
+                            for i in 0..smaller_index {
+                                v[i] |= msg[i];
+                            }
+                            v.extend_from_slice(&msg[smaller_index..]);
+                            v
+                        },
+                    );
+                    match Self::send_msg(
+                        endpoint,
+                        &buf,
+                        pid,
+                        timestep,
+                        channel_handle,
+                        channel_name,
+                    ) {
+                        Ok(_) => Ok(ControlSignal::Exclusive),
+                        Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
+                        Err(e) => Err(RouterError::SendError {
+                            sender: pid,
+                            node_name: self.node_names[node_handle].clone(),
+                            channel_name: self.channel_names[channel_handle].clone(),
+                            timestep,
+                            base: Box::new(e),
+                        }),
+                    }
+                } else {
+                    Ok(ControlSignal::Nothing)
+                }
             }
             ChannelType::Exclusive { .. } => {
                 // Keep trying to send until we either get an unexpired message or error
-                while let Some((expiration, msg)) = mailbox.pop_front() {
+                while let Some(msg) = mailbox.pop_front() {
                     info!(
-                        "{:<30} [RX]: {} <Now: {}, Expiration: {expiration:?}>",
+                        "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
                         format!("{}.{pid}.{channel_name}", self.node_names[node_handle]),
-                        format_u8_buf(&msg),
+                        format_u8_buf(&msg.buf),
                         self.timestep,
+                        msg.expiration,
                     );
-                    if expiration.is_some_and(|exp| exp.get() < self.timestep) {
+                    if msg.expiration.is_some_and(|exp| exp.get() < self.timestep) {
                         warn!(
-                            "Message dropped due to timeout (Now: {}, Expiration: {})!",
+                            "AddressedMsg dropped due to timeout (Now: {}, Expiration: {})!",
                             self.timestep,
-                            expiration.unwrap().get()
+                            msg.expiration.unwrap().get()
                         );
                         continue;
                     }
                     match Self::send_msg(
                         endpoint,
-                        &msg,
+                        &msg.buf,
                         pid,
                         timestep,
                         channel_handle,
@@ -299,7 +380,7 @@ impl Router {
                             return Ok(ControlSignal::Exclusive);
                         }
                         Err(e) if e.recoverable() => {
-                            mailbox.push_front((expiration, msg));
+                            mailbox.push_front(msg);
                             break;
                         }
                         Err(e) => {
@@ -326,17 +407,17 @@ impl Router {
         while self
             .queued
             .peek()
-            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
+            .is_some_and(|(ts, _)| ts.0 <= self.timestep)
         {
-            let Some((_, expiration, msg)) = self.queued.pop() else {
+            let Some((_, frame)) = self.queued.pop() else {
                 return Err(RouterError::StepError);
             };
-            let (_, _, channel_index) = self.handles[msg.handle_ptr];
+            let (_, _, channel_index) = self.handles[frame.handle_ptr];
             // TODO: Better way to make sure we don't count old messages without
             // requiring a linear operation every timestep on every message
-            let mut mailbox = std::mem::take(&mut self.mailboxes[msg.handle_ptr])
+            let mut mailbox = std::mem::take(&mut self.mailboxes[frame.handle_ptr])
                 .into_iter()
-                .filter(|(exp, _)| exp.is_none_or(|exp| exp.get() >= self.timestep))
+                .filter(|msg| msg.expiration.is_none_or(|exp| exp.get() >= self.timestep))
                 .collect::<VecDeque<_>>();
 
             // Once the write to a shared channel has finished simulating the
@@ -347,11 +428,11 @@ impl Router {
                 .max_buffered()
                 .is_none_or(|n| n.get() as usize > mailbox.len())
             {
-                mailbox.push_back((expiration, msg.buf));
+                mailbox.push_back(frame.msg);
             } else {
-                warn!("Message dropped due to full queue!");
+                warn!("AddressedMsg dropped due to full queue!");
             }
-            let _ = std::mem::replace(&mut self.mailboxes[msg.handle_ptr], mailbox);
+            let _ = std::mem::replace(&mut self.mailboxes[frame.handle_ptr], mailbox);
         }
         Ok(())
     }
