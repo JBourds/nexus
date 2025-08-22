@@ -80,7 +80,7 @@ impl ChannelType {
 
     pub fn max_buffered(&self) -> Option<NonZeroU64> {
         match self {
-            ChannelType::Shared { .. } => Some(NonZeroU64::new(1).unwrap()),
+            ChannelType::Shared { .. } => Some(NonZeroU64::MAX),
             ChannelType::Exclusive { nbuffered, .. } => *nbuffered,
         }
     }
