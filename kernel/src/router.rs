@@ -4,7 +4,9 @@ use crate::{
     helpers::{flip_bits, format_u8_buf},
     types::{Channel, Node, NodeHandle},
 };
-use config::ast::{ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position};
+use config::ast::{
+    ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position, TimeUnit, TimestepConfig,
+};
 use fuse::{fs::ControlSignal, socket};
 use rand::rngs::StdRng;
 use std::borrow::Cow;
@@ -43,6 +45,8 @@ pub(crate) struct Route {
 pub(crate) struct Router {
     /// Current simulation timestep.
     timestep: Timestep,
+    /// Configuration for the timestep
+    ts_config: TimestepConfig,
     /// Nodes in the simulation.
     nodes: Vec<Node>,
     /// Names for nodes (only used in debugging/printing).
@@ -79,6 +83,7 @@ impl Router {
         channel_names: Vec<String>,
         handles: Vec<ChannelId>,
         endpoints: Vec<UnixDatagram>,
+        ts_config: TimestepConfig,
         rng: StdRng,
     ) -> Self {
         let handles_count = handles.len();
@@ -123,7 +128,8 @@ impl Router {
             .collect::<Vec<_>>();
 
         Self {
-            timestep: 0,
+            // This makes all the `NonZeroU64`s happy
+            timestep: 1,
             nodes,
             node_names,
             channels,
@@ -133,6 +139,7 @@ impl Router {
             queued: BinaryHeap::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
             endpoints,
+            ts_config,
             rng,
         }
     }
@@ -143,6 +150,9 @@ impl Router {
         let channel = &mut self.channels[channel_handle];
         let buf_sz = channel.r#type.max_buf_size();
         let endpoint = &mut self.endpoints[index];
+
+        let ts_config = self.ts_config;
+        let timestep = self.timestep;
         loop {
             match Self::recv_msg(
                 endpoint,
@@ -183,8 +193,9 @@ impl Router {
                                     );
                                     let (becomes_active_at, expiration) = Self::message_timesteps(
                                         channel,
-                                        self.timestep,
                                         sz,
+                                        ts_config,
+                                        timestep,
                                         *distance,
                                         *distance_unit,
                                     );
@@ -225,8 +236,9 @@ impl Router {
                                         let (becomes_active_at, expiration) =
                                             Self::message_timesteps(
                                                 channel,
-                                                self.timestep,
                                                 sz,
+                                                ts_config,
+                                                timestep,
                                                 *distance,
                                                 *distance_unit,
                                             );
@@ -482,8 +494,9 @@ impl Router {
     /// destination and, optionally (if ttl is specified), its expiration.
     fn message_timesteps(
         channel: &Channel,
-        timestep: u64,
         sz: u64,
+        ts_config: TimestepConfig,
+        timestep: u64,
         distance: f64,
         distance_unit: DistanceUnit,
     ) -> (Timestep, Option<NonZeroU64>) {
@@ -495,10 +508,29 @@ impl Router {
                 .propagation_timesteps_f64(distance, distance_unit)
                 .round() as u64
             + delays.processing_timesteps_f64(sz, unit).round() as u64;
-        let expiration = channel
-            .r#type
-            .ttl()
-            .map(|ttl| ttl.saturating_add(becomes_active_at));
+
+        let expiration = channel.r#type.ttl().map(|ttl| {
+            let (scale_down, ratio) = TimeUnit::ratio(channel.r#type.time_units(), ts_config.unit);
+            let scalar = 10u64
+                .checked_pow(ratio.try_into().unwrap())
+                .expect("Exponentiation overflow.");
+            let mut scaled_ttl = if scale_down {
+                ttl.get().saturating_div(scalar)
+            } else {
+                ttl.get().saturating_mul(scalar)
+            };
+
+            // TODO: Better way to do this without all the divisions?
+            let remaining =
+                ts_config.length.get() - becomes_active_at.rem_euclid(ts_config.length.get());
+            let mut expiration = becomes_active_at;
+            if scaled_ttl >= remaining {
+                expiration += 1;
+                scaled_ttl -= remaining;
+            }
+            expiration += scaled_ttl / ts_config.length.get();
+            NonZeroU64::new(expiration).unwrap()
+        });
         (becomes_active_at, expiration)
     }
 
