@@ -296,7 +296,7 @@ impl Router {
                         channel_name,
                     ) {
                         Ok(_) => {
-                            break;
+                            return Ok(ControlSignal::Exclusive);
                         }
                         Err(e) if e.recoverable() => {
                             mailbox.push_front((expiration, msg));
@@ -313,7 +313,7 @@ impl Router {
                         }
                     }
                 }
-                Ok(ControlSignal::Exclusive)
+                Ok(ControlSignal::Nothing)
             }
         }
     }
