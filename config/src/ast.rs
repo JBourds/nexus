@@ -64,6 +64,13 @@ pub enum ChannelType {
 impl ChannelType {
     pub const MSG_MAX_DEFAULT: NonZeroU64 = NonZeroU64::new(4096).unwrap();
 
+    pub fn time_units(&self) -> TimeUnit {
+        match self {
+            ChannelType::Shared { unit, .. } => *unit,
+            ChannelType::Exclusive { unit, .. } => *unit,
+        }
+    }
+
     pub fn ttl(&self) -> Option<NonZeroU64> {
         match self {
             ChannelType::Shared { ttl, .. } => *ttl,
