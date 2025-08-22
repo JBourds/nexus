@@ -10,8 +10,6 @@ use errors::*;
 pub struct RunHandle {
     /// Name of the node. Unique identifer within the simulation.
     pub node: ast::NodeHandle,
-    /// Index within the node's `deployments` to uniquely identify the handle.
-    pub node_id: usize,
     /// Name of the protocol. Unique identifier for a process within a node.
     pub protocol: ast::ProtocolHandle,
     /// Handle for the executing process.
@@ -49,24 +47,21 @@ impl Display for RunCmd {
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
     let mut processes = vec![];
-    for (node_name, nodes) in &sim.nodes {
-        for (node_id, node) in nodes.iter().enumerate() {
-            for (protocol_name, protocol) in &node.protocols {
-                let process = Command::new(protocol.runner.cmd.as_str())
-                    .current_dir(protocol.root.as_path())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::piped())
-                    .stdin(Stdio::null())
-                    .args(protocol.runner.args.as_slice())
-                    .spawn()
-                    .expect("Failed to execute process");
-                processes.push(RunHandle {
-                    node_id,
-                    node: node_name.clone(),
-                    protocol: protocol_name.clone(),
-                    process,
-                });
-            }
+    for (node_name, node) in &sim.nodes {
+        for (protocol_name, protocol) in &node.protocols {
+            let process = Command::new(protocol.runner.cmd.as_str())
+                .current_dir(protocol.root.as_path())
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .stdin(Stdio::null())
+                .args(protocol.runner.args.as_slice())
+                .spawn()
+                .expect("Failed to execute process");
+            processes.push(RunHandle {
+                node: node_name.clone(),
+                protocol: protocol_name.clone(),
+                process,
+            });
         }
     }
 

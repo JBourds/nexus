@@ -252,19 +252,32 @@ impl Simulation {
             .context("Failed to validate channels.")?;
 
         let channel_handles = channels.keys().cloned().collect::<HashSet<_>>();
-        let nodes = val
+        let validated_nodes = val
             .nodes
             .into_iter()
+            // Append a unique suffix corresponding to deployment ID to each
+            // node's name to deduplicate the handles
             .map(|(key, node)| {
-                Node::validate(config_root, node, &channel_handles).map(|nodes| (key, nodes))
+                Node::validate(config_root, node, &channel_handles).map(|nodes| {
+                    nodes
+                        .into_iter()
+                        .enumerate()
+                        .map(|(index, node)| (format!("{key}.{index}"), node))
+                        .collect::<Vec<_>>()
+                })
             })
-            .collect::<Result<HashMap<NodeHandle, Vec<Node>>>>()
+            // Collect the intermediary step
+            .collect::<Result<Vec<Vec<(NodeHandle, Node)>>>>()
             .context("Failed to validate nodes")?;
-        let flat_nodes: Vec<_> = nodes.values().flatten().collect();
+        // Flatten 2D array of nodes into unique handles
+        let nodes = validated_nodes
+            .into_iter()
+            .flatten()
+            .collect::<HashMap<NodeHandle, Node>>();
 
-        if flat_nodes.iter().all(|node| node.protocols.is_empty()) {
+        if nodes.values().all(|node| node.protocols.is_empty()) {
             bail!("Must have at least one node protocol defined to run a simulation!");
-        } else if flat_nodes.is_empty() {
+        } else if nodes.is_empty() {
             bail!(
                 "Must have at least one node position defined to run a simulation. \
             If your simulation does not require a fixed position, satisfy this requirement \

@@ -108,12 +108,11 @@ fn get_fs_channels(
     let mut channels = vec![];
     for runner::RunHandle {
         node: node_handle,
-        node_id,
         protocol: protocol_handle,
         process,
     } in handles
     {
-        let node = &sim.nodes.get(node_handle).unwrap()[*node_id];
+        let node = &sim.nodes.get(node_handle).unwrap();
         let protocol = node.protocols.get(protocol_handle).unwrap();
         let pid = process.id();
 

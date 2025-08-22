@@ -12,7 +12,6 @@ pub enum KernelError {
     #[error("Protocol prematurely exited: `{self:#?}`")]
     ProcessExit {
         node: String,
-        node_id: usize,
         protocol: String,
         pid: PID,
         output: Output,

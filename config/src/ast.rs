@@ -12,7 +12,7 @@ pub type ProtocolHandle = String;
 pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
-    pub nodes: HashMap<NodeHandle, Vec<Node>>,
+    pub nodes: HashMap<NodeHandle, Node>,
 }
 
 #[derive(Clone, Debug, Default)]
