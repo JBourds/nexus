@@ -290,7 +290,7 @@ impl Simulation {
 }
 
 impl TimestepConfig {
-    pub(crate) const DEFAULT_TIMESTEP_LEN: u64 = 1;
+    pub(crate) const DEFAULT_TIMESTEP_LEN: NonZeroU64 = NonZeroU64::new(1).unwrap();
     pub(crate) const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
 
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
@@ -304,7 +304,11 @@ impl TimestepConfig {
             .map(NonZeroU64::new)
             .unwrap_or_default()
             .context("Unable to validate time unit in timestep config")?;
-        let length = val.length.unwrap_or(Self::DEFAULT_TIMESTEP_LEN);
+        let length = val
+            .length
+            .map(NonZeroU64::new)
+            .unwrap_or(Some(Self::DEFAULT_TIMESTEP_LEN))
+            .context("Unable to validate time unit in timestep config")?;
         Ok(Self {
             length,
             count,

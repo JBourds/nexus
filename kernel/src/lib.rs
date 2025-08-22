@@ -202,6 +202,7 @@ impl Kernel {
             self.channel_names,
             self.handles,
             self.sockets,
+            self.timestep,
             self.rng,
         );
         let mut frame_time_exceeded: u64 = 0;
@@ -254,7 +255,7 @@ impl Kernel {
     }
 
     fn time_delta(&self) -> Duration {
-        let length = self.timestep.length;
+        let length = self.timestep.length.get();
         match self.timestep.unit {
             ast::TimeUnit::Seconds => Duration::from_secs(length),
             ast::TimeUnit::Milliseconds => Duration::from_millis(length),

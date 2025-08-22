@@ -190,7 +190,7 @@ pub struct ConnectionRange {
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TimestepConfig {
-    pub length: u64,
+    pub length: NonZeroU64,
     pub unit: TimeUnit,
     pub count: NonZeroU64,
 }
