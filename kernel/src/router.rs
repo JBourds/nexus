@@ -254,21 +254,20 @@ impl Router {
 
         match &mut channel.r#type {
             // Query the current data present in the medium.
-            ChannelType::Shared {
-                buf, expiration, ..
-            } if !buf.is_empty() && expiration.is_none_or(|exp| exp.get() >= self.timestep) => {
-                if let Err(e) =
-                    Self::send_msg(endpoint, buf, pid, timestep, channel_handle, channel_name)
-                {
-                    return Err(RouterError::SendError {
-                        sender: pid,
-                        node_name: self.node_names[node_handle].clone(),
-                        channel_name: self.channel_names[channel_handle].clone(),
-                        timestep,
-                        base: Box::new(e),
-                    });
-                }
-                Ok(ControlSignal::Shared)
+            ChannelType::Shared { .. } => {
+                todo!()
+                // if let Err(e) =
+                //     Self::send_msg(endpoint, buf, pid, timestep, channel_handle, channel_name)
+                // {
+                //     return Err(RouterError::SendError {
+                //         sender: pid,
+                //         node_name: self.node_names[node_handle].clone(),
+                //         channel_name: self.channel_names[channel_handle].clone(),
+                //         timestep,
+                //         base: Box::new(e),
+                //     });
+                // }
+                // Ok(ControlSignal::Shared)
             }
             ChannelType::Exclusive { .. } => {
                 // Keep trying to send until we either get an unexpired message or error
@@ -315,7 +314,6 @@ impl Router {
                 }
                 Ok(ControlSignal::Exclusive)
             }
-            _ => Ok(ControlSignal::Nothing),
         }
     }
 

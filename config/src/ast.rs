@@ -42,16 +42,8 @@ pub enum ChannelType {
         unit: TimeUnit,
         /// Should a sender be able to read their own writes?
         read_own_writes: bool,
-        /// Vector reflecting the current readable state of a medium. Sort of
-        /// simulates collisions by ORing writes whose TTLs intersect.
-        buf: Vec<u8>,
-        /// Timestep at which the data in `buf` should be invalidated. This is
-        /// set when the data has finished propagating and is equal to the
-        /// timestep at that instant + `ttl`. On a colliding write, this gets
-        /// set to the later expiration date. If `ttl` is `None`, this field is
-        /// also none, signifying that data should not expire or be wiped until
-        /// a new write is made.
-        expiration: Option<NonZeroU64>,
+        /// Maximum message size in bytes.
+        max_size: NonZeroU64,
     },
     /// Buffer some number of messages at a time for each node.
     Exclusive {
@@ -88,10 +80,7 @@ impl ChannelType {
 
     pub fn max_buf_size(&self) -> NonZeroU64 {
         match self {
-            ChannelType::Shared { buf, .. } => u64::try_from(buf.capacity())
-                .unwrap()
-                .try_into()
-                .expect("Vector has capacity 0?"),
+            ChannelType::Shared { max_size, .. } => *max_size,
             ChannelType::Exclusive { max_size, .. } => *max_size,
         }
     }
