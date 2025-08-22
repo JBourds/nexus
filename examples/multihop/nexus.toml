@@ -1,8 +1,8 @@
 # Simulate multiple nodes from a class communicating to the same channel
 
 [params]
-timestep.length = 1 
-timestep.unit = "s"
+timestep.length = 20 
+timestep.unit = "ms"
 timestep.count = 5000000000 
 seed = 42                       
 root = "~/simulations"  
@@ -26,8 +26,8 @@ deployments = [{}]
 name = "client"
 runner = "python3"
 runner_args = ["client.py"]
-inbound = ["client_proxy"]
-outbound = ["client_proxy"]
+subscribers = ["client_proxy"]
+publishers = ["client_proxy"]
 
 [nodes.proxy]
 deployments = [{}]
@@ -38,8 +38,8 @@ deployments = [{}]
 name = "proxy"
 runner = "python3"
 runner_args = ["proxy.py"]
-inbound = ["client_proxy", "proxy_server"]
-outbound = ["client_proxy", "proxy_server"]
+subscribers = ["client_proxy", "proxy_server"]
+publishers = ["client_proxy", "proxy_server"]
 
 [nodes.server]
 deployments = [{}]
@@ -49,6 +49,6 @@ deployments = [{}]
 name = "server"
 runner = "python3"
 runner_args = ["server.py"]
-inbound = ["proxy_server"]
-outbound = ["proxy_server"]
+subscribers = ["proxy_server"]
+publishers = ["proxy_server"]
 

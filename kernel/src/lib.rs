@@ -211,7 +211,9 @@ impl Kernel {
                 .map_err(|_| KernelError::PollError)?;
             for event in &events {
                 let Token(index) = event.token();
-                router.inbound(index).map_err(KernelError::RouterError)?;
+                router
+                    .receive_write(index)
+                    .map_err(KernelError::RouterError)?;
             }
             // In order to implement a write timeout the kernel needs to hold
             // onto
@@ -219,8 +221,11 @@ impl Kernel {
                 self.requests.iter().zip(self.responses.iter()).enumerate()
             {
                 while requests.try_recv().is_ok() {
-                    let _ =
-                        responses.send(router.outbound(index).map_err(KernelError::RouterError)?);
+                    let _ = responses.send(
+                        router
+                            .deliver_msg(index)
+                            .map_err(KernelError::RouterError)?,
+                    );
                 }
             }
             router.step().map_err(KernelError::RouterError)?;

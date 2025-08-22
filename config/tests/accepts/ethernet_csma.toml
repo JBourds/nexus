@@ -52,6 +52,6 @@ deployments = [
 name = "main"
 runner = "python3"
 runner_args = ["node.py"]
-outbound = ["ethernet"]
-inbound = ["ethernet"]
+publishers = ["ethernet"]
+subscribers = ["ethernet"]
 

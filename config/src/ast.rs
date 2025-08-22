@@ -141,8 +141,8 @@ pub struct Node {
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
-    pub outbound: HashSet<ChannelHandle>,
-    pub inbound: HashSet<ChannelHandle>,
+    pub publishers: HashSet<ChannelHandle>,
+    pub subscribers: HashSet<ChannelHandle>,
 }
 
 #[derive(Clone, Debug)]

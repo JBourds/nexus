@@ -13,7 +13,7 @@ use crate::types::ChannelHandle;
 #[derive(Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 struct BinaryLogRecord {
     timestep: u64,
-    is_outbound: bool,
+    is_publisher: bool,
     pid: fuse::PID,
     channel: ChannelHandle,
     data: Vec<u8>,
@@ -44,7 +44,7 @@ impl Visit for LogVisitor {
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
         if field.name() == "tx" {
-            self.record.is_outbound = value;
+            self.record.is_publisher = value;
         }
     }
 

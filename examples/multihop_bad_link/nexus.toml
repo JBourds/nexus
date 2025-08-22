@@ -45,8 +45,8 @@ internal_names = ["display"]
 name = "client"
 runner = "python3"
 runner_args = ["client.py"]
-inbound = ["client_proxy", "display"]
-outbound = ["client_proxy", "display"]
+subscribers = ["client_proxy", "display"]
+publishers = ["client_proxy", "display"]
 
 [nodes.proxy]
 deployments = [{}]
@@ -57,8 +57,8 @@ deployments = [{}]
 name = "proxy"
 runner = "python3"
 runner_args = ["proxy.py"]
-inbound = ["client_proxy", "proxy_server"]
-outbound = ["client_proxy", "proxy_server"]
+subscribers = ["client_proxy", "proxy_server"]
+publishers = ["client_proxy", "proxy_server"]
 
 [nodes.server]
 deployments = [{}]
@@ -68,6 +68,6 @@ deployments = [{}]
 name = "server"
 runner = "python3"
 runner_args = ["server.py"]
-inbound = ["proxy_server"]
-outbound = ["proxy_server"]
+subscribers = ["proxy_server"]
+publishers = ["proxy_server"]
 

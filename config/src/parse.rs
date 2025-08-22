@@ -174,6 +174,6 @@ pub struct NodeProtocol {
     pub(super) root: String,
     pub(super) runner: String,
     pub(super) runner_args: Option<Vec<String>>,
-    pub(super) outbound: Option<Vec<ChannelName>>,
-    pub(super) inbound: Option<Vec<ChannelName>>,
+    pub(super) publishers: Option<Vec<ChannelName>>,
+    pub(super) subscribers: Option<Vec<ChannelName>>,
 }

@@ -117,17 +117,17 @@ fn get_fs_channels(
         let pid = process.id();
 
         for channel in protocol
-            .inbound
+            .subscribers
             .iter()
-            .chain(protocol.outbound.iter())
+            .chain(protocol.publishers.iter())
             .collect::<HashSet<&ast::ChannelHandle>>()
             .into_iter()
         {
             let mode = match run_cmd {
                 RunCmd::Simulate => {
                     let file_cmd = match (
-                        protocol.inbound.contains(channel),
-                        protocol.outbound.contains(channel),
+                        protocol.subscribers.contains(channel),
+                        protocol.publishers.contains(channel),
                     ) {
                         (true, true) => O_RDWR,
                         (true, _) => O_RDONLY,

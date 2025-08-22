@@ -598,7 +598,7 @@ impl Node {
         // Check that all internal names were used
         let internal_names_used = protocols
             .values()
-            .flat_map(|p| p.inbound.iter().chain(p.outbound.iter()))
+            .flat_map(|p| p.subscribers.iter().chain(p.publishers.iter()))
             .cloned()
             .collect::<HashSet<_>>();
         let difference = internal_names
@@ -701,8 +701,8 @@ impl NodeProtocol {
             cmd: val.runner,
             args: val.runner_args.unwrap_or_default(),
         };
-        let outbound = val
-            .outbound
+        let publishers = val
+            .publishers
             .unwrap_or_default()
             .into_iter()
             .map(|ch| {
@@ -710,15 +710,15 @@ impl NodeProtocol {
                     Ok(ch.0)
                 } else {
                     bail!(
-                        "Could not find outbound channel \"{}\" in protocol \"{}\"",
+                        "Could not find publishers channel \"{}\" in protocol \"{}\"",
                         ch.0,
                         val.name
                     )
                 }
             })
             .collect::<Result<_>>()?;
-        let inbound = val
-            .inbound
+        let subscribers = val
+            .subscribers
             .unwrap_or_default()
             .into_iter()
             .map(|ch| {
@@ -726,7 +726,7 @@ impl NodeProtocol {
                     Ok(ch.0)
                 } else {
                     bail!(
-                        "Could not find inbound channel \"{}\" in protocol \"{}\"",
+                        "Could not find subscribers channel \"{}\" in protocol \"{}\"",
                         ch.0,
                         val.name
                     )
@@ -737,8 +737,8 @@ impl NodeProtocol {
         Ok(Self {
             root,
             runner,
-            outbound,
-            inbound,
+            publishers,
+            subscribers,
         })
     }
 }

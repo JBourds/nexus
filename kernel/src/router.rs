@@ -98,7 +98,7 @@ impl Router {
             .iter()
             .enumerate()
             .map(|(ch_index, ch)| {
-                ch.inbound
+                ch.subscribers
                     .iter()
                     .flat_map(|node_handle| {
                         handles
@@ -141,9 +141,7 @@ impl Router {
         }
     }
 
-    /// Handle a write request from a file (inbound from the perspective of the
-    /// router).
-    pub fn inbound(&mut self, index: usize) -> Result<(), RouterError> {
+    pub fn receive_write(&mut self, index: usize) -> Result<(), RouterError> {
         let (pid, src_node, channel_handle) = self.handles[index];
         let channel_name = &self.channel_names[channel_handle];
         let channel = &mut self.channels[channel_handle];
@@ -204,9 +202,7 @@ impl Router {
         Ok(())
     }
 
-    /// Handle a read request from a file (outbound from the perspective of the
-    /// router).
-    pub fn outbound(&mut self, index: usize) -> Result<ControlSignal, RouterError> {
+    pub fn deliver_msg(&mut self, index: usize) -> Result<ControlSignal, RouterError> {
         let mailbox = &mut self.mailboxes[index];
         let endpoint = &mut self.endpoints[index];
         let (pid, node_handle, channel_handle) = self.handles[index];

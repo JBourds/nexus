@@ -20,8 +20,8 @@ pub struct Channel {
     pub link: Link,
     #[allow(unused)]
     pub r#type: ChannelType,
-    pub inbound: HashSet<NodeHandle>,
-    pub outbound: HashSet<NodeHandle>,
+    pub subscribers: HashSet<NodeHandle>,
+    pub publishers: HashSet<NodeHandle>,
 }
 
 impl Channel {
@@ -36,18 +36,18 @@ impl Channel {
             .map(|ch| Channel {
                 link: ch.link,
                 r#type: ch.r#type,
-                inbound: HashSet::new(),
-                outbound: HashSet::new(),
+                subscribers: HashSet::new(),
+                publishers: HashSet::new(),
             })
             .chain(internal_channels.into_iter())
             .collect::<Vec<_>>();
         for (node_handle, node) in nodes.iter().enumerate() {
             for protocol in node.protocols.iter() {
-                for channel_index in protocol.inbound.iter().copied() {
-                    channels[channel_index].inbound.insert(node_handle);
+                for channel_index in protocol.subscribers.iter().copied() {
+                    channels[channel_index].subscribers.insert(node_handle);
                 }
-                for channel_index in protocol.outbound.iter().copied() {
-                    channels[channel_index].outbound.insert(node_handle);
+                for channel_index in protocol.publishers.iter().copied() {
+                    channels[channel_index].publishers.insert(node_handle);
                 }
             }
         }
@@ -59,8 +59,8 @@ impl Channel {
         Self {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            inbound: set.clone(),
-            outbound: set,
+            subscribers: set.clone(),
+            publishers: set,
         }
     }
 }
@@ -77,8 +77,8 @@ pub struct Node {
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
-    pub inbound: HashSet<ChannelHandle>,
-    pub outbound: HashSet<ChannelHandle>,
+    pub subscribers: HashSet<ChannelHandle>,
+    pub publishers: HashSet<ChannelHandle>,
 }
 
 impl Node {
@@ -146,13 +146,13 @@ impl NodeProtocol {
                     })
                     .collect::<Result<_, ConversionError>>()
             };
-        let inbound = map_channel_handles(node.inbound)?;
-        let outbound = map_channel_handles(node.outbound)?;
+        let subscribers = map_channel_handles(node.subscribers)?;
+        let publishers = map_channel_handles(node.publishers)?;
         Ok(Self {
             root: node.root,
             runner: node.runner,
-            inbound,
-            outbound,
+            subscribers,
+            publishers,
         })
     }
 }

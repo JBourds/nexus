@@ -21,8 +21,8 @@ deployments = [ {} ]
 name = "client"
 runner = "python3"
 runner_args = ["client.py"]
-outbound = ["direct"]
-inbound = ["direct"]
+publishers = ["direct"]
+subscribers = ["direct"]
 
 
 [nodes.server]
@@ -33,5 +33,5 @@ deployments = [ {} ]
 name = "server"
 runner = "python3"
 runner_args = ["server.py"]
-outbound = ["direct"]
-inbound = ["direct"]
+publishers = ["direct"]
+subscribers = ["direct"]
