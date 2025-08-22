@@ -271,17 +271,66 @@ impl Router {
                     return Ok(ControlSignal::Nothing);
                 }
 
-                if mailbox.len() == 1 {
-                    let msg = mailbox.get(0).unwrap();
-                    let Route { distance, unit, .. } =
-                        self.routes[channel_handle][&msg.src][node_handle];
-                    if let Some(buf) = Self::send_through_channel(
-                        channel,
-                        Cow::from(msg.buf.as_ref()),
-                        distance,
-                        unit,
-                        &mut self.rng,
-                    ) {
+                match mailbox.len().cmp(&1) {
+                    std::cmp::Ordering::Less => Ok(ControlSignal::Nothing),
+                    std::cmp::Ordering::Equal => {
+                        let msg = mailbox.front().unwrap();
+                        let Route { distance, unit, .. } =
+                            self.routes[channel_handle][&msg.src][node_handle];
+                        if let Some(buf) = Self::send_through_channel(
+                            channel,
+                            Cow::from(msg.buf.as_ref()),
+                            distance,
+                            unit,
+                            &mut self.rng,
+                        ) {
+                            match Self::send_msg(
+                                endpoint,
+                                &buf,
+                                pid,
+                                timestep,
+                                channel_handle,
+                                channel_name,
+                            ) {
+                                Ok(_) => Ok(ControlSignal::Exclusive),
+                                Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
+                                Err(e) => Err(RouterError::SendError {
+                                    sender: pid,
+                                    node_name: self.node_names[node_handle].clone(),
+                                    channel_name: self.channel_names[channel_handle].clone(),
+                                    timestep,
+                                    base: Box::new(e),
+                                }),
+                            }
+                        } else {
+                            Ok(ControlSignal::Nothing)
+                        }
+                    }
+                    std::cmp::Ordering::Greater => {
+                        // See what messages reach the requester
+                        let filtered = mailbox.iter().filter_map(|msg| {
+                            let Route { distance, unit, .. } =
+                                self.routes[channel_handle][&msg.src][node_handle];
+                            Self::send_through_channel(
+                                channel,
+                                Cow::from(msg.buf.as_ref()),
+                                distance,
+                                unit,
+                                &mut self.rng,
+                            )
+                        });
+                        // Combine all the signals together
+                        let buf = filtered.fold(
+                            Vec::with_capacity(max_size.get().try_into().unwrap()),
+                            |mut v, msg| {
+                                let smaller_index = std::cmp::min(v.len(), msg.len());
+                                for i in 0..smaller_index {
+                                    v[i] |= msg[i];
+                                }
+                                v.extend_from_slice(&msg[smaller_index..]);
+                                v
+                            },
+                        );
                         match Self::send_msg(
                             endpoint,
                             &buf,
@@ -300,54 +349,7 @@ impl Router {
                                 base: Box::new(e),
                             }),
                         }
-                    } else {
-                        Ok(ControlSignal::Nothing)
                     }
-                } else if mailbox.len() > 1 {
-                    // See what messages reach the requester
-                    let filtered = mailbox.iter().filter_map(|msg| {
-                        let Route { distance, unit, .. } =
-                            self.routes[channel_handle][&msg.src][node_handle];
-                        Self::send_through_channel(
-                            channel,
-                            Cow::from(msg.buf.as_ref()),
-                            distance,
-                            unit,
-                            &mut self.rng,
-                        )
-                    });
-                    // Combine all the signals together
-                    let buf = filtered.fold(
-                        Vec::with_capacity(max_size.get().try_into().unwrap()),
-                        |mut v, msg| {
-                            let smaller_index = std::cmp::min(v.len(), msg.len());
-                            for i in 0..smaller_index {
-                                v[i] |= msg[i];
-                            }
-                            v.extend_from_slice(&msg[smaller_index..]);
-                            v
-                        },
-                    );
-                    match Self::send_msg(
-                        endpoint,
-                        &buf,
-                        pid,
-                        timestep,
-                        channel_handle,
-                        channel_name,
-                    ) {
-                        Ok(_) => Ok(ControlSignal::Exclusive),
-                        Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
-                        Err(e) => Err(RouterError::SendError {
-                            sender: pid,
-                            node_name: self.node_names[node_handle].clone(),
-                            channel_name: self.channel_names[channel_handle].clone(),
-                            timestep,
-                            base: Box::new(e),
-                        }),
-                    }
-                } else {
-                    Ok(ControlSignal::Nothing)
                 }
             }
             ChannelType::Exclusive { .. } => {
