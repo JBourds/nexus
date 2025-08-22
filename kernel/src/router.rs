@@ -406,6 +406,17 @@ impl Router {
     /// placing it in the mailbox.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
+
+        // Clear all old messages
+        for mailbox in self.mailboxes.iter_mut() {
+            while mailbox
+                .front()
+                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < self.timestep))
+            {
+                let _ = mailbox.pop_front();
+            }
+        }
+
         while self
             .queued
             .peek()
@@ -415,12 +426,7 @@ impl Router {
                 return Err(RouterError::StepError);
             };
             let (_, _, channel_index) = self.handles[frame.handle_ptr];
-            // TODO: Better way to make sure we don't count old messages without
-            // requiring a linear operation every timestep on every message
-            let mut mailbox = std::mem::take(&mut self.mailboxes[frame.handle_ptr])
-                .into_iter()
-                .filter(|msg| msg.expiration.is_none_or(|exp| exp.get() >= self.timestep))
-                .collect::<VecDeque<_>>();
+            let mailbox = &mut self.mailboxes[frame.handle_ptr];
 
             // Once the write to a shared channel has finished simulating the
             // link delays, it resolves what should be in the medium
@@ -432,9 +438,8 @@ impl Router {
             {
                 mailbox.push_back(frame.msg);
             } else {
-                warn!("AddressedMsg dropped due to full queue!");
+                warn!("Message dropped due to full queue!");
             }
-            let _ = std::mem::replace(&mut self.mailboxes[frame.handle_ptr], mailbox);
         }
         Ok(())
     }
