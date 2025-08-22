@@ -7,6 +7,7 @@ use crate::{
 use config::ast::{ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position};
 use fuse::{fs::ControlSignal, socket};
 use rand::rngs::StdRng;
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::rc::Rc;
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -205,7 +206,7 @@ impl Router {
                                     );
                                     if let Some(buf) = Self::send_through_channel(
                                         channel,
-                                        recv_buf.clone(),
+                                        Cow::from(&recv_buf),
                                         *distance,
                                         *distance_unit,
                                         &mut self.rng,
@@ -358,13 +359,13 @@ impl Router {
     /// Perform link simulation for:
     /// - dropped packets
     /// - bit errors
-    fn send_through_channel(
+    fn send_through_channel<'a>(
         channel: &Channel,
-        mut buf: Vec<u8>,
+        mut buf: Cow<'a, [u8]>,
         distance: f64,
         distance_unit: DistanceUnit,
         rng: &mut StdRng,
-    ) -> Option<Vec<u8>> {
+    ) -> Option<Cow<'a, [u8]>> {
         let sz: u64 = buf
             .len()
             .try_into()
@@ -384,7 +385,7 @@ impl Router {
         if bit_error_prob != 0.0 {
             let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())
                 .map(|_| unsafe { channel.link.bit_error.sample_unchecked(bit_error_prob, rng) });
-            let _ = flip_bits(&mut buf, flips);
+            let _ = flip_bits(buf.to_mut(), flips);
         }
         Some(buf)
     }
