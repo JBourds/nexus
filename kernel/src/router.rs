@@ -8,6 +8,7 @@ use config::ast::{ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position
 use fuse::{fs::ControlSignal, socket};
 use rand::rngs::StdRng;
 use std::collections::HashMap;
+use std::rc::Rc;
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::VecDeque, num::NonZeroU64, os::unix::net::UnixDatagram};
 use tracing::{Level, debug, event, info, instrument, warn};
@@ -19,7 +20,7 @@ pub type Timestep = u64;
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
 pub(crate) struct Message {
     handle_ptr: usize,
-    buf: Vec<u8>,
+    buf: Rc<[u8]>,
 }
 
 #[derive(Clone, Debug)]
@@ -48,36 +49,13 @@ pub(crate) struct Router {
     endpoints: Vec<UnixDatagram>,
     /// All the unique keys for each channel file.
     handles: Vec<ChannelId>,
-    /// Messages in the "transmitting" stage. Contains the timestep
-    /// the message should be removed from the queue and the message.
-    /// Also contains the timestep the message should be removed from
-    /// the next two queues.
-    transmitting: BinaryHeap<(
-        Reverse<Timestep>,
-        Reverse<Timestep>,
-        Reverse<Timestep>,
-        Option<NonZeroU64>,
-        Message,
-    )>,
-    /// Messages in the "propagating" stage. Contains the timestep
-    /// the message should be removed from the queue and the message.
-    /// Also contains the timestep the message should be removed from
-    /// the processing queue.
-    propagating: BinaryHeap<(
-        Reverse<Timestep>,
-        Reverse<Timestep>,
-        Option<NonZeroU64>,
-        Message,
-    )>,
-    /// Messages in the "processing" stage. Simulates delay after
-    /// reception from destination. Contains the timestep
-    /// the message should be removed from the queue and the message.
-    processing: BinaryHeap<(Reverse<Timestep>, Option<NonZeroU64>, Message)>,
+    /// Messages queued to become active at a specific timestep.
+    queued: BinaryHeap<(Reverse<Timestep>, Option<NonZeroU64>, Message)>,
     /// Per-handle file mailbox with buffered messages ready to be read.
     /// Also contains an optional TTL which marks it as expired if it is in the
     /// past. Uses the niche optimization that the ttl for a channel cannot be
     /// 0, which means we can use an Option<T> here with no overhead!
-    mailboxes: Vec<VecDeque<(Option<NonZeroU64>, Vec<u8>)>>,
+    mailboxes: Vec<VecDeque<(Option<NonZeroU64>, Rc<[u8]>)>>,
     /// Random number generator to use
     rng: StdRng,
 }
@@ -143,9 +121,7 @@ impl Router {
             channel_names,
             routes,
             handles,
-            transmitting: BinaryHeap::new(),
-            propagating: BinaryHeap::new(),
-            processing: BinaryHeap::new(),
+            queued: BinaryHeap::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
             endpoints,
             rng,
@@ -173,31 +149,86 @@ impl Router {
                         format!("{}.{pid}.{channel_name}", self.node_names[src_node]),
                         format_u8_buf(&recv_buf)
                     );
-                    for Route {
-                        handle_ptr,
-                        distance,
-                        unit: distance_unit,
-                    } in self.routes[channel_handle][&src_node].iter()
-                    {
-                        let msg = Message {
-                            handle_ptr: *handle_ptr,
-                            buf: recv_buf.clone(),
-                        };
-                        let dst_node = self.handles[*handle_ptr].1;
-                        if dst_node != src_node || channel.r#type.delivers_to_self() {
-                            debug!(
-                                "Delivering from {} to {}",
-                                &self.node_names[src_node], &self.node_names[dst_node]
-                            );
-                            if let Some(entry) = Self::prepare_message(
-                                channel,
-                                self.timestep,
-                                msg.clone(),
-                                *distance,
-                                *distance_unit,
-                                &mut self.rng,
-                            ) {
-                                self.transmitting.push(entry);
+                    let sz: u64 = recv_buf
+                        .len()
+                        .try_into()
+                        .expect("usize should be able to become a u64");
+                    match channel.r#type {
+                        // Use a "lazy" message where we clone the RC and only
+                        // simulate the link when a read request is made for
+                        // a shared link. The mailbox in this case is used as
+                        // a list of messages which are active at once.
+                        ChannelType::Shared { .. } => {
+                            let buf: Rc<[u8]> = recv_buf.into();
+                            for Route {
+                                handle_ptr,
+                                distance,
+                                unit: distance_unit,
+                            } in self.routes[channel_handle][&src_node].iter()
+                            {
+                                let dst_node = self.handles[*handle_ptr].1;
+                                if dst_node != src_node || channel.r#type.delivers_to_self() {
+                                    debug!(
+                                        "Delivering from {} to {}",
+                                        &self.node_names[src_node], &self.node_names[dst_node]
+                                    );
+                                    let (becomes_active_at, expiration) = Self::message_timesteps(
+                                        channel,
+                                        self.timestep,
+                                        sz,
+                                        *distance,
+                                        *distance_unit,
+                                    );
+                                    let msg = Message {
+                                        handle_ptr: *handle_ptr,
+                                        buf: Rc::clone(&buf),
+                                    };
+                                    self.queued
+                                        .push((Reverse(becomes_active_at), expiration, msg));
+                                }
+                            }
+                        }
+                        // The message must be delivered to every subscriber, so
+                        // make copies of the data now to apply link simulation
+                        ChannelType::Exclusive { .. } => {
+                            for Route {
+                                handle_ptr,
+                                distance,
+                                unit: distance_unit,
+                            } in self.routes[channel_handle][&src_node].iter()
+                            {
+                                let dst_node = self.handles[*handle_ptr].1;
+                                if dst_node != src_node || channel.r#type.delivers_to_self() {
+                                    debug!(
+                                        "Delivering from {} to {}",
+                                        &self.node_names[src_node], &self.node_names[dst_node]
+                                    );
+                                    if let Some(buf) = Self::send_through_channel(
+                                        channel,
+                                        recv_buf.clone(),
+                                        *distance,
+                                        *distance_unit,
+                                        &mut self.rng,
+                                    ) {
+                                        let (becomes_active_at, expiration) =
+                                            Self::message_timesteps(
+                                                channel,
+                                                self.timestep,
+                                                sz,
+                                                *distance,
+                                                *distance_unit,
+                                            );
+                                        let msg = Message {
+                                            handle_ptr: *handle_ptr,
+                                            buf: buf.into(),
+                                        };
+                                        self.queued.push((
+                                            Reverse(becomes_active_at),
+                                            expiration,
+                                            msg,
+                                        ));
+                                    }
+                                }
                             }
                         }
                     }
@@ -294,31 +325,11 @@ impl Router {
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
         while self
-            .transmitting
-            .peek()
-            .is_some_and(|(ts, _, _, _, _)| ts.0 <= self.timestep)
-        {
-            let Some((_, prop_ts, proc_ts, expiration, msg)) = self.transmitting.pop() else {
-                return Err(RouterError::StepError);
-            };
-            self.propagating.push((prop_ts, proc_ts, expiration, msg));
-        }
-        while self
-            .propagating
-            .peek()
-            .is_some_and(|(ts, _, _, _)| ts.0 <= self.timestep)
-        {
-            let Some((_, proc_ts, expiration, msg)) = self.propagating.pop() else {
-                return Err(RouterError::StepError);
-            };
-            self.processing.push((proc_ts, expiration, msg));
-        }
-        while self
-            .processing
+            .queued
             .peek()
             .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
         {
-            let Some((_, expiration, mut msg)) = self.processing.pop() else {
+            let Some((_, expiration, msg)) = self.queued.pop() else {
                 return Err(RouterError::StepError);
             };
             let (_, _, channel_index) = self.handles[msg.handle_ptr];
@@ -332,44 +343,14 @@ impl Router {
             // Once the write to a shared channel has finished simulating the
             // link delays, it resolves what should be in the medium
             let channel = &mut self.channels[channel_index];
-            match &mut channel.r#type {
-                ChannelType::Shared {
-                    buf,
-                    expiration: ch_expiration,
-                    ttl,
-                    ..
-                } => {
-                    // No expiration or it's already passed, cleanly overwrite
-                    if expiration.is_none_or(|exp| exp.get() < self.timestep) {
-                        *buf = std::mem::take(&mut msg.buf);
-                        *ch_expiration =
-                            ttl.map(|ttl| NonZeroU64::new(ttl.get() + self.timestep).unwrap());
-                    } else if expiration.is_some() {
-                        // Overlapping expirations means overlapping signals.
-                        // OR bits of messages together, extend to the length
-                        // of the longest one, update expiration.
-                        for (current, new) in buf.iter_mut().zip(msg.buf.iter()) {
-                            *current |= new;
-                        }
-                        if buf.len() < msg.buf.len() {
-                            buf.extend(&msg.buf[buf.len()..]);
-                        }
-                        // New expiration will always be the longer one since
-                        // they share the same link characteristics.
-                        *ch_expiration = expiration;
-                    }
-                }
-                ChannelType::Exclusive { .. } => {
-                    if channel
-                        .r#type
-                        .max_buffered()
-                        .is_none_or(|n| n.get() as usize > mailbox.len())
-                    {
-                        mailbox.push_back((expiration, msg.buf));
-                    } else {
-                        warn!("Message dropped due to full queue!");
-                    }
-                }
+            if channel
+                .r#type
+                .max_buffered()
+                .is_none_or(|n| n.get() as usize > mailbox.len())
+            {
+                mailbox.push_back((expiration, msg.buf));
+            } else {
+                warn!("Message dropped due to full queue!");
             }
             let _ = std::mem::replace(&mut self.mailboxes[msg.handle_ptr], mailbox);
         }
@@ -381,13 +362,12 @@ impl Router {
     /// - bit errors
     fn send_through_channel(
         channel: &Channel,
-        mut msg: Message,
+        mut buf: Vec<u8>,
         distance: f64,
         distance_unit: DistanceUnit,
         rng: &mut StdRng,
-    ) -> Option<Message> {
-        let sz: u64 = msg
-            .buf
+    ) -> Option<Vec<u8>> {
+        let sz: u64 = buf
             .len()
             .try_into()
             .expect("usize should be able to become a u64");
@@ -404,51 +384,35 @@ impl Router {
                 .bit_error
                 .probability(distance, distance_unit, sz, DataUnit::Byte);
         if bit_error_prob != 0.0 {
-            let flips = (0..msg.buf.len() * usize::try_from(u8::BITS).unwrap())
+            let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())
                 .map(|_| unsafe { channel.link.bit_error.sample_unchecked(bit_error_prob, rng) });
-            let _ = flip_bits(&mut msg.buf, flips);
+            let _ = flip_bits(&mut buf, flips);
         }
-        Some(msg)
+        Some(buf)
     }
 
-    /// Simulate sending the message through the channel and calculate the
-    /// timestamps the message should be moved from one queue to another.
-    fn prepare_message(
+    /// Calculate the timesteps at which the message should be moved to its
+    /// destination and, optionally (if ttl is specified), its expiration.
+    fn message_timesteps(
         channel: &Channel,
         timestep: u64,
-        msg: Message,
+        sz: u64,
         distance: f64,
         distance_unit: DistanceUnit,
-        rng: &mut StdRng,
-    ) -> Option<(
-        Reverse<u64>,
-        Reverse<u64>,
-        Reverse<u64>,
-        Option<NonZeroU64>,
-        Message,
-    )> {
-        let msg = Self::send_through_channel(channel, msg, distance, distance_unit, rng)?;
-        let sz = msg.buf.len().try_into().unwrap();
+    ) -> (Timestep, Option<NonZeroU64>) {
         let unit = DataUnit::Byte;
         let delays = &channel.link.delays;
-        let trans_deadline = timestep + delays.transmission_timesteps_f64(sz, unit).round() as u64;
-        let prop_deadline = trans_deadline
+        let becomes_active_at = timestep
+            + delays.transmission_timesteps_f64(sz, unit).round() as u64
             + delays
                 .propagation_timesteps_f64(distance, distance_unit)
-                .round() as u64;
-        let proc_deadline =
-            prop_deadline + delays.processing_timesteps_f64(sz, unit).round() as u64;
+                .round() as u64
+            + delays.processing_timesteps_f64(sz, unit).round() as u64;
         let expiration = channel
             .r#type
             .ttl()
-            .map(|ttl| ttl.saturating_add(proc_deadline));
-        Some((
-            Reverse(trans_deadline),
-            Reverse(prop_deadline),
-            Reverse(proc_deadline),
-            expiration,
-            msg,
-        ))
+            .map(|ttl| ttl.saturating_add(becomes_active_at));
+        (becomes_active_at, expiration)
     }
 
     #[instrument(skip(socket, data), err)]
