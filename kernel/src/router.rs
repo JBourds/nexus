@@ -238,8 +238,8 @@ impl Router {
                     info!(
                         "{:<30} [RX]: {} <Now: {}, Expiration: {expiration:?}>",
                         format!("{}.{pid}.{channel_name}", self.node_names[node_handle]),
+                        format_u8_buf(&msg),
                         self.timestep,
-                        format_u8_buf(&msg)
                     );
                     if expiration.is_some_and(|exp| exp.get() < self.timestep) {
                         warn!(
