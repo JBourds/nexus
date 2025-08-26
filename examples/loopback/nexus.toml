@@ -1,0 +1,27 @@
+# Simulate a medium where a writer can read their own writes
+
+[params]
+timestep.length = 20
+timestep.unit = "ms"
+timestep.count = 5000 
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.ideal]
+type = { type = "exclusive", read_own_writes = true  }
+
+[nodes]
+
+[nodes.main]
+deployments = [ {} ]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "python3"
+runner_args = ["loopback.py"]
+publishers = ["ideal"]
+subscribers = ["ideal"]
+
