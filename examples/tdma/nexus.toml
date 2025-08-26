@@ -1,0 +1,49 @@
+# Simulate a shared medium using a CSMA protocol over simulated radio.
+
+[params]
+timestep.length = 1
+timestep.unit = "ms"
+timestep.count = 60000 
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.radio]
+link = "ideal"
+type = { type = "shared", ttl = 100, unit = "ms", read_own_writes = true  }
+
+[nodes]
+
+[nodes.gateway]
+deployments = [
+    { position = { point = [0, 0, 0] } }
+]
+
+[[nodes.gateway.protocols]]
+
+name = "main"
+runner = "python3"
+runner_args = ["gateway.py"]
+publishers = ["radio"]
+subscribers = ["radio"]
+
+[nodes.peripheral]
+deployments = [ 
+    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "km" }},
+    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "km" }},
+    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "km" }}, 
+    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "km" }}, 
+    { extra_args = ["5"], position = { point = [0, 1, 0], unit = "km" }},
+    { extra_args = ["6"], position = { point = [1, 0, 0], unit = "km" }}, 
+    { extra_args = ["7"], position = { point = [0, -1, 0], unit = "km" }}, 
+]
+
+[[nodes.peripheral.protocols]]
+
+name = "main"
+runner = "python3"
+runner_args = ["peripheral.py"]
+publishers = ["radio"]
+subscribers = ["radio"]
+
