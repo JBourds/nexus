@@ -9,7 +9,7 @@ use std::{
 
 use config::ast;
 
-use crate::fs::ControlSignal;
+use crate::fs::{ReadSignal, WriteSignal};
 
 pub type Mode = i32;
 pub type PID = u32;
@@ -21,13 +21,13 @@ pub type ChannelId = (PID, ast::ChannelHandle);
 /// happens cleanly on a timestep boundary since the threads spawned by the FS
 /// to service reads/writes will wait for responses.
 #[derive(Debug)]
-pub struct KernelControlFile {
+pub struct KernelControlFile<T> {
     pub request: Receiver<()>,
-    pub ack: Sender<ControlSignal>,
+    pub ack: Sender<T>,
 }
 
-impl KernelControlFile {
-    fn new(request: Receiver<()>, ack: Sender<ControlSignal>) -> Self {
+impl<T> KernelControlFile<T> {
+    fn new(request: Receiver<()>, ack: Sender<T>) -> Self {
         Self { request, ack }
     }
 }
@@ -39,10 +39,10 @@ pub struct KernelChannelHandle {
     pub node: ast::NodeHandle,
     /// Control file for receiving and responsing to read requests issued by the
     /// FS worker thread.
-    pub read: KernelControlFile,
+    pub read: KernelControlFile<ReadSignal>,
     /// Control file for receiving and responsing to write requests issued by
     /// the FS worker thread.
-    pub write: KernelControlFile,
+    pub write: KernelControlFile<WriteSignal>,
     /// Unix datagram socket for actually sending/transmitting data over.
     pub file: UnixDatagram,
 }

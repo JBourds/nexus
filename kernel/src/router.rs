@@ -7,7 +7,7 @@ use crate::{
 use config::ast::{
     ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position, TimeUnit, TimestepConfig,
 };
-use fuse::{fs::ControlSignal, socket};
+use fuse::{fs::ReadSignal, socket};
 use rand::rngs::StdRng;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -268,7 +268,7 @@ impl Router {
         Ok(())
     }
 
-    pub fn deliver_msg(&mut self, index: usize) -> Result<ControlSignal, RouterError> {
+    pub fn deliver_msg(&mut self, index: usize) -> Result<ReadSignal, RouterError> {
         let mailbox = &mut self.mailboxes[index];
         let endpoint = &mut self.endpoints[index];
         let (pid, node_handle, channel_handle) = self.handles[index];
@@ -280,11 +280,11 @@ impl Router {
             // Query the current data present in the medium.
             ChannelType::Shared { max_size, .. } => {
                 if mailbox.is_empty() {
-                    return Ok(ControlSignal::Nothing);
+                    return Ok(ReadSignal::Nothing);
                 }
 
                 match mailbox.len().cmp(&1) {
-                    std::cmp::Ordering::Less => Ok(ControlSignal::Nothing),
+                    std::cmp::Ordering::Less => Ok(ReadSignal::Nothing),
                     std::cmp::Ordering::Equal => {
                         let msg = mailbox.front().unwrap();
                         let Route { distance, unit, .. } =
@@ -304,8 +304,8 @@ impl Router {
                                 channel_handle,
                                 channel_name,
                             ) {
-                                Ok(_) => Ok(ControlSignal::Exclusive),
-                                Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
+                                Ok(_) => Ok(ReadSignal::Exclusive),
+                                Err(e) if e.recoverable() => Ok(ReadSignal::Nothing),
                                 Err(e) => Err(RouterError::SendError {
                                     sender: pid,
                                     node_name: self.node_names[node_handle].clone(),
@@ -315,7 +315,7 @@ impl Router {
                                 }),
                             }
                         } else {
-                            Ok(ControlSignal::Nothing)
+                            Ok(ReadSignal::Nothing)
                         }
                     }
                     std::cmp::Ordering::Greater => {
@@ -351,8 +351,8 @@ impl Router {
                             channel_handle,
                             channel_name,
                         ) {
-                            Ok(_) => Ok(ControlSignal::Exclusive),
-                            Err(e) if e.recoverable() => Ok(ControlSignal::Nothing),
+                            Ok(_) => Ok(ReadSignal::Exclusive),
+                            Err(e) if e.recoverable() => Ok(ReadSignal::Nothing),
                             Err(e) => Err(RouterError::SendError {
                                 sender: pid,
                                 node_name: self.node_names[node_handle].clone(),
@@ -391,7 +391,7 @@ impl Router {
                         channel_name,
                     ) {
                         Ok(_) => {
-                            return Ok(ControlSignal::Exclusive);
+                            return Ok(ReadSignal::Exclusive);
                         }
                         Err(e) if e.recoverable() => {
                             mailbox.push_front(msg);
@@ -408,7 +408,7 @@ impl Router {
                         }
                     }
                 }
-                Ok(ControlSignal::Nothing)
+                Ok(ReadSignal::Nothing)
             }
         }
     }

@@ -4,7 +4,7 @@ pub mod log;
 mod router;
 mod types;
 
-use fuse::fs::ControlSignal;
+use fuse::fs::{ReadSignal, WriteSignal};
 use fuse::{KernelChannelHandle, KernelControlFile};
 use mio::unix::SourceFd;
 
@@ -43,8 +43,8 @@ pub struct Kernel {
     channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
-    readers: Vec<KernelControlFile>,
-    writers: Vec<KernelControlFile>,
+    readers: Vec<KernelControlFile<ReadSignal>>,
+    writers: Vec<KernelControlFile<WriteSignal>>,
     sockets: Vec<UnixDatagram>,
     channel_names: Vec<String>,
     node_names: Vec<String>,
@@ -217,6 +217,11 @@ impl Kernel {
                 }
             }
             router.step().map_err(KernelError::RouterError)?;
+            for (index, writer) in self.writers.iter().enumerate() {
+                while writer.request.try_recv().is_ok() {
+                    let _ = writer.ack.send(WriteSignal::Done);
+                }
+            }
             self.run_handles = Self::check_handles(self.run_handles)?;
 
             if let Ok(elapsed) = start.elapsed() {

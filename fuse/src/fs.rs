@@ -61,13 +61,13 @@ pub enum ChannelMode {
 }
 
 #[derive(Debug)]
-struct ControlFile {
+struct ControlFile<T> {
     request: Sender<()>,
-    ack: Receiver<ControlSignal>,
+    ack: Receiver<T>,
 }
 
-impl ControlFile {
-    fn new(request: Sender<()>, ack: Receiver<ControlSignal>) -> Self {
+impl<T> ControlFile<T> {
+    fn new(request: Sender<()>, ack: Receiver<T>) -> Self {
         Self { request, ack }
     }
 }
@@ -79,18 +79,25 @@ struct NexusFile {
     sock: UnixDatagram,
     max_msg_size: NonZeroU64,
     unread_msg: Option<(usize, Vec<u8>)>,
-    read: ControlFile,
-    write: ControlFile,
+    read: ControlFile<ReadSignal>,
+    write: ControlFile<WriteSignal>,
 }
 
 /// Way for the sender to attach information for the FS to use regarding how
 /// a file's buffer should be handled (ex. Whether it gets saved and reread in
 /// the case of a partial read).
 #[derive(Clone, Copy, Debug)]
-pub enum ControlSignal {
+pub enum ReadSignal {
     Nothing,
     Shared,
     Exclusive,
+}
+
+/// Carry information from the simulation kernel to the FS regarding a
+/// write operation.
+#[derive(Clone, Copy, Debug)]
+pub enum WriteSignal {
+    Done,
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
@@ -118,8 +125,8 @@ impl NexusFile {
     fn new(
         sock: UnixDatagram,
         max_msg_size: NonZeroU64,
-        read: ControlFile,
-        write: ControlFile,
+        read: ControlFile<ReadSignal>,
+        write: ControlFile<WriteSignal>,
         mode: ChannelMode,
         ino: u64,
     ) -> Self {
@@ -417,9 +424,9 @@ impl Filesystem for NexusFs {
             return;
         }
         let allow_incremental_reads = match file.read.ack.recv() {
-            Ok(ControlSignal::Shared) => false,
-            Ok(ControlSignal::Exclusive) => true,
-            Ok(ControlSignal::Nothing) => {
+            Ok(ReadSignal::Shared) => false,
+            Ok(ReadSignal::Exclusive) => true,
+            Ok(ReadSignal::Nothing) => {
                 reply.data(&[]);
                 return;
             }
@@ -501,6 +508,14 @@ impl Filesystem for NexusFs {
             reply.error(EMSGSIZE);
             return;
         };
+
+        // Lockstep synchronization with simulation kernel
+        if file.write.request.send(()).is_err() {
+            reply.error(ESHUTDOWN);
+            return;
+        }
+        let _ = file.write.ack.recv();
+
         reply.written(bytes_written);
     }
 
