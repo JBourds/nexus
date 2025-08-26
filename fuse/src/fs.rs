@@ -1,5 +1,5 @@
 use crate::errors::{ChannelError, FsError};
-use crate::{ChannelId, KernelChannels, PID};
+use crate::{ChannelId, KernelChannelHandle, KernelChannels, KernelControlFile, PID};
 use config::ast;
 use tracing::instrument;
 
@@ -61,14 +61,26 @@ pub enum ChannelMode {
 }
 
 #[derive(Debug)]
+struct ControlFile {
+    request: Sender<()>,
+    ack: Receiver<ControlSignal>,
+}
+
+impl ControlFile {
+    fn new(request: Sender<()>, ack: Receiver<ControlSignal>) -> Self {
+        Self { request, ack }
+    }
+}
+
+#[derive(Debug)]
 struct NexusFile {
     mode: ChannelMode,
     attr: FileAttr,
     sock: UnixDatagram,
     max_msg_size: NonZeroU64,
     unread_msg: Option<(usize, Vec<u8>)>,
-    request: Sender<()>,
-    receive: Receiver<ControlSignal>,
+    read: ControlFile,
+    write: ControlFile,
 }
 
 /// Way for the sender to attach information for the FS to use regarding how
@@ -106,8 +118,8 @@ impl NexusFile {
     fn new(
         sock: UnixDatagram,
         max_msg_size: NonZeroU64,
-        tx: Sender<()>,
-        rx: Receiver<ControlSignal>,
+        read: ControlFile,
+        write: ControlFile,
         mode: ChannelMode,
         ino: u64,
     ) -> Self {
@@ -131,8 +143,8 @@ impl NexusFile {
                 flags: 0,
                 blksize: 512,
             },
-            request: tx,
-            receive: rx,
+            read,
+            write,
             max_msg_size,
             sock,
             unread_msg: None,
@@ -204,19 +216,35 @@ impl NexusFs {
                 next_inode()
             };
 
-            let (fs_tx, kernel_rx) = mpsc::channel();
-            let (kernel_tx, fs_rx) = mpsc::channel();
+            let (fs_read_request, kernel_read_request) = mpsc::channel();
+            let (kernel_read_response, fs_read_response) = mpsc::channel();
+
+            let (fs_write_request, kernel_write_request) = mpsc::channel();
+            let (kernel_write_response, fs_write_response) = mpsc::channel();
+
+            let fs_read = ControlFile::new(fs_read_request, fs_read_response);
+            let fs_write = ControlFile::new(fs_write_request, fs_write_response);
+            let kernel_read = KernelControlFile::new(kernel_read_request, kernel_read_response);
+            let kernel_write = KernelControlFile::new(kernel_write_request, kernel_write_response);
 
             if self
                 .fs_channels
                 .insert(
                     key.clone(),
-                    NexusFile::new(fs_side, max_msg_size, fs_tx, fs_rx, mode, inode),
+                    NexusFile::new(fs_side, max_msg_size, fs_read, fs_write, mode, inode),
                 )
                 .is_some()
                 || self
                     .kernel_links
-                    .insert(key, (node, kernel_tx, kernel_rx, kernel_side))
+                    .insert(
+                        key,
+                        KernelChannelHandle {
+                            node,
+                            read: kernel_read,
+                            write: kernel_write,
+                            file: kernel_side,
+                        },
+                    )
                     .is_some()
             {
                 return Err(ChannelError::DuplicateChannel);
@@ -384,11 +412,11 @@ impl Filesystem for NexusFs {
         }
 
         // Main thread could shutdown in the middle of a request
-        if file.request.send(()).is_err() {
+        if file.read.request.send(()).is_err() {
             reply.error(ESHUTDOWN);
             return;
         }
-        let allow_incremental_reads = match file.receive.recv() {
+        let allow_incremental_reads = match file.read.ack.recv() {
             Ok(ControlSignal::Shared) => false,
             Ok(ControlSignal::Exclusive) => true,
             Ok(ControlSignal::Nothing) => {

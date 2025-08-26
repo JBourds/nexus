@@ -5,6 +5,7 @@ mod router;
 mod types;
 
 use fuse::fs::ControlSignal;
+use fuse::{KernelChannelHandle, KernelControlFile};
 use mio::unix::SourceFd;
 
 use helpers::{make_handles, unzip};
@@ -42,8 +43,8 @@ pub struct Kernel {
     channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
-    responses: Vec<Sender<ControlSignal>>,
-    requests: Vec<Receiver<()>>,
+    readers: Vec<KernelControlFile>,
+    writers: Vec<KernelControlFile>,
     sockets: Vec<UnixDatagram>,
     channel_names: Vec<String>,
     node_names: Vec<String>,
@@ -96,38 +97,28 @@ impl Kernel {
         let channels = Channel::from_ast(channels, internal_channels, &new_nodes)
             .map_err(KernelError::KernelInit)?;
 
-        let lookup_channel = |pid: fuse::PID,
-                              channel_name: String,
-                              node: ast::NodeHandle,
-                              tx: Sender<ControlSignal>,
-                              rx: Receiver<()>,
-                              file: UnixDatagram| {
-            let node_handle = *node_handles.get(&node).unwrap();
+        let lookup_channel = |pid: fuse::PID, channel_name: String, handle: KernelChannelHandle| {
+            let node_handle = *node_handles.get(&handle.node).unwrap();
             internal_node_channel_handles
-                .get(&(node, channel_name.clone()))
+                .get(&(handle.node.clone(), channel_name.clone()))
                 .or(channel_handles.get(&channel_name))
                 .ok_or(KernelError::KernelInit(
                     ConversionError::ChannelHandleConversion(channel_name),
                 ))
-                .map(|channel_handle| ((pid, node_handle, *channel_handle), (tx, rx, file)))
+                .map(|channel_handle| ((pid, node_handle, *channel_handle), handle))
         };
         let files = files
             .into_iter()
-            .map(|((pid, channel_name), (node, tx, rx, file))| {
-                lookup_channel(pid, channel_name, node, tx, rx, file)
-            })
-            .collect::<Result<
-                HashMap<ChannelId, (Sender<ControlSignal>, Receiver<()>, UnixDatagram)>,
-                KernelError,
-            >>()?;
+            .map(|((pid, channel_name), handle)| lookup_channel(pid, channel_name, handle))
+            .collect::<Result<HashMap<ChannelId, KernelChannelHandle>, KernelError>>()?;
         let (handles, files) = unzip(files);
-        let (responses, requests, sockets) = files.into_iter().fold(
+        let (readers, writers, sockets) = files.into_iter().fold(
             (Vec::new(), Vec::new(), Vec::new()),
-            |(mut requests, mut responses, mut sockets), (tx, rx, socket)| {
-                requests.push(tx);
-                responses.push(rx);
-                sockets.push(socket);
-                (requests, responses, sockets)
+            |(mut readers, mut writers, mut sockets), handle| {
+                readers.push(handle.read);
+                writers.push(handle.write);
+                sockets.push(handle.file);
+                (readers, writers, sockets)
             },
         );
 
@@ -138,8 +129,8 @@ impl Kernel {
             channels,
             nodes: new_nodes,
             handles,
-            requests,
-            responses,
+            readers,
+            writers,
             sockets,
             channel_names,
             node_names,
@@ -216,13 +207,9 @@ impl Kernel {
                     .receive_write(index)
                     .map_err(KernelError::RouterError)?;
             }
-            // In order to implement a write timeout the kernel needs to hold
-            // onto
-            for (index, (requests, responses)) in
-                self.requests.iter().zip(self.responses.iter()).enumerate()
-            {
-                while requests.try_recv().is_ok() {
-                    let _ = responses.send(
+            for (index, reader) in self.readers.iter().enumerate() {
+                while reader.request.try_recv().is_ok() {
+                    let _ = reader.ack.send(
                         router
                             .deliver_msg(index)
                             .map_err(KernelError::RouterError)?,
