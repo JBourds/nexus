@@ -351,6 +351,7 @@ impl Router {
                         }
                     }
                     std::cmp::Ordering::Greater => {
+                        warn!("Detected collision on shared medium.");
                         log_info.expiration = mailbox.front().unwrap().expiration;
 
                         // See what messages reach the requester
