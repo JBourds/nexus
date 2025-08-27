@@ -40,7 +40,7 @@ pub struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     ensure!(
-        args.cmd != RunCmd::Playback || args.logs.is_some(),
+        args.cmd != RunCmd::Replay || args.logs.is_some(),
         format!(
             "Must provide a directory for `logs` argument when running command `{}`",
             args.cmd
@@ -136,7 +136,7 @@ fn get_fs_channels(
                     };
                     ChannelMode::try_from(file_cmd)?
                 }
-                RunCmd::Playback => ChannelMode::PlaybackWrites,
+                RunCmd::Replay => ChannelMode::ReplayWrites,
             };
 
             channels.push(NexusChannel {

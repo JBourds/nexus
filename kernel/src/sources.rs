@@ -14,7 +14,7 @@ use crate::{
 
 /// Different sources for write events
 /// * `Simulate`: Take actual writes from processes.
-/// * `Playback`: Use the timesteps writes were logged at from simulation.
+/// * `Replay`: Use the timesteps writes were logged at from simulation.
 pub(crate) enum Source {
     /// Write events come from executing processes.
     Simulated {
@@ -24,7 +24,7 @@ pub(crate) enum Source {
         writers: Writers,
     },
     /// Write events come from a log.
-    Playback {
+    Replay {
         log: PathBuf,
         buf: BufReader<File>,
         readers: Readers,
@@ -56,7 +56,7 @@ impl Source {
         })
     }
 
-    pub fn playback(log: PathBuf, readers: Readers) -> Result<Self, SourceError> {
+    pub fn replay(log: PathBuf, readers: Readers) -> Result<Self, SourceError> {
         unimplemented!()
     }
 
@@ -94,7 +94,7 @@ impl Source {
                 }
                 Ok(())
             }
-            Self::Playback { log, buf, readers } => todo!(),
+            Self::Replay { log, buf, readers } => todo!(),
         }
     }
 }

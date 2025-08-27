@@ -57,7 +57,7 @@ pub enum ChannelMode {
     ReadOnly,
     WriteOnly,
     ReadWrite,
-    PlaybackWrites,
+    ReplayWrites,
 }
 
 #[derive(Debug)]
@@ -364,7 +364,7 @@ impl Filesystem for NexusFs {
         }
         match (file.mode, flags & O_ACCMODE) {
             (ChannelMode::ReadWrite, _)
-            | (ChannelMode::PlaybackWrites, _)
+            | (ChannelMode::ReplayWrites, _)
             | (ChannelMode::ReadOnly, O_RDONLY)
             | (ChannelMode::WriteOnly, O_WRONLY) => {}
             _ => {
@@ -484,7 +484,7 @@ impl Filesystem for NexusFs {
         };
 
         // Drop writes from file, only source of writes will be from the kernel
-        if file.mode == ChannelMode::PlaybackWrites {
+        if file.mode == ChannelMode::ReplayWrites {
             reply.written(data.len() as u32);
             return;
         }

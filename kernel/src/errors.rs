@@ -39,10 +39,10 @@ pub enum SourceError {
     PollError,
     #[error("Error while sending to router.")]
     RouterError(RouterError),
-    #[error("No playback log found at `{0:#?}`")]
-    NonexistentPlaybackLog(PathBuf),
-    #[error("No playback log to simulate writes from.")]
-    NoPlaybackLog,
+    #[error("No replay log found at `{0:#?}`")]
+    NonexistentReplayLog(PathBuf),
+    #[error("No replay log to simulate writes from.")]
+    NoReplayLog,
 }
 
 #[derive(Error, Debug)]
@@ -75,8 +75,8 @@ pub enum RouterError {
     StepError,
     #[error("Failed to create simulator publisher.")]
     SimulatorCreation,
-    #[error("Failed to create playback publisher.")]
-    PlaybackCreation,
+    #[error("Failed to create replay publisher.")]
+    ReplayCreation,
 }
 
 impl RouterError {

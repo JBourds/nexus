@@ -186,14 +186,14 @@ impl Kernel {
     ) -> Result<Source, SourceError> {
         match cmd {
             RunCmd::Simulate => Source::simulated(sockets, readers, writers),
-            RunCmd::Playback => {
+            RunCmd::Replay => {
                 let Some(log) = log else {
-                    return Err(SourceError::NoPlaybackLog);
+                    return Err(SourceError::NoReplayLog);
                 };
                 if !log.exists() {
-                    return Err(SourceError::NonexistentPlaybackLog(log));
+                    return Err(SourceError::NonexistentReplayLog(log));
                 }
-                Source::playback(log, readers)
+                Source::replay(log, readers)
             }
         }
     }
