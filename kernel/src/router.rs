@@ -19,6 +19,10 @@ use tracing::{Level, debug, event, info, instrument, warn};
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
+pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, AddressedMsg)>;
+pub type Mailbox = VecDeque<Msg>;
+pub type ChannelRoutes = HashMap<NodeHandle, Vec<Route>>;
+pub type RoutingTable = Vec<ChannelRoutes>;
 
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
 pub(crate) struct AddressedMsg {
@@ -57,18 +61,18 @@ pub(crate) struct Router {
     channel_names: Vec<String>,
     /// Per-channel vector with the pre-computed route information,
     /// Maps each publisher from the channel to the map of subscribers -> routes.
-    routes: Vec<HashMap<NodeHandle, Vec<Route>>>,
+    routes: RoutingTable,
     /// Actual unix domain sockets being read/written from.
     endpoints: Vec<UnixDatagram>,
     /// All the unique keys for each channel file.
     handles: Vec<ChannelId>,
     /// AddressedMsgs queued to become active at a specific timestep.
-    queued: BinaryHeap<(Reverse<Timestep>, AddressedMsg)>,
+    queued: MessageQueue,
     /// Per-handle file mailbox with buffered messages ready to be read.
     /// Also contains an optional TTL which marks it as expired if it is in the
     /// past. Uses the niche optimization that the ttl for a channel cannot be
     /// 0, which means we can use an Option<T> here with no overhead!
-    mailboxes: Vec<VecDeque<Msg>>,
+    mailboxes: Vec<Mailbox>,
     /// Random number generator to use
     rng: StdRng,
 }
