@@ -173,8 +173,8 @@ impl Source {
                             Err(e) => break Err(SourceError::ReplayLogRead(e)),
                         }
                     }?;
-                    router.step().map_err(SourceError::RouterError)?;
                 }
+                router.step().map_err(SourceError::RouterError)?;
                 for (index, reader) in readers.iter().enumerate() {
                     while reader.request.try_recv().is_ok() {
                         let _ = reader.ack.send(
