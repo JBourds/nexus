@@ -1,3 +1,4 @@
+use bincode::error::DecodeError;
 use std::path::PathBuf;
 use std::{io, process::Output};
 
@@ -39,6 +40,12 @@ pub enum SourceError {
     PollError,
     #[error("Error while sending to router.")]
     RouterError(RouterError),
+    #[error("Error found decoding replay log file: `{0:#?}`")]
+    ReplayLogRead(DecodeError),
+    #[error("Expected the `tx` logs for replay but found `rx` logs.")]
+    InvalidLogType,
+    #[error("Error found opening replay log file: `{0:#?}`")]
+    ReplayLogOpen(io::Error),
     #[error("No replay log found at `{0:#?}`")]
     NonexistentReplayLog(PathBuf),
     #[error("No replay log to simulate writes from.")]
