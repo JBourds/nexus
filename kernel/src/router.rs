@@ -282,6 +282,7 @@ impl Router {
             };
         }
         for msg in messages {
+            event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.as_slice());
             self.post_to_mailboxes(src_node, channel_handle, msg)?;
         }
 
@@ -563,18 +564,12 @@ impl Router {
         channel: ChannelHandle,
         channel_name: &A,
     ) -> Result<usize, RouterError> {
-        match socket.send(data).map_err(|ioerr| {
+        socket.send(data).map_err(|ioerr| {
             RouterError::FileError(SocketError::SocketWriteError {
                 ioerr,
                 channel_name: String::from(channel_name.as_ref()),
             })
-        }) {
-            Ok(n_sent) => {
-                event!(target: "tx", Level::INFO, timestep, channel, node, tx = true, data);
-                Ok(n_sent)
-            }
-            err => err,
-        }
+        })
     }
 
     #[instrument(skip(socket))]
