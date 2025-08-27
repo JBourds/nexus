@@ -57,8 +57,9 @@ fn main() -> Result<()> {
         .with_channels(protocol_channels)?
         .with_logger(tx)
         .mount()?;
-    Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;
+    let summary = Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;
     sess.join();
+    println!("Simulation Summary:\n\n{summary}");
     Ok(())
 }
 
@@ -72,8 +73,11 @@ fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
     let tx = root.join("tx");
     let rx = root.join("rx");
     let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
+        println!("Saving outbound simulation messages to {tx:?}");
+        println!("Saving inbound simulation messages to {rx:?}");
         (Some(make_logfile(tx)?), Some(make_logfile(rx)?))
     } else {
+        println!("Saving inbound simulation messages to {rx:?}");
         (None, Some(make_logfile(rx)?))
     };
     tracing_subscriber::registry()
