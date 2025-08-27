@@ -2,10 +2,10 @@ use chrono::{DateTime, Utc};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::RunHandle;
+use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
-use std::{collections::HashSet, sync::mpsc};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
@@ -56,12 +56,8 @@ fn main() -> Result<()> {
     let run_handles = runner::run(&sim)?;
     let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
 
-    let (tx, _) = mpsc::channel();
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
-    let (sess, kernel_channels) = fs
-        .with_channels(protocol_channels)?
-        .with_logger(tx)
-        .mount()?;
+    let (sess, kernel_channels) = fs.with_channels(protocol_channels)?.mount()?;
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
     let run_handles = Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;

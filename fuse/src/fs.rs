@@ -17,7 +17,7 @@ use std::io;
 use std::num::NonZeroU64;
 use std::os::unix::net::UnixDatagram;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::mpsc::{self, Receiver, SendError, Sender};
+use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -30,8 +30,6 @@ const TTL: Duration = Duration::from_secs(1);
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
-    #[allow(dead_code)]
-    logger: Option<Sender<String>>,
     attr: FileAttr,
     files: Vec<ast::ChannelHandle>,
     fs_channels: HashMap<ChannelId, NexusFile>,
@@ -278,31 +276,13 @@ impl NexusFs {
         while !root.exists() {}
         Ok((sess, kernel_links))
     }
-
-    pub fn with_logger(self, logger: Sender<String>) -> Self {
-        Self {
-            logger: Some(logger),
-            ..self
-        }
-    }
-
-    #[allow(dead_code)]
-    fn log(&self, msg: String) -> Result<(), SendError<String>> {
-        if let Some(logger) = &self.logger {
-            logger.send(msg)
-        } else {
-            Ok(())
-        }
-    }
 }
-
 impl Default for NexusFs {
     fn default() -> Self {
         let root = expand_home(&PathBuf::from("~/nexus"));
         Self {
             root,
             attr: Self::root_attr(),
-            logger: None,
             files: Vec::default(),
             fs_channels: HashMap::default(),
             kernel_links: HashMap::default(),
