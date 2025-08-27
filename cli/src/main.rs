@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use kernel::{self, Kernel};
+use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use std::fs::File;
 use std::path::Path;
@@ -40,12 +40,16 @@ pub struct Args {
 fn main() -> Result<()> {
     let args = Args::parse();
     ensure!(
-        args.cmd != RunCmd::Replay || args.logs.is_some(),
+        !matches!(args.cmd, RunCmd::Replay | RunCmd::Logs) || args.logs.is_some(),
         format!(
             "Must provide a directory for `logs` argument when running command `{}`",
             args.cmd
         )
     );
+    if args.cmd == RunCmd::Logs {
+        Source::print_logs(args.logs.unwrap())?;
+        return Ok(());
+    }
     let sim = config::parse(args.config.into())?;
     setup_logging(&sim.params.root, args.cmd)?;
     let run_handles = runner::run(&sim)?;
@@ -141,6 +145,7 @@ fn get_fs_channels(
                     ChannelMode::try_from(file_cmd)?
                 }
                 RunCmd::Replay => ChannelMode::ReplayWrites,
+                _ => unreachable!(),
             };
 
             channels.push(NexusChannel {

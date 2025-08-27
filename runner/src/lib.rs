@@ -20,6 +20,7 @@ pub struct RunHandle {
 pub enum RunCmd {
     Simulate,
     Replay,
+    Logs,
 }
 
 impl FromStr for RunCmd {
@@ -29,6 +30,7 @@ impl FromStr for RunCmd {
         match s.to_lowercase().as_str() {
             "simulate" => Ok(RunCmd::Simulate),
             "replay" => Ok(RunCmd::Replay),
+            "logs" => Ok(RunCmd::Logs),
             _ => Err(format!("Invalid mode: {}", s)),
         }
     }
@@ -39,6 +41,7 @@ impl Display for RunCmd {
         match self {
             RunCmd::Simulate => write!(f, "simulate"),
             RunCmd::Replay => write!(f, "replay"),
+            RunCmd::Logs => write!(f, "logs"),
         }
     }
 }

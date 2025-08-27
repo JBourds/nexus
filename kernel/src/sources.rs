@@ -70,6 +70,25 @@ impl Source {
         })
     }
 
+    pub fn print_logs(log: impl AsRef<Path>) -> Result<(), SourceError> {
+        let mut src = BufReader::new(File::open(log).map_err(SourceError::ReplayLogOpen)?);
+        loop {
+            let config = config::standard();
+            match bincode::decode_from_reader::<BinaryLogRecord, _, _>(&mut src, config) {
+                Ok(record) => {
+                    println!("{record:?}");
+                }
+                Err(DecodeError::Io { inner, .. })
+                    if inner.kind() == io::ErrorKind::UnexpectedEof =>
+                {
+                    break Ok(());
+                }
+                Err(e) => break Err(SourceError::ReplayLogRead(e)),
+            }
+        }?;
+        Ok(())
+    }
+
     pub(crate) fn poll(
         &mut self,
         router: &mut Router,
