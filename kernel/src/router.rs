@@ -77,6 +77,15 @@ pub(crate) struct Router {
     rng: StdRng,
 }
 
+#[derive(Debug)]
+struct RxLogInfo<'a, A: AsRef<str> + std::fmt::Debug> {
+    timestep: u64,
+    expiration: Option<NonZeroU64>,
+    pid: fuse::PID,
+    node_name: &'a A,
+    channel_name: &'a A,
+}
+
 impl Router {
     /// Build the routing table during initialization.
     #[instrument]
@@ -295,7 +304,15 @@ impl Router {
         let (pid, node_handle, channel_handle) = self.handles[index];
         let channel = &mut self.channels[channel_handle];
         let channel_name = &self.channel_names[channel_handle];
+        let node_name = &self.node_names[node_handle];
         let timestep = self.timestep;
+        let mut log_info = RxLogInfo {
+            timestep,
+            expiration: None,
+            pid,
+            node_name,
+            channel_name,
+        };
 
         match &channel.r#type {
             // Query the current data present in the medium.
@@ -308,6 +325,7 @@ impl Router {
                     std::cmp::Ordering::Less => Ok(ReadSignal::Nothing),
                     std::cmp::Ordering::Equal => {
                         let msg = mailbox.front().unwrap();
+                        log_info.expiration = msg.expiration;
                         let Route { distance, unit, .. } =
                             self.routes[channel_handle][&msg.src][node_handle];
                         if let Some(buf) = Self::send_through_channel(
@@ -317,14 +335,7 @@ impl Router {
                             unit,
                             &mut self.rng,
                         ) {
-                            match Self::send_msg(
-                                endpoint,
-                                &buf,
-                                timestep,
-                                node_handle,
-                                channel_handle,
-                                channel_name,
-                            ) {
+                            match Self::send_msg(endpoint, &buf, &log_info) {
                                 Ok(_) => Ok(ReadSignal::Exclusive),
                                 Err(e) if e.recoverable() => Ok(ReadSignal::Nothing),
                                 Err(e) => Err(RouterError::SendError {
@@ -340,6 +351,8 @@ impl Router {
                         }
                     }
                     std::cmp::Ordering::Greater => {
+                        log_info.expiration = mailbox.front().unwrap().expiration;
+
                         // See what messages reach the requester
                         let filtered = mailbox.iter().filter_map(|msg| {
                             let Route { distance, unit, .. } =
@@ -364,14 +377,7 @@ impl Router {
                                 v
                             },
                         );
-                        match Self::send_msg(
-                            endpoint,
-                            &buf,
-                            timestep,
-                            node_handle,
-                            channel_handle,
-                            channel_name,
-                        ) {
+                        match Self::send_msg(endpoint, &buf, &log_info) {
                             Ok(_) => Ok(ReadSignal::Exclusive),
                             Err(e) if e.recoverable() => Ok(ReadSignal::Nothing),
                             Err(e) => Err(RouterError::SendError {
@@ -388,29 +394,16 @@ impl Router {
             ChannelType::Exclusive { .. } => {
                 // Keep trying to send until we either get an unexpired message or error
                 while let Some(msg) = mailbox.pop_front() {
-                    info!(
-                        "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                        format!("{}.{pid}.{channel_name}", self.node_names[node_handle]),
-                        format_u8_buf(&msg.buf),
-                        self.timestep,
-                        msg.expiration,
-                    );
+                    log_info.expiration = msg.expiration;
                     if msg.expiration.is_some_and(|exp| exp.get() < self.timestep) {
                         warn!(
-                            "AddressedMsg dropped due to timeout (Now: {}, Expiration: {})!",
+                            "Message dropped due to timeout (Now: {}, Expiration: {})!",
                             self.timestep,
                             msg.expiration.unwrap().get()
                         );
                         continue;
                     }
-                    match Self::send_msg(
-                        endpoint,
-                        &msg.buf,
-                        timestep,
-                        node_handle,
-                        channel_handle,
-                        channel_name,
-                    ) {
+                    match Self::send_msg(endpoint, &msg.buf, &log_info) {
                         Ok(_) => {
                             return Ok(ReadSignal::Exclusive);
                         }
@@ -555,19 +548,28 @@ impl Router {
         (becomes_active_at, expiration)
     }
 
-    #[instrument(skip(socket, data), err)]
+    #[instrument(skip_all, err)]
     fn send_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         data: &[u8],
-        timestep: u64,
-        node: NodeHandle,
-        channel: ChannelHandle,
-        channel_name: &A,
+        log: &RxLogInfo<'_, A>,
     ) -> Result<usize, RouterError> {
+        info!(
+            "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+            format!(
+                "{}.{}.{}",
+                log.node_name.as_ref(),
+                log.pid,
+                log.channel_name.as_ref()
+            ),
+            format_u8_buf(data),
+            log.timestep,
+            log.expiration,
+        );
         socket.send(data).map_err(|ioerr| {
             RouterError::FileError(SocketError::SocketWriteError {
                 ioerr,
-                channel_name: String::from(channel_name.as_ref()),
+                channel_name: String::from(log.channel_name.as_ref()),
             })
         })
     }

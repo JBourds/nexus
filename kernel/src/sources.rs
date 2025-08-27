@@ -5,7 +5,6 @@ use std::os::fd::AsRawFd;
 use std::path::Path;
 use std::time::Duration;
 use std::{fs::File, io::BufReader, os::unix::net::UnixDatagram};
-use tracing::info;
 
 use crate::log::BinaryLogRecord;
 use fuse::fs::WriteSignal;
@@ -153,7 +152,6 @@ impl Source {
                             }) => break Err(SourceError::InvalidLogType),
                             // Record scheduled for the future
                             Ok(rec) if rec.timestep > ts => {
-                                info!("Scheduled for the future!: {rec:#?}");
                                 *next_log = Some(rec);
                                 break Ok(());
                             }
