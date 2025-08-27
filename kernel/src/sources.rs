@@ -15,7 +15,7 @@ use crate::{
 /// Different sources for write events
 /// * `Simulate`: Take actual writes from processes.
 /// * `Replay`: Use the timesteps writes were logged at from simulation.
-pub(crate) enum Source {
+pub enum Source {
     /// Write events come from executing processes.
     Simulated {
         poll: Poll,

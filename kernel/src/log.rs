@@ -11,7 +11,7 @@ use tracing_subscriber::layer::{Context, Layer};
 use crate::types::{ChannelHandle, NodeHandle};
 
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
-pub(crate) struct BinaryLogRecord {
+pub struct BinaryLogRecord {
     pub timestep: u64,
     pub is_publisher: bool,
     pub node: NodeHandle,
