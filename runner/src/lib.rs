@@ -7,6 +7,7 @@ use std::{
 pub mod errors;
 use errors::*;
 
+#[derive(Debug)]
 pub struct RunHandle {
     /// Name of the node. Unique identifer within the simulation.
     pub node: ast::NodeHandle,

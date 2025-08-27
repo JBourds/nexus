@@ -430,8 +430,9 @@ impl Filesystem for NexusFs {
                 reply.data(&[]);
                 return;
             }
+            // Kernel has shutdown, exit gracefully.
             Err(_) => {
-                reply.error(ESHUTDOWN);
+                reply.data(&[]);
                 return;
             }
         };
@@ -509,9 +510,9 @@ impl Filesystem for NexusFs {
             return;
         };
 
-        // Lockstep synchronization with simulation kernel
+        // Kernel has shutdown, exit gracefully.
         if file.write.request.send(()).is_err() {
-            reply.error(ESHUTDOWN);
+            reply.written(0);
             return;
         }
         let _ = file.write.ack.recv();

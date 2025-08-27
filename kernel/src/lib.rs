@@ -147,7 +147,7 @@ impl Kernel {
 
     #[instrument(skip_all)]
     #[allow(unused_variables)]
-    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<String, KernelError> {
+    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<Vec<RunHandle>, KernelError> {
         let delta = self.time_delta();
         let Self {
             root,
@@ -203,23 +203,7 @@ impl Kernel {
                 }
             }
         }
-        Ok(Self::make_summary(run_handles))
-    }
-
-    fn make_summary(handles: Vec<RunHandle>) -> String {
-        let mut summaries = Vec::with_capacity(handles.len());
-        // TODO: Figure out how to extract stdout/stderr text here
-        for mut handle in handles {
-            handle.process.kill().expect("Couldn't kill process.");
-            summaries.push(format!(
-                "{}.{}:\nstdout: {:?}\nstderr: {:?}\n",
-                handle.node,
-                handle.protocol,
-                handle.process.stdout.take().expect("Expected handle"),
-                handle.process.stderr.take().expect("Expected handle"),
-            ));
-        }
-        summaries.join("\n")
+        Ok(run_handles)
     }
 
     #[instrument(skip_all)]

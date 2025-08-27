@@ -1,6 +1,7 @@
 use chrono::{DateTime, Utc};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
+use runner::RunHandle;
 use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
@@ -61,10 +62,35 @@ fn main() -> Result<()> {
         .with_channels(protocol_channels)?
         .with_logger(tx)
         .mount()?;
-    let summary = Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;
+    // Need to join fs thread so the other processes don't get stuck
+    // in an uninterruptible sleep state.
+    let run_handles = Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, args.logs)?;
     sess.join();
-    println!("Simulation Summary:\n\n{summary}");
+    println!("Simulation Summary:\n\n{}", summarize(run_handles));
     Ok(())
+}
+
+fn summarize(mut handles: Vec<RunHandle>) -> String {
+    let mut summaries = Vec::with_capacity(handles.len());
+    for handle in handles.iter_mut() {
+        handle.process.kill().expect("Couldn't kill process.");
+    }
+    println!("Waiting for handles to finish.");
+    for mut handle in handles {
+        handle.process.kill().expect("Couldn't kill process.");
+        let output = handle
+            .process
+            .wait_with_output()
+            .expect("Expected process to be completed.");
+        summaries.push(format!(
+            "{}.{}:\nstdout: {:?}\nstderr: {:?}\n",
+            handle.node,
+            handle.protocol,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ));
+    }
+    summaries.join("\n")
 }
 
 fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
