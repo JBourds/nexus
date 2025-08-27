@@ -1,3 +1,4 @@
+use std::path::PathBuf;
 use std::{io, process::Output};
 
 use config::ast;
@@ -18,12 +19,30 @@ pub enum KernelError {
     },
     #[error("Error during message routing `{0:#?}.")]
     RouterError(RouterError),
+    #[error("Error creating message source `{0:#?}.")]
+    SourceError(SourceError),
     #[error("Error encountered when creating file poll.")]
     PollCreation,
     #[error("Error encountered when registering file to poll.")]
     PollRegistration,
     #[error("Error encountered when polling file.")]
     PollError,
+}
+
+#[derive(Error, Debug)]
+pub enum SourceError {
+    #[error("Failed to create source for simulated events.")]
+    SimulatedEvents,
+    #[error("Failed to register file descriptor with poll.")]
+    PollRegistration,
+    #[error("Error polling event sources.")]
+    PollError,
+    #[error("Error while sending to router.")]
+    RouterError(RouterError),
+    #[error("No playback log found at `{0:#?}`")]
+    NonexistentPlaybackLog(PathBuf),
+    #[error("No playback log to simulate writes from.")]
+    NoPlaybackLog,
 }
 
 #[derive(Error, Debug)]
@@ -54,6 +73,10 @@ pub enum RouterError {
     FileError(SocketError),
     #[error("Impossible error encountered during `step` function!")]
     StepError,
+    #[error("Failed to create simulator publisher.")]
+    SimulatorCreation,
+    #[error("Failed to create playback publisher.")]
+    PlaybackCreation,
 }
 
 impl RouterError {

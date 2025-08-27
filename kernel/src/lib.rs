@@ -2,6 +2,7 @@ pub mod errors;
 mod helpers;
 pub mod log;
 mod router;
+mod sources;
 mod types;
 
 use fuse::fs::{ReadSignal, WriteSignal};
@@ -12,7 +13,6 @@ use helpers::{make_handles, unzip};
 use mio::{Events, Interest, Poll, Token};
 use rand::{SeedableRng, rngs::StdRng};
 use std::os::fd::AsRawFd;
-use std::sync::mpsc::{Receiver, Sender};
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -25,15 +25,21 @@ use runner::{RunCmd, RunHandle};
 use tracing::{error, instrument, warn};
 use types::*;
 
-use crate::errors::{ConversionError, KernelError};
+use crate::errors::{ConversionError, KernelError, SourceError};
 use crate::router::Router;
+use crate::sources::Source;
+extern crate tracing;
 
 /// Unique identifier for a channel belonging to a node protocol
 /// - `fuse::PID`: Process identifier (executing node protocol)
 /// - `NodeHandle`: Node the process belongs to.
 /// - `ChannelHandle`: Channel the connection is over.
 pub type ChannelId = (fuse::PID, NodeHandle, ChannelHandle);
-extern crate tracing;
+
+pub type ReadControl = KernelControlFile<ReadSignal>;
+pub type WriteControl = KernelControlFile<WriteSignal>;
+pub type Readers = Vec<ReadControl>;
+pub type Writers = Vec<WriteControl>;
 
 #[allow(unused)]
 pub struct Kernel {
@@ -43,9 +49,9 @@ pub struct Kernel {
     channels: Vec<Channel>,
     nodes: Vec<Node>,
     handles: Vec<ChannelId>,
-    readers: Vec<KernelControlFile<ReadSignal>>,
-    writers: Vec<KernelControlFile<WriteSignal>>,
     sockets: Vec<UnixDatagram>,
+    readers: Readers,
+    writers: Writers,
     channel_names: Vec<String>,
     node_names: Vec<String>,
     run_handles: Vec<RunHandle>,
@@ -128,9 +134,9 @@ impl Kernel {
             timestep: sim.params.timestep,
             channels,
             nodes: new_nodes,
-            handles,
             readers,
             writers,
+            handles,
             sockets,
             channel_names,
             node_names,
@@ -171,58 +177,65 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
-    #[allow(unused_variables)]
-    pub fn run(mut self, cmd: RunCmd, logs: Option<PathBuf>) -> Result<(), KernelError> {
-        let delta = self.time_delta();
-        let mut poll = Poll::new().map_err(|_| KernelError::PollCreation)?;
-        let mut events = Events::with_capacity(self.sockets.len());
-        for (index, sock) in self.sockets.iter().enumerate() {
-            poll.registry()
-                .register(
-                    &mut SourceFd(&sock.as_raw_fd()),
-                    Token(index),
-                    Interest::READABLE,
-                )
-                .map_err(|_| KernelError::PollRegistration)?;
+    fn get_write_source(
+        cmd: RunCmd,
+        sockets: &[UnixDatagram],
+        readers: Readers,
+        writers: Writers,
+        log: Option<PathBuf>,
+    ) -> Result<Source, SourceError> {
+        match cmd {
+            RunCmd::Simulate => Source::simulated(sockets, readers, writers),
+            RunCmd::Playback => {
+                let Some(log) = log else {
+                    return Err(SourceError::NoPlaybackLog);
+                };
+                if !log.exists() {
+                    return Err(SourceError::NonexistentPlaybackLog(log));
+                }
+                Source::playback(log, readers)
+            }
         }
+    }
 
+    #[instrument(skip_all)]
+    #[allow(unused_variables)]
+    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<(), KernelError> {
+        let delta = self.time_delta();
+        let Self {
+            root,
+            rng,
+            timestep,
+            channels,
+            nodes,
+            handles,
+            sockets,
+            readers,
+            writers,
+            channel_names,
+            node_names,
+            mut run_handles,
+        } = self;
+        let mut source = Self::get_write_source(cmd, &sockets, readers, writers, log)
+            .map_err(KernelError::SourceError)?;
         let mut router = Router::new(
-            self.nodes,
-            self.node_names,
-            self.channels,
-            self.channel_names,
-            self.handles,
-            self.sockets,
-            self.timestep,
-            self.rng,
+            nodes,
+            node_names,
+            channels,
+            channel_names,
+            handles,
+            sockets,
+            timestep,
+            rng,
         );
+
         let mut frame_time_exceeded: u64 = 0;
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
-            poll.poll(&mut events, Some(delta))
-                .map_err(|_| KernelError::PollError)?;
-            for event in &events {
-                let Token(index) = event.token();
-                router
-                    .receive_write(index)
-                    .map_err(KernelError::RouterError)?;
-            }
-            for (index, reader) in self.readers.iter().enumerate() {
-                while reader.request.try_recv().is_ok() {
-                    let _ = reader.ack.send(
-                        router
-                            .deliver_msg(index)
-                            .map_err(KernelError::RouterError)?,
-                    );
-                }
-            }
-            router.step().map_err(KernelError::RouterError)?;
-            for (index, writer) in self.writers.iter().enumerate() {
-                while writer.request.try_recv().is_ok() {
-                    let _ = writer.ack.send(WriteSignal::Done);
-                }
-            }
-            self.run_handles = Self::check_handles(self.run_handles)?;
+            source
+                .poll(&mut router, delta)
+                .map_err(KernelError::SourceError)?;
+            run_handles = Self::check_handles(run_handles)?;
 
             if let Ok(elapsed) = start.elapsed() {
                 if elapsed < delta {
