@@ -1,14 +1,19 @@
+use bincode::config;
+use bincode::error::DecodeError;
+use std::io;
 use std::os::fd::AsRawFd;
+use std::path::Path;
 use std::time::Duration;
-use std::{fs::File, io::BufReader, os::unix::net::UnixDatagram, path::PathBuf};
+use std::{fs::File, io::BufReader, os::unix::net::UnixDatagram};
+use tracing::info;
 
-use fuse::KernelControlFile;
-use fuse::fs::{ReadSignal, WriteSignal};
+use crate::log::BinaryLogRecord;
+use fuse::fs::WriteSignal;
 use mio::{Events, Interest, Poll, Token, unix::SourceFd};
 
 use crate::{Readers, Writers};
 use crate::{
-    errors::{RouterError, SourceError},
+    errors::SourceError,
     router::{Router, Timestep},
 };
 
@@ -25,9 +30,9 @@ pub enum Source {
     },
     /// Write events come from a log.
     Replay {
-        log: PathBuf,
-        buf: BufReader<File>,
+        src: BufReader<File>,
         readers: Readers,
+        next_log: Option<BinaryLogRecord>,
     },
 }
 
@@ -56,11 +61,21 @@ impl Source {
         })
     }
 
-    pub fn replay(log: PathBuf, readers: Readers) -> Result<Self, SourceError> {
-        unimplemented!()
+    pub fn replay(log: impl AsRef<Path>, readers: Readers) -> Result<Self, SourceError> {
+        let src = BufReader::new(File::open(log).map_err(SourceError::ReplayLogOpen)?);
+        Ok(Self::Replay {
+            src,
+            readers,
+            next_log: None,
+        })
     }
 
-    pub fn poll(&mut self, router: &mut Router, delta: Duration) -> Result<(), SourceError> {
+    pub(crate) fn poll(
+        &mut self,
+        router: &mut Router,
+        ts: Timestep,
+        delta: Duration,
+    ) -> Result<(), SourceError> {
         match self {
             Self::Simulated {
                 poll,
@@ -77,6 +92,12 @@ impl Source {
                         .receive_write(index)
                         .map_err(SourceError::RouterError)?;
                 }
+                for writer in writers.iter() {
+                    while writer.request.try_recv().is_ok() {
+                        let _ = writer.ack.send(WriteSignal::Done);
+                    }
+                }
+                router.step().map_err(SourceError::RouterError)?;
                 for (index, reader) in readers.iter().enumerate() {
                     while reader.request.try_recv().is_ok() {
                         let _ = reader.ack.send(
@@ -86,15 +107,68 @@ impl Source {
                         );
                     }
                 }
-                router.step().map_err(SourceError::RouterError)?;
-                for (_, writer) in writers.iter().enumerate() {
-                    while writer.request.try_recv().is_ok() {
-                        let _ = writer.ack.send(WriteSignal::Done);
+            }
+            Self::Replay {
+                src,
+                readers,
+                next_log,
+            } => {
+                // Only do this I/O if we either don't know when the next log
+                // is or if we know there are logs ready to be sent.
+                if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
+                    if let Some(Err(e)) = next_log
+                        .take()
+                        .map(|rec| router.post_to_mailboxes(rec.node, rec.channel, rec.data))
+                    {
+                        return Err(SourceError::RouterError(e));
+                    }
+
+                    loop {
+                        let config = config::standard();
+                        match bincode::decode_from_reader::<BinaryLogRecord, _, _>(
+                            &mut *src, config,
+                        ) {
+                            Ok(BinaryLogRecord {
+                                is_publisher: false,
+                                ..
+                            }) => break Err(SourceError::InvalidLogType),
+                            // Record scheduled for the future
+                            Ok(rec) if rec.timestep > ts => {
+                                info!("Scheduled for the future!: {rec:#?}");
+                                *next_log = Some(rec);
+                                break Ok(());
+                            }
+                            Ok(BinaryLogRecord {
+                                node,
+                                channel,
+                                data,
+                                ..
+                            }) => {
+                                if let Err(e) = router.post_to_mailboxes(node, channel, data) {
+                                    break Err(SourceError::RouterError(e));
+                                }
+                            }
+                            Err(DecodeError::Io { inner, .. })
+                                if inner.kind() == io::ErrorKind::UnexpectedEof =>
+                            {
+                                break Ok(());
+                            }
+                            Err(e) => break Err(SourceError::ReplayLogRead(e)),
+                        }
+                    }?;
+                    router.step().map_err(SourceError::RouterError)?;
+                }
+                for (index, reader) in readers.iter().enumerate() {
+                    while reader.request.try_recv().is_ok() {
+                        let _ = reader.ack.send(
+                            router
+                                .deliver_msg(index)
+                                .map_err(SourceError::RouterError)?,
+                        );
                     }
                 }
-                Ok(())
             }
-            Self::Replay { log, buf, readers } => todo!(),
         }
+        Ok(())
     }
 }

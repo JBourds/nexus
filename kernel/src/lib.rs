@@ -2,17 +2,14 @@ pub mod errors;
 mod helpers;
 pub mod log;
 mod router;
-mod sources;
+pub mod sources;
 mod types;
 
 use fuse::fs::{ReadSignal, WriteSignal};
 use fuse::{KernelChannelHandle, KernelControlFile};
-use mio::unix::SourceFd;
 
 use helpers::{make_handles, unzip};
-use mio::{Events, Interest, Poll, Token};
 use rand::{SeedableRng, rngs::StdRng};
-use std::os::fd::AsRawFd;
 use std::{
     path::PathBuf,
     time::{Duration, SystemTime},
@@ -145,6 +142,66 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
+    #[allow(unused_variables)]
+    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<(), KernelError> {
+        let delta = self.time_delta();
+        let Self {
+            root,
+            rng,
+            timestep,
+            channels,
+            nodes,
+            handles,
+            sockets,
+            readers,
+            writers,
+            channel_names,
+            node_names,
+            mut run_handles,
+        } = self;
+        let mut source = Self::get_write_source(cmd, &sockets, readers, writers, log)
+            .map_err(KernelError::SourceError)?;
+        let mut router = Router::new(
+            nodes,
+            node_names,
+            channels,
+            channel_names,
+            handles,
+            sockets,
+            timestep,
+            rng,
+        );
+
+        let mut frame_time_exceeded: u64 = 0;
+        for timestep in 0..self.timestep.count.into() {
+            let start = SystemTime::now();
+            source
+                .poll(&mut router, timestep, delta)
+                .map_err(KernelError::SourceError)?;
+            run_handles = Self::check_handles(run_handles)?;
+
+            if let Ok(elapsed) = start.elapsed() {
+                if elapsed < delta {
+                    std::thread::sleep(delta - elapsed);
+                } else {
+                    frame_time_exceeded <<= 1;
+                    frame_time_exceeded |= 1;
+                    match frame_time_exceeded.count_ones() {
+                        n if n >= 48 => {
+                            warn!(
+                                "{n} out of the last {} frames have exceeded the timestep delta. Consider using a longer timestep.",
+                                u64::BITS
+                            );
+                            frame_time_exceeded = 0;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+        Ok(())
+
+    #[instrument(skip_all)]
     fn check_handles(handles: Vec<RunHandle>) -> Result<Vec<RunHandle>, KernelError> {
         let mut process_error = None;
         let mut good_handles = vec![];
@@ -195,68 +252,8 @@ impl Kernel {
                 }
                 Source::replay(log, readers)
             }
+            _ => unreachable!(),
         }
-    }
-
-    #[instrument(skip_all)]
-    #[allow(unused_variables)]
-    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<(), KernelError> {
-        let delta = self.time_delta();
-        let Self {
-            root,
-            rng,
-            timestep,
-            channels,
-            nodes,
-            handles,
-            sockets,
-            readers,
-            writers,
-            channel_names,
-            node_names,
-            mut run_handles,
-        } = self;
-        let mut source = Self::get_write_source(cmd, &sockets, readers, writers, log)
-            .map_err(KernelError::SourceError)?;
-        let mut router = Router::new(
-            nodes,
-            node_names,
-            channels,
-            channel_names,
-            handles,
-            sockets,
-            timestep,
-            rng,
-        );
-
-        let mut frame_time_exceeded: u64 = 0;
-        for timestep in 0..self.timestep.count.into() {
-            let start = SystemTime::now();
-            source
-                .poll(&mut router, delta)
-                .map_err(KernelError::SourceError)?;
-            run_handles = Self::check_handles(run_handles)?;
-
-            if let Ok(elapsed) = start.elapsed() {
-                if elapsed < delta {
-                    std::thread::sleep(delta - elapsed);
-                } else {
-                    frame_time_exceeded <<= 1;
-                    frame_time_exceeded |= 1;
-                    match frame_time_exceeded.count_ones() {
-                        n if n >= 48 => {
-                            warn!(
-                                "{n} out of the last {} frames have exceeded the timestep delta. Consider using a longer timestep.",
-                                u64::BITS
-                            );
-                            frame_time_exceeded = 0;
-                        }
-                        _ => {}
-                    }
-                }
-            }
-        }
-        Ok(())
     }
 
     fn time_delta(&self) -> Duration {
