@@ -1,6 +1,6 @@
 use bincode::{Decode, Encode, config, encode_into_std_write};
 use std::fs::File;
-use std::io::Write;
+use std::io::{BufWriter, Write};
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -55,10 +55,11 @@ impl Visit for LogVisitor {
     }
 }
 
-pub struct BinaryLogLayer(Option<Mutex<File>>);
+pub struct BinaryLogLayer(Option<Mutex<BufWriter<File>>>);
+
 impl BinaryLogLayer {
     pub fn new(file: Option<File>) -> Self {
-        Self(file.map(Mutex::new))
+        Self(file.map(|f| Mutex::new(BufWriter::new(f))))
     }
 }
 
