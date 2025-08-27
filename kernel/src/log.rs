@@ -1,4 +1,4 @@
-use bincode::{Encode, config, encode_into_std_write};
+use bincode::{Decode, Encode, config, encode_into_std_write};
 use std::fs::File;
 use std::io::Write;
 use std::sync::Mutex;
@@ -8,15 +8,15 @@ use tracing::field::Visit;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::types::ChannelHandle;
+use crate::types::{ChannelHandle, NodeHandle};
 
-#[derive(Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
-struct BinaryLogRecord {
-    timestep: u64,
-    is_publisher: bool,
-    pid: fuse::PID,
-    channel: ChannelHandle,
-    data: Vec<u8>,
+#[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
+pub(crate) struct BinaryLogRecord {
+    pub timestep: u64,
+    pub is_publisher: bool,
+    pub node: NodeHandle,
+    pub channel: ChannelHandle,
+    pub data: Vec<u8>,
 }
 
 #[derive(Debug, Default, PartialEq)]
@@ -35,8 +35,8 @@ impl Visit for LogVisitor {
             "channel" => {
                 self.record.channel = value as usize;
             }
-            "pid" => {
-                self.record.pid = value as u32;
+            "node" => {
+                self.record.node = value as usize;
             }
             _ => {}
         }

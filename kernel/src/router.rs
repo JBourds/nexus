@@ -7,7 +7,7 @@ use crate::{
 use config::ast::{
     ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position, TimeUnit, TimestepConfig,
 };
-use fuse::{fs::ReadSignal, socket};
+use fuse::{errors::SocketError, fs::ReadSignal};
 use rand::rngs::StdRng;
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -148,6 +148,105 @@ impl Router {
         }
     }
 
+    pub fn post_to_mailboxes(
+        &mut self,
+        src_node: NodeHandle,
+        channel_handle: ChannelHandle,
+        msg: Vec<u8>,
+    ) -> Result<(), RouterError> {
+        let sz: u64 = msg
+            .len()
+            .try_into()
+            .expect("usize should be able to become a u64");
+        let channel = &self.channels[channel_handle];
+        let timestep = self.timestep;
+        let ts_config = self.ts_config;
+        match channel.r#type {
+            // Use a "lazy" message where we clone the RC and only
+            // simulate the link when a read request is made for
+            // a shared link. The mailbox in this case is used as
+            // a list of messages which are active at once.
+            ChannelType::Shared { .. } => {
+                let buf: Rc<[u8]> = msg.into();
+                for Route {
+                    handle_ptr,
+                    distance,
+                    unit: distance_unit,
+                } in self.routes[channel_handle][&src_node].iter()
+                {
+                    let dst_node = self.handles[*handle_ptr].1;
+                    if dst_node != src_node || channel.r#type.delivers_to_self() {
+                        debug!(
+                            "Delivering from {} to {}",
+                            &self.node_names[src_node], &self.node_names[dst_node]
+                        );
+                        let (becomes_active_at, expiration) = Self::message_timesteps(
+                            channel,
+                            sz,
+                            ts_config,
+                            timestep,
+                            *distance,
+                            *distance_unit,
+                        );
+                        let msg = AddressedMsg {
+                            handle_ptr: *handle_ptr,
+                            msg: Msg {
+                                src: src_node,
+                                buf: Rc::clone(&buf),
+                                expiration,
+                            },
+                        };
+                        self.queued.push((Reverse(becomes_active_at), msg));
+                    }
+                }
+            }
+            // The message must be delivered to every subscriber, so
+            // make copies of the data now to apply link simulation
+            ChannelType::Exclusive { .. } => {
+                for Route {
+                    handle_ptr,
+                    distance,
+                    unit: distance_unit,
+                } in self.routes[channel_handle][&src_node].iter()
+                {
+                    let dst_node = self.handles[*handle_ptr].1;
+                    if dst_node != src_node || channel.r#type.delivers_to_self() {
+                        debug!(
+                            "Delivering from {} to {}",
+                            &self.node_names[src_node], &self.node_names[dst_node]
+                        );
+                        if let Some(buf) = Self::send_through_channel(
+                            channel,
+                            Cow::from(&msg),
+                            *distance,
+                            *distance_unit,
+                            &mut self.rng,
+                        ) {
+                            let (becomes_active_at, expiration) = Self::message_timesteps(
+                                channel,
+                                sz,
+                                ts_config,
+                                timestep,
+                                *distance,
+                                *distance_unit,
+                            );
+                            let msg = AddressedMsg {
+                                handle_ptr: *handle_ptr,
+                                msg: Msg {
+                                    src: src_node,
+                                    buf: buf.into(),
+                                    expiration,
+                                },
+                            };
+                            self.queued.push((Reverse(becomes_active_at), msg));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
     pub fn receive_write(&mut self, index: usize) -> Result<(), RouterError> {
         let (pid, src_node, channel_handle) = self.handles[index];
         let channel_name = &self.channel_names[channel_handle];
@@ -155,14 +254,14 @@ impl Router {
         let buf_sz = channel.r#type.max_buf_size();
         let endpoint = &mut self.endpoints[index];
 
-        let ts_config = self.ts_config;
         let timestep = self.timestep;
+        let mut messages = vec![];
         loop {
             match Self::recv_msg(
                 endpoint,
                 buf_sz,
-                pid,
-                self.timestep,
+                timestep,
+                src_node,
                 channel_handle,
                 channel_name,
             ) {
@@ -172,94 +271,7 @@ impl Router {
                         format!("{}.{pid}.{channel_name}", self.node_names[src_node]),
                         format_u8_buf(&recv_buf)
                     );
-                    let sz: u64 = recv_buf
-                        .len()
-                        .try_into()
-                        .expect("usize should be able to become a u64");
-                    match channel.r#type {
-                        // Use a "lazy" message where we clone the RC and only
-                        // simulate the link when a read request is made for
-                        // a shared link. The mailbox in this case is used as
-                        // a list of messages which are active at once.
-                        ChannelType::Shared { .. } => {
-                            let buf: Rc<[u8]> = recv_buf.into();
-                            for Route {
-                                handle_ptr,
-                                distance,
-                                unit: distance_unit,
-                            } in self.routes[channel_handle][&src_node].iter()
-                            {
-                                let dst_node = self.handles[*handle_ptr].1;
-                                if dst_node != src_node || channel.r#type.delivers_to_self() {
-                                    debug!(
-                                        "Delivering from {} to {}",
-                                        &self.node_names[src_node], &self.node_names[dst_node]
-                                    );
-                                    let (becomes_active_at, expiration) = Self::message_timesteps(
-                                        channel,
-                                        sz,
-                                        ts_config,
-                                        timestep,
-                                        *distance,
-                                        *distance_unit,
-                                    );
-                                    let msg = AddressedMsg {
-                                        handle_ptr: *handle_ptr,
-                                        msg: Msg {
-                                            src: src_node,
-                                            buf: Rc::clone(&buf),
-                                            expiration,
-                                        },
-                                    };
-                                    self.queued.push((Reverse(becomes_active_at), msg));
-                                }
-                            }
-                        }
-                        // The message must be delivered to every subscriber, so
-                        // make copies of the data now to apply link simulation
-                        ChannelType::Exclusive { .. } => {
-                            for Route {
-                                handle_ptr,
-                                distance,
-                                unit: distance_unit,
-                            } in self.routes[channel_handle][&src_node].iter()
-                            {
-                                let dst_node = self.handles[*handle_ptr].1;
-                                if dst_node != src_node || channel.r#type.delivers_to_self() {
-                                    debug!(
-                                        "Delivering from {} to {}",
-                                        &self.node_names[src_node], &self.node_names[dst_node]
-                                    );
-                                    if let Some(buf) = Self::send_through_channel(
-                                        channel,
-                                        Cow::from(&recv_buf),
-                                        *distance,
-                                        *distance_unit,
-                                        &mut self.rng,
-                                    ) {
-                                        let (becomes_active_at, expiration) =
-                                            Self::message_timesteps(
-                                                channel,
-                                                sz,
-                                                ts_config,
-                                                timestep,
-                                                *distance,
-                                                *distance_unit,
-                                            );
-                                        let msg = AddressedMsg {
-                                            handle_ptr: *handle_ptr,
-                                            msg: Msg {
-                                                src: src_node,
-                                                buf: buf.into(),
-                                                expiration,
-                                            },
-                                        };
-                                        self.queued.push((Reverse(becomes_active_at), msg));
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    messages.push(recv_buf);
                 }
                 Err(e) if e.recoverable() => {
                     break;
@@ -267,8 +279,12 @@ impl Router {
                 Err(e) => {
                     return Err(e);
                 }
-            }
+            };
         }
+        for msg in messages {
+            self.post_to_mailboxes(src_node, channel_handle, msg)?;
+        }
+
         Ok(())
     }
 
@@ -303,8 +319,8 @@ impl Router {
                             match Self::send_msg(
                                 endpoint,
                                 &buf,
-                                pid,
                                 timestep,
+                                node_handle,
                                 channel_handle,
                                 channel_name,
                             ) {
@@ -350,8 +366,8 @@ impl Router {
                         match Self::send_msg(
                             endpoint,
                             &buf,
-                            pid,
                             timestep,
+                            node_handle,
                             channel_handle,
                             channel_name,
                         ) {
@@ -389,8 +405,8 @@ impl Router {
                     match Self::send_msg(
                         endpoint,
                         &msg.buf,
-                        pid,
                         timestep,
+                        node_handle,
                         channel_handle,
                         channel_name,
                     ) {
@@ -542,14 +558,19 @@ impl Router {
     fn send_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         data: &[u8],
-        pid: fuse::PID,
         timestep: u64,
+        node: NodeHandle,
         channel: ChannelHandle,
         channel_name: &A,
     ) -> Result<usize, RouterError> {
-        match socket::send(socket, data, pid, channel_name).map_err(RouterError::FileError) {
+        match socket.send(data).map_err(|ioerr| {
+            RouterError::FileError(SocketError::SocketWriteError {
+                ioerr,
+                channel_name: String::from(channel_name.as_ref()),
+            })
+        }) {
             Ok(n_sent) => {
-                event!(target: "tx", Level::INFO, timestep, channel, pid, tx = true, data);
+                event!(target: "tx", Level::INFO, timestep, channel, node, tx = true, data);
                 Ok(n_sent)
             }
             err => err,
@@ -560,14 +581,19 @@ impl Router {
     fn recv_into<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         buf: &mut Vec<u8>,
-        pid: fuse::PID,
         timestep: u64,
+        node: NodeHandle,
         channel: ChannelHandle,
         channel_name: &A,
     ) -> Result<(), RouterError> {
-        let nread = socket::recv(socket, buf, pid, channel_name).map_err(RouterError::FileError)?;
+        let nread = socket.recv(buf).map_err(|ioerr| {
+            RouterError::FileError(SocketError::SocketReadError {
+                ioerr,
+                channel_name: String::from(channel_name.as_ref()),
+            })
+        })?;
         buf.truncate(nread);
-        event!(target: "rx", Level::INFO, timestep, channel, pid, tx = false, data = buf.as_slice());
+        event!(target: "rx", Level::INFO, timestep, channel, node, tx = false, data = buf.as_slice());
         Ok(())
     }
 
@@ -575,13 +601,13 @@ impl Router {
     fn recv_msg<A: AsRef<str> + std::fmt::Debug>(
         socket: &mut UnixDatagram,
         buf_sz: NonZeroU64,
-        pid: fuse::PID,
         timestep: u64,
+        node: NodeHandle,
         channel: ChannelHandle,
         channel_name: &A,
     ) -> Result<Vec<u8>, RouterError> {
         let mut recv_buf = vec![0; buf_sz.get() as usize];
-        Self::recv_into(socket, &mut recv_buf, pid, timestep, channel, channel_name)
+        Self::recv_into(socket, &mut recv_buf, timestep, node, channel, channel_name)
             .map(|_| recv_buf)
     }
 }

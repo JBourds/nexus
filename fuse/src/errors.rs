@@ -1,7 +1,6 @@
 use std::io;
 use std::path::PathBuf;
 
-use super::PID;
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -24,16 +23,14 @@ pub enum FsError {
 
 #[derive(Error, Debug)]
 pub enum SocketError {
-    #[error("Failed to write socket \"`{channel_name}`\" for pid `{pid}`.\nError: `{ioerr}`")]
+    #[error("Failed to write to channel \"`{channel_name}`\".\nError: `{ioerr}`")]
     SocketWriteError {
         ioerr: io::Error,
-        pid: PID,
         channel_name: String,
     },
-    #[error("Failed to read socket \"`{channel_name}`\" for pid `{pid}`.\nError: `{ioerr}`")]
+    #[error("Failed to read from channel \"`{channel_name}`\".\nError: `{ioerr}`")]
     SocketReadError {
         ioerr: io::Error,
-        pid: PID,
         channel_name: String,
     },
     #[error("Expected to write `{expected}` bytes but wrote `{actual}`")]

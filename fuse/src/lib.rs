@@ -1,6 +1,5 @@
 pub mod errors;
 pub mod fs;
-pub mod socket;
 use std::{
     collections::HashMap,
     os::unix::net::UnixDatagram,
