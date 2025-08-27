@@ -67,7 +67,11 @@ impl Kernel {
         files: fuse::KernelChannels,
         run_handles: Vec<RunHandle>,
     ) -> Result<Self, KernelError> {
-        let (node_names, nodes) = unzip(sim.nodes);
+        // CRUCIAL: Sort nodes by their name lexicographically since we are
+        // not guaranteed a consistent ordering by hash maps
+        let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
+        sorted_nodes.sort_by_key(|(name, _)| name.clone());
+        let (node_names, nodes) = unzip(sorted_nodes);
         let node_handles = make_handles(node_names.clone());
 
         // We need to resolve any internal channels as new channels over an
