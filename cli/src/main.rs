@@ -71,7 +71,6 @@ fn summarize(mut handles: Vec<RunHandle>) -> String {
     for handle in handles.iter_mut() {
         handle.process.kill().expect("Couldn't kill process.");
     }
-    println!("Waiting for handles to finish.");
     for mut handle in handles {
         handle.process.kill().expect("Couldn't kill process.");
         let output = handle
