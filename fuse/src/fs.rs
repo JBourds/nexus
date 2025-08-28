@@ -56,6 +56,7 @@ pub enum ChannelMode {
     WriteOnly,
     ReadWrite,
     ReplayWrites,
+    FuzzWrites,
 }
 
 #[derive(Debug)]
@@ -345,6 +346,7 @@ impl Filesystem for NexusFs {
         match (file.mode, flags & O_ACCMODE) {
             (ChannelMode::ReadWrite, _)
             | (ChannelMode::ReplayWrites, _)
+            | (ChannelMode::FuzzWrites, _)
             | (ChannelMode::ReadOnly, O_RDONLY)
             | (ChannelMode::WriteOnly, O_WRONLY) => {}
             _ => {

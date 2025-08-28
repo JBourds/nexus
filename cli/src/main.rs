@@ -51,6 +51,7 @@ fn main() -> Result<()> {
         Source::print_logs(args.logs.unwrap())?;
         return Ok(());
     }
+
     let sim = config::parse(args.config.into())?;
     setup_logging(&sim.params.root, args.cmd)?;
     let run_handles = runner::run(&sim)?;
@@ -166,6 +167,7 @@ fn get_fs_channels(
                     ChannelMode::try_from(file_cmd)?
                 }
                 RunCmd::Replay => ChannelMode::ReplayWrites,
+                RunCmd::Fuzz => ChannelMode::FuzzWrites,
                 _ => unreachable!(),
             };
 

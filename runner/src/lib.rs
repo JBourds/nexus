@@ -22,6 +22,7 @@ pub enum RunCmd {
     Simulate,
     Replay,
     Logs,
+    Fuzz,
 }
 
 impl FromStr for RunCmd {
@@ -32,6 +33,7 @@ impl FromStr for RunCmd {
             "simulate" => Ok(RunCmd::Simulate),
             "replay" => Ok(RunCmd::Replay),
             "logs" => Ok(RunCmd::Logs),
+            "fuzz" => Ok(RunCmd::Fuzz),
             _ => Err(format!("Invalid mode: {}", s)),
         }
     }
@@ -43,6 +45,7 @@ impl Display for RunCmd {
             RunCmd::Simulate => write!(f, "simulate"),
             RunCmd::Replay => write!(f, "replay"),
             RunCmd::Logs => write!(f, "logs"),
+            RunCmd::Fuzz => write!(f, "fuzz"),
         }
     }
 }
