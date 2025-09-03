@@ -15,14 +15,14 @@ impl DataUnit {
         let case_insensitive_len = val.0.len() - 1;
         val.0[..case_insensitive_len].make_ascii_lowercase();
         let variant = match val.0.as_str() {
-            "bit" | "b" => Self::Bit,
-            "kilobit" | "kb" => Self::Kilobit,
-            "megabit" | "mb" => Self::Megabit,
-            "gigabit" | "gb" => Self::Gigabit,
-            "byte" | "B" => Self::Byte,
-            "kilobyte" | "kB" => Self::Kilobyte,
-            "megabyte" | "mB" => Self::Megabyte,
-            "gigabyte" | "gB" => Self::Gigabyte,
+            "bits" | "bit" | "b" => Self::Bit,
+            "kilobits" | "kilobit" | "kb" => Self::Kilobit,
+            "megabits" | "megabit" | "mb" => Self::Megabit,
+            "gigabits" | "gigabit" | "gb" => Self::Gigabit,
+            "bytes" | "byte" | "B" => Self::Byte,
+            "kilobytes" | "kilobyte" | "kB" => Self::Kilobyte,
+            "megabytes" | "megabyte" | "mB" => Self::Megabyte,
+            "gigabytes" | "gigabyte" | "gB" => Self::Gigabyte,
             s => {
                 bail!("Expected a valid data unit but found \"{s}\"");
             }
