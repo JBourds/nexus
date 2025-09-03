@@ -1,7 +1,8 @@
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
-use std::num::NonZeroU64;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
+use std::rc::Rc;
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
@@ -128,9 +129,31 @@ impl Default for ChannelType {
 
 #[derive(Clone, Debug)]
 pub struct Node {
+    pub resources: Rc<Resources>,
     pub position: Position,
     pub internal_names: Vec<ChannelHandle>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Resources {
+    pub cpu: Cpu,
+    pub mem: Mem,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Cpu {
+    pub cores: Option<NonZeroU64>,
+    /// If this is None, don't apply any rate limiting
+    pub hertz: Option<NonZeroU64>,
+    pub unit: ClockUnit,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Mem {
+    /// If this is None, don't apply a memory limit
+    pub amount: Option<NonZeroU64>,
+    pub unit: DataUnit,
 }
 
 #[derive(Clone, Debug)]
@@ -293,6 +316,14 @@ pub struct Rate {
     pub rate: u64,
     pub data: DataUnit,
     pub time: TimeUnit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ClockUnit {
+    Hertz,
+    Kilohertz,
+    Megahertz,
+    Gigahertz,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -560,6 +591,12 @@ impl Default for Rate {
             data: DataUnit::default(),
             time: TimeUnit::default(),
         }
+    }
+}
+
+impl Default for ClockUnit {
+    fn default() -> Self {
+        Self::Gigahertz
     }
 }
 

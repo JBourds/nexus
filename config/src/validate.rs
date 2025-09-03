@@ -5,12 +5,44 @@ use crate::parse::Deployment;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
 };
 
+impl ClockUnit {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
+        let case_insensitive_len = val.0.len() - 1;
+        val.0[..case_insensitive_len].make_ascii_lowercase();
+        let variant = match val.0.as_str() {
+            "hertz" | "hz" => Self::Hertz,
+            "kilohertz" | "khz" => Self::Kilohertz,
+            "megahertz" | "mhz" => Self::Megahertz,
+            "gigahertz" | "ghz" => Self::Gigahertz,
+            s => {
+                bail!("Expected a clock unit but found \"{s}\"");
+            }
+        };
+        Ok(variant)
+    }
+}
+
 impl DataUnit {
+    fn validate_byte_aligned(mut val: parse::Unit) -> Result<Self> {
+        let case_insensitive_len = val.0.len() - 1;
+        val.0[..case_insensitive_len].make_ascii_lowercase();
+        let variant = match val.0.as_str() {
+            "bytes" | "byte" | "b" => Self::Byte,
+            "kilobytes" | "kilobyte" | "kb" => Self::Kilobyte,
+            "megabytes" | "megabyte" | "mb" => Self::Megabyte,
+            "gigabytes" | "gigabyte" | "gb" => Self::Gigabyte,
+            s => {
+                bail!("Expected a valid data unit aligned to bytes but found \"{s}\"");
+            }
+        };
+        Ok(variant)
+    }
     fn validate(mut val: parse::Unit) -> Result<Self> {
         let case_insensitive_len = val.0.len() - 1;
         val.0[..case_insensitive_len].make_ascii_lowercase();
@@ -289,6 +321,36 @@ impl Simulation {
     }
 }
 
+impl Cpu {
+    fn new(cores: Option<NonZeroU64>, hertz: Option<NonZeroU64>, unit: ClockUnit) -> Self {
+        Self { cores, unit, hertz }
+    }
+}
+
+impl Mem {
+    fn new(amount: Option<NonZeroU64>, unit: DataUnit) -> Self {
+        Self { amount, unit }
+    }
+}
+
+impl Resources {
+    fn validate(val: parse::Resources) -> Result<Self> {
+        let clock_units = val
+            .clock_units
+            .map(ClockUnit::validate)
+            .unwrap_or(Ok(ClockUnit::default()))
+            .context("Failed to validate clock rate. Please provide in hz, khz, mhz, or ghz.")?;
+        let ram_units = val
+            .ram_units
+            .map(DataUnit::validate_byte_aligned)
+            .unwrap_or(Ok(DataUnit::default()))
+            .context("Failed to validate ram units.")?;
+        let cpu = Cpu::new(val.cores, val.clock_rate, clock_units);
+        let mem = Mem::new(val.ram, ram_units);
+        Ok(Self { cpu, mem })
+    }
+}
+
 impl TimestepConfig {
     pub(crate) const DEFAULT_TIMESTEP_LEN: NonZeroU64 = NonZeroU64::new(1).unwrap();
     pub(crate) const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
@@ -551,6 +613,13 @@ impl Node {
         val: parse::Node,
         channel_handles: &HashSet<ChannelHandle>,
     ) -> Result<Vec<Self>> {
+        let resources = Rc::new(
+            val.resources
+                .map(Resources::validate)
+                .unwrap_or(Ok(Resources::default()))
+                .context("Failed to validate node resource allocation.")?,
+        );
+
         // No duplicate internal names
         let mut internal_names = HashSet::new();
         if let Some(names) = val.internal_names {
@@ -638,6 +707,7 @@ impl Node {
                 .unwrap_or(Ok(Position::default()))
                 .context("Failed to validate node coordinates.")?;
             nodes.push(Node {
+                resources: Rc::clone(&resources),
                 position,
                 internal_names: internal_names.clone().into_iter().collect(),
                 protocols,

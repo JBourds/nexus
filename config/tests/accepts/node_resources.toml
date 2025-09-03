@@ -1,0 +1,64 @@
+# Simulate different types of nodes provisioned with
+# various amounts of resources.
+
+[params]
+timestep.length = 1          
+timestep.unit = "ms"
+timestep.count = 10000        
+seed = 42                       
+root = "~/simulations"  
+
+[channels]
+
+[channels.ideal]
+link = "ideal"
+
+
+[nodes]
+
+[nodes.mayfly]
+
+deployments = [ 
+    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
+    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
+    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
+    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
+]
+
+[nodes.mayfly.resources]
+clock_rate = 16
+clock_units = "mhz"
+cores = 1
+ram = 8
+ram_units = "kilobytes"
+
+[[nodes.mayfly.protocols]]
+
+name = "main"
+runner = "make"
+publishers = ["ideal"]
+subscribers = ["ideal"]
+
+[nodes.aura]
+
+deployments = [ 
+    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
+    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
+    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
+    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
+]
+
+[nodes.aura.resources]
+clock_rate = 16
+clock_units = "megahertz"
+cores = 1
+ram = 8
+ram_units = "kb"
+
+[[nodes.aura.protocols]]
+
+name = "main"
+runner = "make"
+publishers = ["ideal"]
+subscribers = ["ideal"]
+
