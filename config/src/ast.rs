@@ -565,7 +565,7 @@ impl Default for Rate {
 
 impl Default for DataUnit {
     fn default() -> Self {
-        Self::Bit
+        Self::Byte
     }
 }
 
