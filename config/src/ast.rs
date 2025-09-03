@@ -588,7 +588,7 @@ mod tests {
     #[test]
     fn delay_calculator() {
         let ts_config = TimestepConfig {
-            length: 1,
+            length: NonZeroU64::new(1).unwrap(),
             unit: TimeUnit::Seconds,
             count: NonZeroU64::new(1000000).unwrap(),
         };
