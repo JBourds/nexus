@@ -161,7 +161,18 @@ pub struct Coordinate {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct Resources {
+    pub(super) clock_rate: Option<NonZeroU64>,
+    pub(super) cores: Option<NonZeroU64>,
+    pub(super) clock_units: Option<Unit>,
+    pub(super) ram: Option<NonZeroU64>,
+    pub(super) ram_units: Option<Unit>,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Node {
+    pub(super) resources: Option<Resources>,
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
     pub(super) protocols: Option<Vec<NodeProtocol>>,
