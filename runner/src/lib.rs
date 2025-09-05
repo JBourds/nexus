@@ -1,10 +1,12 @@
-use config::ast;
+use config::ast::{self, Node, Resources};
 use std::{
     fmt::Display,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
-    path::PathBuf,
+    num::NonZeroU64,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
+    rc::Rc,
     str::FromStr,
 };
 pub mod errors;
@@ -67,8 +69,7 @@ fn setup_managed_cgroup() -> PathBuf {
     ));
 
     let kernel_cgroup_path = cgroup_path.join("kernel");
-    let node_cgroup_path = kernel_cgroup_path.join("nodes");
-    fs::create_dir_all(&node_cgroup_path).unwrap();
+    fs::create_dir(&kernel_cgroup_path).unwrap();
 
     let mut kernel_cgroup_procs = OpenOptions::new()
         .write(true)
@@ -78,7 +79,23 @@ fn setup_managed_cgroup() -> PathBuf {
         .write(pid.to_string().as_bytes())
         .unwrap();
 
-    node_cgroup_path
+    cgroup_path
+}
+
+fn make_node_cgroup(parent: &Path, name: &str) -> PathBuf {
+    let new_cgroup = parent.join(name);
+    fs::create_dir(&new_cgroup).unwrap();
+    new_cgroup
+}
+
+fn make_protocol_cgroup(
+    node_cgroup: &Path,
+    name: &str,
+    resources: impl AsRef<Resources>,
+) -> PathBuf {
+    let new_cgroup = node_cgroup.join(name);
+    fs::create_dir(&new_cgroup).unwrap();
+    new_cgroup
 }
 
 /// Execute all the protocols on every node in their own process.
@@ -87,7 +104,14 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
     let mut processes = vec![];
     let node_cgroups = setup_managed_cgroup();
     for (node_name, node) in &sim.nodes {
+        let root_cgroup = make_node_cgroup(&node_cgroups, node_name);
         for (protocol_name, protocol) in &node.protocols {
+            let cgroup =
+                make_protocol_cgroup(&root_cgroup, protocol_name, Rc::clone(&node.resources));
+            let mut cgroup_file = OpenOptions::new()
+                .write(true)
+                .open(cgroup.join("cgroup.procs"))
+                .unwrap();
             let process = Command::new(protocol.runner.cmd.as_str())
                 .current_dir(protocol.root.as_path())
                 .stdout(Stdio::piped())
@@ -96,6 +120,10 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
                 .args(protocol.runner.args.as_slice())
                 .spawn()
                 .expect("Failed to execute process");
+            let _ = cgroup_file
+                .write(process.id().to_string().as_bytes())
+                .unwrap();
+
             processes.push(RunHandle {
                 node: node_name.clone(),
                 protocol: protocol_name.clone(),
