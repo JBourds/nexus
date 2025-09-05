@@ -478,14 +478,25 @@ impl DataUnit {
 
     pub fn lshifts(&self) -> usize {
         match self {
-            DataUnit::Bit => 0,
-            DataUnit::Kilobit => 10,
-            DataUnit::Megabit => 20,
-            DataUnit::Gigabit => 30,
-            DataUnit::Byte => 3,
-            DataUnit::Kilobyte => 13,
-            DataUnit::Megabyte => 23,
-            DataUnit::Gigabyte => 33,
+            Self::Bit => 0,
+            Self::Kilobit => 10,
+            Self::Megabit => 20,
+            Self::Gigabit => 30,
+            Self::Byte => 3,
+            Self::Kilobyte => 13,
+            Self::Megabyte => 23,
+            Self::Gigabyte => 33,
+        }
+    }
+}
+
+impl ClockUnit {
+    pub fn lshifts(&self) -> usize {
+        match self {
+            Self::Hertz => 0,
+            Self::Kilohertz => 10,
+            Self::Megahertz => 20,
+            Self::Gigahertz => 30,
         }
     }
 }
@@ -504,10 +515,10 @@ impl TimeUnit {
 
     pub fn power(&self) -> usize {
         match self {
-            TimeUnit::Seconds => 0,
-            TimeUnit::Milliseconds => 3,
-            TimeUnit::Microseconds => 6,
-            TimeUnit::Nanoseconds => 9,
+            Self::Seconds => 0,
+            Self::Milliseconds => 3,
+            Self::Microseconds => 6,
+            Self::Nanoseconds => 9,
         }
     }
 }
@@ -526,10 +537,10 @@ impl DistanceUnit {
 
     pub fn power(&self) -> usize {
         match self {
-            DistanceUnit::Millimeters => 0,
-            DistanceUnit::Centimeters => 2,
-            DistanceUnit::Meters => 4,
-            DistanceUnit::Kilometers => 7,
+            Self::Millimeters => 0,
+            Self::Centimeters => 2,
+            Self::Meters => 4,
+            Self::Kilometers => 7,
         }
     }
 }
