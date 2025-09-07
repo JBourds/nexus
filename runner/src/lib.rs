@@ -148,6 +148,12 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
             });
         }
     }
+    let _ = OpenOptions::new()
+        .write(true)
+        .open(node_cgroups.join("cgroup.freeze"))
+        .unwrap()
+        .write("0".as_bytes())
+        .unwrap();
 
     Ok(processes)
 }
