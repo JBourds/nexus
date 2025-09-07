@@ -5,4 +5,5 @@ edition = "2024"
 
 [dependencies]
 config = { path = "../config" }
+sysinfo = "0.36.1"
 thiserror = { workspace = true }
