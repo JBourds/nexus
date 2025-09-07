@@ -93,9 +93,15 @@ fn setup_managed_cgroup() -> PathBuf {
     cgroup_path
 }
 
-fn make_node_cgroup(parent: &Path, name: &str) -> PathBuf {
+fn make_node_cgroup(parent: &Path, name: &str, resources: &Resources) -> PathBuf {
     let new_cgroup = parent.join(name);
     fs::create_dir(&new_cgroup).unwrap();
+    let _ = OpenOptions::new()
+        .write(true)
+        .open(new_cgroup.join("cgroup.subtree_control"))
+        .unwrap()
+        .write("+cpu +memory".as_bytes())
+        .unwrap();
     new_cgroup
 }
 
@@ -115,7 +121,7 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
     let mut processes = vec![];
     let node_cgroups = setup_managed_cgroup();
     for (node_name, node) in &sim.nodes {
-        let root_cgroup = make_node_cgroup(&node_cgroups, node_name);
+        let root_cgroup = make_node_cgroup(&node_cgroups, node_name, &node.resources);
         for (protocol_name, protocol) in &node.protocols {
             let cgroup =
                 make_protocol_cgroup(&root_cgroup, protocol_name, Rc::clone(&node.resources));
