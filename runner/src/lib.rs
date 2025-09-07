@@ -71,12 +71,23 @@ fn setup_managed_cgroup() -> PathBuf {
     let kernel_cgroup_path = cgroup_path.join("kernel");
     fs::create_dir(&kernel_cgroup_path).unwrap();
 
-    let mut kernel_cgroup_procs = OpenOptions::new()
+    let _ = OpenOptions::new()
         .write(true)
         .open(kernel_cgroup_path.join("cgroup.procs"))
-        .unwrap();
-    let _ = kernel_cgroup_procs
+        .unwrap()
         .write(pid.to_string().as_bytes())
+        .unwrap();
+    let _ = OpenOptions::new()
+        .write(true)
+        .open(cgroup_path.join("cgroup.subtree_control"))
+        .unwrap()
+        .write("+cpu +memory".as_bytes())
+        .unwrap();
+    let _ = OpenOptions::new()
+        .write(true)
+        .open(cgroup_path.join("cgroup.freeze"))
+        .unwrap()
+        .write("1".as_bytes())
         .unwrap();
 
     cgroup_path
