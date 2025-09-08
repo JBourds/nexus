@@ -7,6 +7,19 @@ pub type Frequency = u64;
 pub type CpuNum = usize;
 
 #[derive(Debug, Default, Clone)]
+pub struct Assignment {
+    /// cgroup file: `cpuset.cpus`
+    pub set: Cpuset,
+    /// cgroup file: `cpu.max`
+    pub bandwidth: u64,
+    pub period: u64,
+}
+
+impl Assignment {
+    const PERIOD: u64 = 10_000_000;
+}
+
+#[derive(Debug, Default, Clone)]
 pub struct Cpuset(String);
 impl Cpuset {
     fn from_cpus(cpus: &[usize]) -> Cpuset {
@@ -45,17 +58,24 @@ impl CpuAssignment {
     }
 
     /// Given a required number of clock cycles, assign it to a set of
-    pub fn assign(&mut self, required: Frequency) -> Cpuset {
+    pub fn assign(&mut self, required: Frequency) -> Option<Assignment> {
         if let Some((key, available)) = self
             .available
             .iter_mut()
             .filter(|(_, available)| **available >= required)
             .max_by_key(|(_, available)| **available)
         {
+            let ratio = required as f64 / *available as f64;
+            let bandwidth = (ratio * Assignment::PERIOD as f64) as u64;
             *available -= required;
-            Cpuset::from_cpus(&self.cpusets[key])
+
+            Some(Assignment {
+                set: Cpuset::from_cpus(&self.cpusets[key]),
+                bandwidth,
+                period: Assignment::PERIOD,
+            })
         } else {
-            Cpuset::default()
+            None
         }
     }
 }
@@ -106,44 +126,55 @@ mod tests {
     #[test]
     fn assignments() {
         const GHZ: u64 = 1 << 30;
-        let cpusets: HashMap<_, _> = [
-            (5 * GHZ, vec![0, 1]),
-            (4 * GHZ, vec![2, 3]),
-            (3 * GHZ, vec![4, 5]),
-        ]
-        .into_iter()
-        .collect();
-        let available: HashMap<_, _> = cpusets
-            .iter()
-            .map(|(freq, cpus)| (*freq, *freq * cpus.len() as u64))
+        // Make sure this is deterministic and deson't rely on hash map order
+        for _ in 0..100 {
+            let cpusets: HashMap<_, _> = [
+                (5 * GHZ, vec![0, 1]),
+                (4 * GHZ, vec![2, 3]),
+                (3 * GHZ, vec![4, 5]),
+            ]
+            .into_iter()
             .collect();
-        let mut assignments = CpuAssignment { cpusets, available };
-        let test = [
-            // Allocation goes to the greatest available
-            (1 * GHZ, "0,1".to_string()),
-            // Edge case - make sure we still get allocation
-            (1 * GHZ - 1, "0,1".to_string()),
-            (3, "0,1".to_string()),
-            // Next allocation goes to next highest cpuset
-            (1, "2,3".to_string()),
-            (2 * GHZ, "2,3".to_string()),
-            // This cpuset is back to largest, exhaust it
-            (8 * GHZ - 2, "0,1".to_string()),
-            // Slowest CPUs now have the most availability, get it to have one
-            // less than 2,3
-            (2, "4,5".to_string()),
-            // Exhaust remaining capacities
-            (6 * GHZ - 1, "2,3".to_string()),
-            (6 * GHZ - 2, "4,5".to_string()),
-            // Make sure no set is obtained
-            (1, "".to_string()),
-        ];
-        for (input, expected) in test {
-            let cpuset = assignments.assign(input);
-            assert_eq!(
-                expected, cpuset.0,
-                "Made assignment for {input}Hz and expected {expected} but got {cpuset}"
-            );
+            let available: HashMap<_, _> = cpusets
+                .iter()
+                .map(|(freq, cpus)| (*freq, *freq * cpus.len() as u64))
+                .collect();
+            let mut assignments = CpuAssignment { cpusets, available };
+            let test = [
+                // Allocation goes to the greatest available
+                (1 * GHZ, "0,1".to_string()),
+                // Edge case - make sure we still get allocation
+                (1 * GHZ - 1, "0,1".to_string()),
+                (3, "0,1".to_string()),
+                // Next allocation goes to next highest cpuset
+                (1, "2,3".to_string()),
+                (2 * GHZ, "2,3".to_string()),
+                // This cpuset is back to largest, exhaust it
+                (8 * GHZ - 2, "0,1".to_string()),
+                // Slowest CPUs now have the most availability, get it to have one
+                // less than 2,3
+                (2, "4,5".to_string()),
+                // Exhaust remaining capacities
+                (6 * GHZ - 1, "2,3".to_string()),
+                (6 * GHZ - 2, "4,5".to_string()),
+                // Make sure no set is obtained
+                (1, "".to_string()),
+            ];
+            for (input, expected) in test {
+                if expected.is_empty() {
+                    assert!(
+                        assignments.assign(input).is_none(),
+                        "Expected to fail creating an assignment for {input}"
+                    );
+                } else {
+                    let assignment = assignments.assign(input).unwrap();
+                    assert_eq!(
+                        expected, assignment.set.0,
+                        "Made assignment for {input}Hz and expected {expected} but got {}",
+                        assignment.set
+                    );
+                }
+            }
         }
     }
 }
