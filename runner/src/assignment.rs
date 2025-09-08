@@ -17,6 +17,10 @@ pub struct Assignment {
 
 impl Assignment {
     const PERIOD: u64 = 10_000_000;
+    pub fn split_into(self, ways: u64) -> Self {
+        let bandwidth = self.bandwidth / ways;
+        Self { bandwidth, ..self }
+    }
 }
 
 #[derive(Debug, Default, Clone)]
