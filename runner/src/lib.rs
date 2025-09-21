@@ -83,12 +83,6 @@ fn setup_managed_cgroup() -> PathBuf {
         .unwrap()
         .write("+cpu +memory".as_bytes())
         .unwrap();
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(cgroup_path.join("cgroup.freeze"))
-        .unwrap()
-        .write("1".as_bytes())
-        .unwrap();
 
     cgroup_path
 }
@@ -148,12 +142,6 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
             });
         }
     }
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(node_cgroups.join("cgroup.freeze"))
-        .unwrap()
-        .write("0".as_bytes())
-        .unwrap();
 
     Ok(processes)
 }
