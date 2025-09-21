@@ -23,25 +23,11 @@ impl Assignment {
         let bandwidth = self.bandwidth / ways;
         Self { bandwidth, ..self }
     }
-
-    pub fn start(&self, cmd: &str, at: &Path, args: &[String]) -> io::Result<Child> {
-        let taskset_args = ["--cpu-list", self.set.0.as_str(), cmd];
-        Command::new("taskset")
-            .current_dir(at)
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
-            .stdin(Stdio::null())
-            .args(
-                taskset_args
-                    .into_iter()
-                    .chain(args.iter().map(String::as_str)),
-            )
-            .spawn()
-    }
 }
 
 #[derive(Debug, Default, Clone)]
 pub struct Cpuset(String);
+
 impl Cpuset {
     fn from_cpus(cpus: &[usize]) -> Cpuset {
         let mut s = String::new();
@@ -53,6 +39,10 @@ impl Cpuset {
             s.pop().unwrap();
         }
         Cpuset(s)
+    }
+
+    pub(crate) fn cpu_list(&self) -> &str {
+        &self.0
     }
 }
 

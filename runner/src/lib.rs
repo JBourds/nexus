@@ -1,10 +1,10 @@
-use config::ast::{self};
+use config::ast::{self, NodeProtocol};
 use std::{
     fmt::Display,
     fs::OpenOptions,
-    io::Write,
+    io::{self, Write},
     num::NonZeroU64,
-    path::PathBuf,
+    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     str::FromStr,
 };
@@ -14,9 +14,13 @@ pub mod errors;
 use errors::*;
 
 use crate::{
-    assignment::CpuAssignment,
+    assignment::{Assignment, CpuAssignment},
     cgroups::{node_cgroup, protocol_cgroup, simulation_cgroup},
 };
+
+const BASH: &str = "bash";
+const ECHO: &str = "echo";
+const TASKSET: &str = "taskset";
 
 #[derive(Debug)]
 pub struct RunHandle {
@@ -61,6 +65,31 @@ impl Display for RunCmd {
     }
 }
 
+/// Ensures two things:
+///     1. Wrapper shell command gets process ID into the correct cgroup before
+///     starting to execute the actual program.
+///     2. Protocol gets its CPU assignment applied (affinity & resources)
+fn run_protocol(
+    p: &NodeProtocol,
+    assignment: Option<&Assignment>,
+    cgroup: &Path,
+) -> io::Result<Child> {
+    let mut cmd = Command::new(BASH);
+    let procs_file = cgroup.join(cgroups::PROCS);
+    let mut script = format!("echo $$ > {} && ", procs_file.display());
+    if let Some(a) = assignment {
+        script.push_str(&format!("{TASKSET} --cpu-list {} ", a.set.cpu_list()));
+    }
+    script.push_str(&format!("{} {}", p.runner.cmd, p.runner.args.join(" ")));
+    cmd.current_dir(&p.root)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::null())
+        .arg("-c")
+        .arg(script);
+    cmd.spawn()
+}
+
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolError> {
@@ -81,24 +110,7 @@ pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolE
                 .write(true)
                 .open(cgroup.join("cgroup.procs"))
                 .unwrap();
-            let process = protocol_assignment
-                .as_ref()
-                .map_or(
-                    Command::new(protocol.runner.cmd.as_str())
-                        .current_dir(protocol.root.as_path())
-                        .stdout(Stdio::piped())
-                        .stderr(Stdio::piped())
-                        .stdin(Stdio::null())
-                        .args(protocol.runner.args.as_slice())
-                        .spawn(),
-                    |a| {
-                        a.start(
-                            protocol.runner.cmd.as_str(),
-                            protocol.root.as_path(),
-                            protocol.runner.args.as_slice(),
-                        )
-                    },
-                )
+            let process = run_protocol(protocol, protocol_assignment.as_ref(), &cgroup)
                 .expect("Failed to execute process");
             let _ = cgroup_file
                 .write(process.id().to_string().as_bytes())
