@@ -76,7 +76,7 @@ fn run_protocol(
 ) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
-    let mut script = format!("echo $$ > {} && ", procs_file.display());
+    let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
     if let Some(a) = assignment {
         script.push_str(&format!("{TASKSET} --cpu-list {} ", a.set.cpu_list()));
     }
@@ -106,15 +106,9 @@ pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolE
         let root_cgroup = node_cgroup(&nodes_cgroup, node_name, node_assignment);
         for (protocol_name, protocol) in &node.protocols {
             let cgroup = protocol_cgroup(&root_cgroup, protocol_name, protocol_assignment.as_ref());
-            let mut cgroup_file = OpenOptions::new()
-                .write(true)
-                .open(cgroup.join("cgroup.procs"))
-                .unwrap();
             let process = run_protocol(protocol, protocol_assignment.as_ref(), &cgroup)
                 .expect("Failed to execute process");
-            let _ = cgroup_file
-                .write(process.id().to_string().as_bytes())
-                .unwrap();
+            cgroups::move_process(&cgroup, process.id());
 
             processes.push(RunHandle {
                 node: node_name.clone(),
