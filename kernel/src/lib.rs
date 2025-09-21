@@ -211,6 +211,13 @@ impl Kernel {
                 }
             }
         }
+
+        // Handle any outstanding FS requests so it can be cleanly unmounted
+        cgroups::freeze(&node_cgroup, true);
+        source
+            .poll(&mut router, self.timestep.count.into(), delta)
+            .map_err(KernelError::SourceError)?;
+
         Ok(run_handles)
     }
 

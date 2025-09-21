@@ -58,12 +58,12 @@ fn main() -> Result<()> {
     let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
 
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
+    #[allow(unused_variables)]
     let (sess, kernel_channels) = fs.with_channels(protocol_channels)?.mount()?;
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
     let run_handles =
         Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, cgroup_path, args.logs)?;
-    sess.join();
     println!("Simulation Summary:\n\n{}", summarize(run_handles));
     Ok(())
 }
