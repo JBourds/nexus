@@ -64,7 +64,6 @@ pub(crate) fn node_cgroup(parent: &Path, name: &str, assignment: Option<Assignme
     fs::create_dir(&new_cgroup).unwrap();
     if let Some(assignment) = assignment {
         let arg = format!("{} {}", assignment.bandwidth, assignment.period);
-
         // TODO: Fix errors when one of these values is out of bounds
         let _ = OpenOptions::new()
             .write(true)
@@ -72,6 +71,7 @@ pub(crate) fn node_cgroup(parent: &Path, name: &str, assignment: Option<Assignme
             .unwrap()
             .write(arg.as_bytes())
             .unwrap();
+        subtree_control(&new_cgroup);
     }
 
     new_cgroup
@@ -96,7 +96,7 @@ pub(crate) fn protocol_cgroup(
     new_cgroup
 }
 
-fn subtree_control(cgroup: &Path) {
+pub(crate) fn subtree_control(cgroup: &Path) {
     let _ = OpenOptions::new()
         .write(true)
         .open(cgroup.join(SUBTREE))
@@ -105,7 +105,7 @@ fn subtree_control(cgroup: &Path) {
         .unwrap();
 }
 
-fn move_process(cgroup: &Path, pid: u32) {
+pub(crate) fn move_process(cgroup: &Path, pid: u32) {
     let _ = OpenOptions::new()
         .write(true)
         .open(cgroup.join(PROCS))
