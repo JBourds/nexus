@@ -1,6 +1,7 @@
-use std::collections::HashMap;
-use std::io::BufRead;
-use std::process::Command;
+use std::io::{self, BufRead};
+use std::path::Path;
+use std::process::{Command, Stdio};
+use std::{collections::HashMap, process::Child};
 use sysinfo::{Cpu, CpuRefreshKind, RefreshKind, System};
 
 pub type Frequency = u64;
@@ -8,7 +9,7 @@ pub type CpuNum = usize;
 
 #[derive(Debug, Default, Clone)]
 pub struct Assignment {
-    /// cgroup file: `cpuset.cpus`
+    /// Set of CPUs to allow the process to run on
     pub set: Cpuset,
     /// cgroup file: `cpu.max`
     pub bandwidth: u64,
@@ -17,9 +18,25 @@ pub struct Assignment {
 
 impl Assignment {
     const PERIOD: u64 = 10_000_000;
+
     pub fn split_into(self, ways: u64) -> Self {
         let bandwidth = self.bandwidth / ways;
         Self { bandwidth, ..self }
+    }
+
+    pub fn start(&self, cmd: &str, at: &Path, args: &[String]) -> io::Result<Child> {
+        let taskset_args = ["--cpu-list", self.set.0.as_str(), cmd];
+        Command::new("taskset")
+            .current_dir(at)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .stdin(Stdio::null())
+            .args(
+                taskset_args
+                    .into_iter()
+                    .chain(args.iter().map(String::as_str)),
+            )
+            .spawn()
     }
 }
 
@@ -84,11 +101,21 @@ impl CpuAssignment {
     }
 }
 
-/// Try this two ways:
-///     1, Directly with `lscpu` to query max megahertz.
-///     2, If the previous way didn`t work, assume there is no frequency
-///     scaling and that we can directly query current frequency.
-fn get_cpusets() -> HashMap<Frequency, Vec<CpuNum>> {
+fn get_current_frequencies() -> HashMap<Frequency, Vec<CpuNum>> {
+    let mut cpusets: HashMap<Frequency, Vec<CpuNum>> = HashMap::new();
+    for (cpu, frequency) in
+        System::new_with_specifics(RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()))
+            .cpus()
+            .iter()
+            .map(Cpu::frequency)
+            .enumerate()
+    {
+        cpusets.entry(frequency).or_default().push(cpu);
+    }
+    cpusets
+}
+
+fn get_lscpu_frequencies() -> Option<HashMap<Frequency, Vec<CpuNum>>> {
     let mut cpusets: HashMap<Frequency, Vec<CpuNum>> = HashMap::new();
     if let Ok(output) = Command::new("lscpu").arg("-e=CPU,MAXMHZ").output() {
         for line in output.stdout.as_slice().lines().skip(1) {
@@ -97,9 +124,10 @@ fn get_cpusets() -> HashMap<Frequency, Vec<CpuNum>> {
             let [cpu, mhz] = split[..2] else {
                 panic!("Couldn't parse CPU number and clock rate from `lscpu` output.");
             };
-            let cpu = cpu
-                .parse::<usize>()
-                .expect("Failed to parse CPU number from `lscpu` output.");
+            // lscpu may just show "-" for this
+            let Ok(cpu) = cpu.parse::<usize>() else {
+                return None;
+            };
             let mega = f64::from(1u32 << 20);
             let frequency = (mhz
                 .parse::<f64>()
@@ -108,19 +136,18 @@ fn get_cpusets() -> HashMap<Frequency, Vec<CpuNum>> {
                 .round() as Frequency;
             cpusets.entry(frequency).or_default().push(cpu);
         }
+        Some(cpusets)
     } else {
-        for (cpu, frequency) in System::new_with_specifics(
-            RefreshKind::nothing().with_cpu(CpuRefreshKind::everything()),
-        )
-        .cpus()
-        .iter()
-        .map(Cpu::frequency)
-        .enumerate()
-        {
-            cpusets.entry(frequency).or_default().push(cpu);
-        }
+        None
     }
-    cpusets
+}
+
+/// Try this two ways:
+///     1, Directly with `lscpu` to query max megahertz.
+///     2, If the previous way didn`t work or has blank entries, assume there is
+///     no frequency scaling and that we can directly query current frequency.
+fn get_cpusets() -> HashMap<Frequency, Vec<CpuNum>> {
+    get_lscpu_frequencies().unwrap_or_else(get_current_frequencies)
 }
 
 #[cfg(test)]
