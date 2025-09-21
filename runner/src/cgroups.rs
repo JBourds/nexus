@@ -6,14 +6,18 @@ use std::{
 
 use crate::assignment::Assignment;
 
-const NODES: &str = "nodes";
-const KERNEL: &str = "kernel";
+pub const NODES: &str = "nodes";
+pub const KERNEL: &str = "kernel";
+pub const PROCS: &str = "cgroup.procs";
+pub const FREEZE: &str = "cgroup.freeze";
+pub const SUBTREE: &str = "cgroup.subtree_control";
+pub const CPU_MAX: &str = "cpu.max";
 const SUBTREE_SUBSYSTEMS: &str = "+cpu +memory";
 
 pub fn freeze(cgroup: &Path, status: bool) {
     let _ = OpenOptions::new()
         .write(true)
-        .open(cgroup.join("cgroup.freeze"))
+        .open(cgroup.join(FREEZE))
         .unwrap()
         .write(if status { "1" } else { "0" }.as_bytes())
         .unwrap();
@@ -64,7 +68,7 @@ pub(crate) fn node_cgroup(parent: &Path, name: &str, assignment: Option<Assignme
         // TODO: Fix errors when one of these values is out of bounds
         let _ = OpenOptions::new()
             .write(true)
-            .open(new_cgroup.join("cpu.max"))
+            .open(new_cgroup.join(CPU_MAX))
             .unwrap()
             .write(arg.as_bytes())
             .unwrap();
@@ -83,7 +87,7 @@ pub(crate) fn protocol_cgroup(
     if let Some(assignment) = assignment {
         let _ = OpenOptions::new()
             .write(true)
-            .open(new_cgroup.join("cpu.max"))
+            .open(new_cgroup.join(CPU_MAX))
             .unwrap()
             .write(format!("{} {}", assignment.bandwidth, assignment.period).as_bytes())
             .unwrap();
@@ -95,7 +99,7 @@ pub(crate) fn protocol_cgroup(
 fn subtree_control(cgroup: &Path) {
     let _ = OpenOptions::new()
         .write(true)
-        .open(cgroup.join("cgroup.subtree_control"))
+        .open(cgroup.join(SUBTREE))
         .unwrap()
         .write(SUBTREE_SUBSYSTEMS.as_bytes())
         .unwrap();
@@ -104,7 +108,7 @@ fn subtree_control(cgroup: &Path) {
 fn move_process(cgroup: &Path, pid: u32) {
     let _ = OpenOptions::new()
         .write(true)
-        .open(cgroup.join("cgroup.procs"))
+        .open(cgroup.join(PROCS))
         .unwrap()
         .write(pid.to_string().as_bytes())
         .unwrap();
