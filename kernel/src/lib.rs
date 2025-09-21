@@ -18,7 +18,7 @@ use std::{
 use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, TimestepConfig};
-use runner::{RunCmd, RunHandle};
+use runner::{RunCmd, RunHandle, cgroups};
 use tracing::{error, instrument, warn};
 use types::*;
 
@@ -147,7 +147,12 @@ impl Kernel {
 
     #[instrument(skip_all)]
     #[allow(unused_variables)]
-    pub fn run(self, cmd: RunCmd, log: Option<PathBuf>) -> Result<Vec<RunHandle>, KernelError> {
+    pub fn run(
+        self,
+        cmd: RunCmd,
+        root_cgroup: PathBuf,
+        log: Option<PathBuf>,
+    ) -> Result<Vec<RunHandle>, KernelError> {
         let delta = self.time_delta();
         let Self {
             root,
@@ -175,6 +180,9 @@ impl Kernel {
             timestep,
             rng,
         );
+
+        let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
+        cgroups::freeze(&node_cgroup, false);
 
         let mut frame_time_exceeded: u64 = 0;
         for timestep in 0..self.timestep.count.into() {

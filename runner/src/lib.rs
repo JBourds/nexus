@@ -4,11 +4,12 @@ use std::{
     fs::OpenOptions,
     io::Write,
     num::NonZeroU64,
+    path::PathBuf,
     process::{Child, Command, Stdio},
     str::FromStr,
 };
 mod assignment;
-mod cgroups;
+pub mod cgroups;
 pub mod errors;
 use errors::*;
 
@@ -62,9 +63,9 @@ impl Display for RunCmd {
 
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
-pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
+pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolError> {
     let mut processes = vec![];
-    let sim_cgroup = simulation_cgroup();
+    let (sim_cgroup, nodes_cgroup) = simulation_cgroup();
     let mut assignments = CpuAssignment::new();
     for (node_name, node) in &sim.nodes {
         let requested_cycles = node.resources.cpu.requested_cycles();
@@ -73,7 +74,7 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
             a.clone()
                 .split_into(node.resources.cpu.cores.map(NonZeroU64::get).unwrap_or(1))
         });
-        let root_cgroup = node_cgroup(&sim_cgroup, node_name, node_assignment);
+        let root_cgroup = node_cgroup(&nodes_cgroup, node_name, node_assignment);
         for (protocol_name, protocol) in &node.protocols {
             let cgroup = protocol_cgroup(&root_cgroup, protocol_name, protocol_assignment.as_ref());
             let mut cgroup_file = OpenOptions::new()
@@ -111,5 +112,5 @@ pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
         }
     }
 
-    Ok(processes)
+    Ok((sim_cgroup, processes))
 }
