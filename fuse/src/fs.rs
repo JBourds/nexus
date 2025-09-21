@@ -1,12 +1,13 @@
 use crate::errors::{ChannelError, FsError};
 use crate::{ChannelId, KernelChannelHandle, KernelChannels, KernelControlFile, PID};
 use config::ast;
+use fuser::ReplyWrite;
 use tracing::instrument;
 
-use fuser::ReplyWrite;
 use fuser::{
-    BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, ReplyAttr,
-    ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, Request, consts::FOPEN_DIRECT_IO,
+    BackgroundSession, FUSE_ROOT_ID, FileAttr, FileType, Filesystem, MountOption, PollHandle,
+    ReplyAttr, ReplyData, ReplyDirectory, ReplyEntry, ReplyOpen, ReplyPoll, Request,
+    consts::FOPEN_DIRECT_IO,
 };
 use libc::{EACCES, EBADMSG, EISDIR, EMSGSIZE, ENOENT, ESHUTDOWN, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_RDWR, O_WRONLY};
@@ -304,6 +305,54 @@ impl Filesystem for NexusFs {
         } else {
             reply.error(ENOENT);
         }
+    }
+
+    #[instrument(skip_all)]
+    fn poll(
+        &mut self,
+        req: &Request<'_>,
+        ino: u64,
+        _fh: u64,
+        _ph: PollHandle,
+        _events: u32,
+        _flags: u32,
+        reply: ReplyPoll,
+    ) {
+        if ino == FUSE_ROOT_ID {
+            reply.error(EISDIR);
+            return;
+        }
+        let index = inode_to_index(ino);
+        let Some(file) = self.files.get(index) else {
+            reply.error(ENOENT);
+            return;
+        };
+        let Some(file) = self.fs_channels.get_mut(&(req.pid(), file.clone())) else {
+            reply.error(EACCES);
+            return;
+        };
+
+        // Check if there is already data to read
+        if file.unread_msg.is_some() {
+            reply.poll(libc::POLLIN.try_into().unwrap());
+            return;
+        }
+
+        // Main thread could shutdown in the middle of a request
+        if file.read.request.send(()).is_err() {
+            reply.error(ESHUTDOWN);
+            return;
+        }
+        let mut recv_buf = vec![0; file.max_msg_size.get() as usize];
+        let recv_size = match file.sock.recv(&mut recv_buf) {
+            Ok(n) => n,
+            Err(_) => {
+                reply.poll(0);
+                return;
+            }
+        };
+        file.unread_msg = Some((recv_size, recv_buf));
+        reply.poll(libc::POLLIN.try_into().unwrap());
     }
 
     #[instrument(skip_all)]
