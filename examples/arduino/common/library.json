@@ -1,0 +1,18 @@
+{
+    "name": "Common",
+    "version": "1.0.0",
+    "description": "Common code shared between the TX an RX examples",
+    "dependencies": [
+        { "name": "RadioHead", "version": "epsilonrt/RadioHead@^1.122" }
+    ],
+    "build": {
+        "libLDFMode": "deep+"
+    },
+    "authors": [
+        {
+            "name": "Jordan Bourdeau",
+            "email": "jordanbourdeau03@outlook.com",
+            "maintainer": true
+        }
+    ]
+}

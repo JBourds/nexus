@@ -1,0 +1,45 @@
+[params]
+timestep.length = 10
+timestep.unit = "ns"
+timestep.count = 5000 
+root = "~/simulations"  
+
+[channels]
+
+[channels.lora]
+type = { type = "exclusive", read_own_writes = false  }
+
+[nodes]
+
+[nodes.tx]
+deployments = [ {} ]
+
+[nodes.tx.resources]
+clock_rate = 16
+clock_units = "Mhz"
+
+[[nodes.tx.protocols]]
+
+root = "tx"
+name = "main"
+runner = "./bin/main"
+runner_args = []
+publishers = ["lora"]
+subscribers = ["lora"]
+
+
+[nodes.rx]
+deployments = [ {} ]
+
+[nodes.rx.resources]
+clock_rate = 16
+clock_units = "Mhz"
+
+[[nodes.rx.protocols]]
+
+root = "rx"
+name = "main"
+runner = "./bin/main"
+runner_args = []
+publishers = ["lora"]
+subscribers = ["lora"]
