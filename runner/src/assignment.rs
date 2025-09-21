@@ -86,7 +86,8 @@ impl CpuAssignment {
             .filter(|(_, available)| **available >= required)
             .max_by_key(|(_, available)| **available)
         {
-            let ratio = required as f64 / *available as f64;
+            let ncpus = self.cpusets[key].len();
+            let ratio = ncpus as f64 * required as f64 / *available as f64;
             let bandwidth = (ratio * Assignment::PERIOD as f64) as u64;
             *available -= required;
 
