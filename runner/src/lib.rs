@@ -1,8 +1,7 @@
 use config::ast::{self, NodeProtocol};
 use std::{
     fmt::Display,
-    fs::OpenOptions,
-    io::{self, Write},
+    io,
     num::NonZeroU64,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},

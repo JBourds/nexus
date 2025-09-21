@@ -1,7 +1,6 @@
-use std::io::{self, BufRead};
-use std::path::Path;
-use std::process::{Command, Stdio};
-use std::{collections::HashMap, process::Child};
+use std::io::BufRead;
+use std::process::Command;
+use std::collections::HashMap;
 use sysinfo::{Cpu, CpuRefreshKind, RefreshKind, System};
 
 pub type Frequency = u64;
