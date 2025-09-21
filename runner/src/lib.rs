@@ -1,16 +1,21 @@
-use config::ast::{self, Node, Resources};
+use config::ast::{self};
 use std::{
     fmt::Display,
-    fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    fs::OpenOptions,
+    io::Write,
     num::NonZeroU64,
-    path::{Path, PathBuf},
     process::{Child, Command, Stdio},
-    rc::Rc,
     str::FromStr,
 };
+mod assignment;
+mod cgroups;
 pub mod errors;
 use errors::*;
+
+use crate::{
+    assignment::CpuAssignment,
+    cgroups::{node_cgroup, protocol_cgroup, simulation_cgroup},
+};
 
 #[derive(Debug)]
 pub struct RunHandle {
@@ -55,81 +60,44 @@ impl Display for RunCmd {
     }
 }
 
-/// Move the current process out of its automatically assigned systemd cgroup
-/// into a new one within the hierarchy to appease the "no internal processes"
-/// rule. Creates subhierarchy for node protocols as well.
-fn setup_managed_cgroup() -> PathBuf {
-    let pid = std::process::id();
-    let parent_cgroup = PathBuf::from(format!("/proc/{pid}/cgroup"));
-    let mut buf = String::new();
-    let _ = File::open(parent_cgroup).unwrap().read_to_string(&mut buf);
-    let cgroup_path = PathBuf::from(format!(
-        "/sys/fs/cgroup{}",
-        buf.split(":").last().unwrap().trim_end()
-    ));
-
-    let kernel_cgroup_path = cgroup_path.join("kernel");
-    fs::create_dir(&kernel_cgroup_path).unwrap();
-
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(kernel_cgroup_path.join("cgroup.procs"))
-        .unwrap()
-        .write(pid.to_string().as_bytes())
-        .unwrap();
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(cgroup_path.join("cgroup.subtree_control"))
-        .unwrap()
-        .write("+cpu +memory".as_bytes())
-        .unwrap();
-
-    cgroup_path
-}
-
-fn make_node_cgroup(parent: &Path, name: &str, resources: &Resources) -> PathBuf {
-    let new_cgroup = parent.join(name);
-    fs::create_dir(&new_cgroup).unwrap();
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(new_cgroup.join("cgroup.subtree_control"))
-        .unwrap()
-        .write("+cpu +memory".as_bytes())
-        .unwrap();
-    new_cgroup
-}
-
-fn make_protocol_cgroup(
-    node_cgroup: &Path,
-    name: &str,
-    resources: impl AsRef<Resources>,
-) -> PathBuf {
-    let new_cgroup = node_cgroup.join(name);
-    fs::create_dir(&new_cgroup).unwrap();
-    new_cgroup
-}
-
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<Vec<RunHandle>, ProtocolError> {
     let mut processes = vec![];
-    let node_cgroups = setup_managed_cgroup();
+    let sim_cgroup = simulation_cgroup();
+    let mut assignments = CpuAssignment::new();
     for (node_name, node) in &sim.nodes {
-        let root_cgroup = make_node_cgroup(&node_cgroups, node_name, &node.resources);
+        let requested_cycles = node.resources.cpu.requested_cycles();
+        let node_assignment = requested_cycles.and_then(|r| assignments.assign(r));
+        let protocol_assignment = node_assignment.as_ref().map(|a| {
+            a.clone()
+                .split_into(node.resources.cpu.cores.map(NonZeroU64::get).unwrap_or(1))
+        });
+        let root_cgroup = node_cgroup(&sim_cgroup, node_name, node_assignment);
         for (protocol_name, protocol) in &node.protocols {
-            let cgroup =
-                make_protocol_cgroup(&root_cgroup, protocol_name, Rc::clone(&node.resources));
+            let cgroup = protocol_cgroup(&root_cgroup, protocol_name, protocol_assignment.as_ref());
             let mut cgroup_file = OpenOptions::new()
                 .write(true)
                 .open(cgroup.join("cgroup.procs"))
                 .unwrap();
-            let process = Command::new(protocol.runner.cmd.as_str())
-                .current_dir(protocol.root.as_path())
-                .stdout(Stdio::piped())
-                .stderr(Stdio::piped())
-                .stdin(Stdio::null())
-                .args(protocol.runner.args.as_slice())
-                .spawn()
+            let process = protocol_assignment
+                .as_ref()
+                .map_or(
+                    Command::new(protocol.runner.cmd.as_str())
+                        .current_dir(protocol.root.as_path())
+                        .stdout(Stdio::piped())
+                        .stderr(Stdio::piped())
+                        .stdin(Stdio::null())
+                        .args(protocol.runner.args.as_slice())
+                        .spawn(),
+                    |a| {
+                        a.start(
+                            protocol.runner.cmd.as_str(),
+                            protocol.root.as_path(),
+                            protocol.runner.args.as_slice(),
+                        )
+                    },
+                )
                 .expect("Failed to execute process");
             let _ = cgroup_file
                 .write(process.id().to_string().as_bytes())
