@@ -9,6 +9,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum KernelError {
+    #[error("Encountered error with checking elapsed time at timestep: {0}")]
+    TimestepError(u64),
     #[error("Failed to initialize kernel due to `{0:#?}`")]
     KernelInit(ConversionError),
     #[error("Protocol prematurely exited: `{self:#?}`")]

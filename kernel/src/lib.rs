@@ -184,31 +184,16 @@ impl Kernel {
         let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
         cgroups::freeze(&node_cgroup, false);
 
-        let mut frame_time_exceeded: u64 = 0;
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
-            source
-                .poll(&mut router, timestep, delta)
-                .map_err(KernelError::SourceError)?;
-            run_handles = Self::check_handles(run_handles)?;
-
-            if let Ok(elapsed) = start.elapsed() {
-                if elapsed < delta {
-                    std::thread::sleep(delta - elapsed);
-                } else {
-                    frame_time_exceeded <<= 1;
-                    frame_time_exceeded |= 1;
-                    match frame_time_exceeded.count_ones() {
-                        n if n >= 48 => {
-                            warn!(
-                                "{n} out of the last {} frames have exceeded the timestep delta. Consider using a longer timestep.",
-                                u64::BITS
-                            );
-                            frame_time_exceeded = 0;
-                        }
-                        _ => {}
-                    }
-                }
+            while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
+                source
+                    .poll(&mut router, timestep, delta)
+                    .map_err(KernelError::SourceError)?;
+                run_handles = Self::check_handles(run_handles)?;
+            }
+            if start.elapsed().is_err() {
+                return Err(KernelError::TimestepError(timestep));
             }
         }
 
