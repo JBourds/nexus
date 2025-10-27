@@ -37,6 +37,8 @@ monitor:
 simulate: $(TARGET)
 	./$(TARGET)
 
+build: $(TARGET)
+
 $(TARGET): $(OBJECTS)
 	@mkdir -p $(BIN)
 	$(CXX) $(CXXFLAGS) $(OBJECTS) -o $@

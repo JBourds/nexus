@@ -1,6 +1,6 @@
 [params]
-timestep.length = 10
-timestep.unit = "ns"
+timestep.length = 1
+timestep.unit = "ms"
 timestep.count = 5000 
 root = "~/simulations"  
 
@@ -22,8 +22,9 @@ clock_units = "Mhz"
 
 root = "tx"
 name = "main"
+build = "make"
+build_args = ["build"]
 runner = "./bin/main"
-runner_args = []
 publishers = ["lora"]
 subscribers = ["lora"]
 
@@ -39,7 +40,8 @@ clock_units = "Mhz"
 
 root = "rx"
 name = "main"
+build = "make"
+build_args = ["build"]
 runner = "./bin/main"
-runner_args = []
 publishers = ["lora"]
 subscribers = ["lora"]
