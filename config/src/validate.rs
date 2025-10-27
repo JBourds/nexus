@@ -769,6 +769,10 @@ impl NodeProtocol {
             cmd: val.runner,
             args: val.runner_args.unwrap_or_default(),
         };
+        let build = Cmd {
+            cmd: val.build,
+            args: val.build_args.unwrap_or_default(),
+        };
         let publishers = val
             .publishers
             .unwrap_or_default()
@@ -805,6 +809,7 @@ impl NodeProtocol {
         Ok(Self {
             root,
             runner,
+            build,
             publishers,
             subscribers,
         })

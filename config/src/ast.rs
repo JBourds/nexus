@@ -159,6 +159,7 @@ pub struct Mem {
 #[derive(Clone, Debug)]
 pub struct NodeProtocol {
     pub root: PathBuf,
+    pub build: Cmd,
     pub runner: Cmd,
     pub publishers: HashSet<ChannelHandle>,
     pub subscribers: HashSet<ChannelHandle>,

@@ -1,4 +1,4 @@
-use config::ast::{self, NodeProtocol};
+use config::ast::{self, Cmd, NodeProtocol};
 use std::{
     fmt::Display,
     io,
@@ -89,12 +89,75 @@ fn run_protocol(
     cmd.spawn()
 }
 
+pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
+    struct Ctx<'a> {
+        node: &'a str,
+        protocol: &'a str,
+        cmd: &'a Cmd,
+        root: &'a Path,
+        handle: Child,
+    }
+    println!("Building programs");
+    let handles = sim
+        .nodes
+        .iter()
+        .flat_map(|(node_name, node)| {
+            node.protocols
+                .iter()
+                .filter(|(_, p)| !p.build.cmd.is_empty())
+                .map(|(protocol_name, p)| {
+                    let cmd = p.build.cmd.as_str();
+                    let args = p.build.args.as_slice();
+                    let root = p.root.as_path();
+                    Command::new(cmd)
+                        .current_dir(root)
+                        .args(args)
+                        .stdout(Stdio::null())
+                        .spawn()
+                        .map(|handle| Ctx {
+                            node: node_name,
+                            protocol: protocol_name,
+                            cmd: &p.build,
+                            root,
+                            handle,
+                        })
+                })
+        })
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(errors::ProtocolError::UnableToRun)?;
+    let mut errors = vec![];
+    for mut ctx in handles {
+        let exit_code = ctx
+            .handle
+            .wait()
+            .map_err(errors::ProtocolError::UnableToRun)?;
+        if !exit_code.success() {
+            // First fialure
+            if errors.is_empty() {
+                eprintln!("\nError building programs:\n");
+            }
+            errors.push(errors::Error::new(
+                ctx.node.to_string(),
+                ctx.protocol.to_string(),
+                ctx.root.to_path_buf(),
+                format!("Command: {} ({exit_code})", ctx.cmd),
+            ));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(errors::ProtocolError::BuildErrors(errors))
+    }
+}
+
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolError> {
     let mut processes = vec![];
     let (sim_cgroup, nodes_cgroup) = simulation_cgroup();
     let mut assignments = CpuAssignment::new();
+
     for (node_name, node) in &sim.nodes {
         let requested_cycles = node.resources.cpu.requested_cycles();
         let node_assignment = requested_cycles.and_then(|r| assignments.assign(r));

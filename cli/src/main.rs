@@ -54,6 +54,7 @@ fn main() -> Result<()> {
 
     let sim = config::parse(args.config.into())?;
     setup_logging(&sim.params.root, args.cmd)?;
+    runner::build(&sim)?;
     let (cgroup_path, run_handles) = runner::run(&sim)?;
     let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
 
@@ -100,11 +101,11 @@ fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
     let tx = root.join("tx");
     let rx = root.join("rx");
     let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
-        println!("Saving outbound simulation messages to {tx:?}");
-        println!("Saving inbound simulation messages to {rx:?}");
+        println!("Write Log: {tx:?}");
+        println!("Read Log: {rx:?}");
         (Some(make_logfile(tx)?), Some(make_logfile(rx)?))
     } else {
-        println!("Saving inbound simulation messages to {rx:?}");
+        println!("Read Log: {rx:?}");
         (None, Some(make_logfile(rx)?))
     };
     tracing_subscriber::registry()
