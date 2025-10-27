@@ -53,7 +53,7 @@ fn main() -> Result<()> {
     }
 
     let sim = config::parse(args.config.into())?;
-    setup_logging(&sim.params.root, args.cmd)?;
+    let (write_log, read_log) = setup_logging(&sim.params.root, args.cmd)?;
     runner::build(&sim)?;
     let (cgroup_path, run_handles) = runner::run(&sim)?;
     let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
@@ -65,7 +65,10 @@ fn main() -> Result<()> {
     // in an uninterruptible sleep state.
     let run_handles =
         Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, cgroup_path, args.logs)?;
+
     println!("Simulation Summary:\n\n{}", summarize(run_handles));
+    println!("Write Log: {write_log:?}");
+    println!("Read Log: {read_log:?}");
     Ok(())
 }
 
@@ -91,7 +94,7 @@ fn summarize(mut handles: Vec<RunHandle>) -> String {
     summaries.join("\n")
 }
 
-fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
+fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<(PathBuf, PathBuf)> {
     let datetime: DateTime<Utc> = SystemTime::now().into();
     let datetime = datetime.format("%Y-%m-%d_%H:%M:%S").to_string();
     let root = sim_root.join(&datetime);
@@ -101,12 +104,9 @@ fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
     let tx = root.join("tx");
     let rx = root.join("rx");
     let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
-        println!("Write Log: {tx:?}");
-        println!("Read Log: {rx:?}");
-        (Some(make_logfile(tx)?), Some(make_logfile(rx)?))
+        (Some(make_logfile(&tx)?), Some(make_logfile(&rx)?))
     } else {
-        println!("Read Log: {rx:?}");
-        (None, Some(make_logfile(rx)?))
+        (None, Some(make_logfile(&rx)?))
     };
     tracing_subscriber::registry()
         .with(
@@ -125,7 +125,7 @@ fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<()> {
                 .with_filter(filter::filter_fn(|metadata| metadata.target() == "rx")),
         )
         .init();
-    Ok(())
+    Ok((tx, rx))
 }
 
 fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
