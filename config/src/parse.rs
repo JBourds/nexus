@@ -57,6 +57,29 @@ pub struct LinkName(pub String);
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
+pub struct Charge {
+    pub(super) quantity: u64,
+    pub(super) unit: Unit,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PowerSink {
+    pub(super) name: String,
+    pub(super) quantity: u64,
+    pub(super) unit: Unit,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct PowerSource {
+    pub(super) name: String,
+    pub(super) quantity: u64,
+    pub(super) unit: Unit,
+}
+
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
 pub struct Link {
     pub(super) inherit: Option<String>,
     pub(super) signal: Option<Signal>,
@@ -133,6 +156,7 @@ pub struct ProtocolName(pub String);
 pub struct Deployment {
     pub(super) position: Option<Coordinate>,
     pub(super) extra_args: Option<Vec<String>>,
+    pub(super) charge: Option<Charge>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -176,6 +200,8 @@ pub struct Node {
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
     pub(super) protocols: Option<Vec<NodeProtocol>>,
+    pub(super) sources: Option<Vec<PowerSource>>,
+    pub(super) sinks: Option<Vec<PowerSink>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
