@@ -45,7 +45,7 @@ seed = 42
 
 # Root directory to store simulation results 
 # into (will create a new subdirectory each run)
-root = "~/testnet/simulations" 
+root = "~/simulations" 
 
 [links]
 
