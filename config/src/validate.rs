@@ -293,13 +293,42 @@ impl Simulation {
             let _ = processed.insert(key.to_string(), res);
         }
 
+        let mut sources = HashMap::new();
+        for PowerSource {
+            name,
+            quantity,
+            unit,
+            time,
+        } in val.sources.unwrap_or_default()
+        {
+            if sources.contains_key(&name) {
+                bail!("Duplicate name in power sources: {name}");
+            }
+            sources.insert(name, PowerRate::validate(quantity, unit, time, true)?);
+        }
+        let source_names: HashSet<_> = sources.keys().cloned().collect();
+
+        let mut sinks = HashMap::new();
+        for PowerSink {
+            name,
+            quantity,
+            unit,
+            time,
+        } in val.sinks.unwrap_or_default()
+        {
+            if sinks.contains_key(&name) {
+                bail!("Duplicate name in power sinks: {name}");
+            }
+            sinks.insert(name, PowerRate::validate(quantity, unit, time, true)?);
+        }
+        let sink_names: HashSet<_> = sinks.keys().cloned().collect();
+
         let channels: HashMap<_, _> = val
             .channels
             .into_iter()
             .map(|(name, channel)| Channel::validate(channel, &processed).map(|val| (name, val)))
             .collect::<Result<_>>()
             .context("Failed to validate channels.")?;
-
         let channel_handles = channels.keys().cloned().collect::<HashSet<_>>();
         let validated_nodes = val
             .nodes
@@ -307,7 +336,14 @@ impl Simulation {
             // Append a unique suffix corresponding to deployment ID to each
             // node's name to deduplicate the handles
             .map(|(key, node)| {
-                Node::validate(config_root, node, &channel_handles).map(|nodes| {
+                Node::validate(
+                    config_root,
+                    node,
+                    &channel_handles,
+                    &sink_names,
+                    &source_names,
+                )
+                .map(|nodes| {
                     nodes
                         .into_iter()
                         .enumerate()
@@ -340,6 +376,8 @@ impl Simulation {
             params,
             nodes,
             channels,
+            sinks,
+            sources,
         })
     }
 }
@@ -659,6 +697,8 @@ impl Node {
         config_root: &PathBuf,
         val: parse::Node,
         channel_handles: &HashSet<ChannelHandle>,
+        sink_handles: &HashSet<SinkHandle>,
+        source_handles: &HashSet<SourceHandle>,
     ) -> Result<Vec<Self>> {
         let resources = Rc::new(
             val.resources
@@ -708,6 +748,22 @@ impl Node {
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
             .context("Unable to validate node protocols")?;
 
+        // Validate sinks/source names are valid
+        let sink_names: Rc<HashSet<_>> =
+            Rc::new(val.sinks.unwrap_or_default().into_iter().collect());
+        let sink_diff: HashSet<_> = sink_names.difference(sink_handles).collect();
+        ensure!(
+            sink_diff.is_empty(),
+            "Found undefined sink names in node: {sink_diff:#?}"
+        );
+        let source_names: Rc<HashSet<_>> =
+            Rc::new(val.sources.unwrap_or_default().into_iter().collect());
+        let source_diff: HashSet<_> = source_names.difference(source_handles).collect();
+        ensure!(
+            source_diff.is_empty(),
+            "Found undefined source names in node: {source_diff:#?}"
+        );
+
         // Check that all internal names were used
         let internal_names_used = protocols
             .values()
@@ -722,59 +778,12 @@ impl Node {
             format!("Found unused internal channels: {difference:#?}")
         );
 
-        // No duplicate source/sink names
-        let mut power_names = HashSet::new();
-
-        // Get sources/sinks for node class
-        let sources = Rc::new(
-            val.sources
-                .unwrap_or_default()
-                .into_iter()
-                .map(
-                    |PowerSource {
-                         name,
-                         quantity,
-                         unit,
-                         time,
-                     }| {
-                        if power_names.contains(&name) {
-                            bail!("Duplicate name in power sources: {name}");
-                        } else {
-                            power_names.insert(name);
-                            PowerRate::validate(quantity, unit, time, true)
-                        }
-                    },
-                )
-                .collect::<Result<Vec<_>>>()
-                .context("Failed to validate node power sources in {name}.")?,
-        );
-        let sinks = Rc::new(
-            val.sinks
-                .unwrap_or_default()
-                .into_iter()
-                .map(
-                    |PowerSink {
-                         name,
-                         quantity,
-                         unit,
-                         time,
-                     }| {
-                        if power_names.contains(&name) {
-                            bail!("Duplicate name in power sources: {name}");
-                        } else {
-                            power_names.insert(name);
-                            PowerRate::validate(quantity, unit, time, false)
-                        }
-                    },
-                )
-                .collect::<Result<Vec<_>>>()
-                .context("Failed to validate node power sinks in {name}.")?,
-        );
-
         let mut nodes = vec![];
         let Some(deployments) = val.deployments else {
             bail!("Node cannot be defined without a single deployment location.");
         };
+
+        // Share immutable data across deployments when possible
         for Deployment {
             position,
             extra_args,
@@ -811,13 +820,13 @@ impl Node {
             };
 
             nodes.push(Node {
-                resources: Rc::clone(&resources),
-                position,
-                internal_names: internal_names.clone().into_iter().collect(),
-                protocols,
                 charge,
-                sources: Rc::clone(&sources),
-                sinks: Rc::clone(&sinks),
+                position,
+                resources: Rc::clone(&resources),
+                internal_names: internal_names.iter().cloned().collect(),
+                protocols,
+                sinks: Rc::clone(&sink_names),
+                sources: Rc::clone(&source_names),
             });
         }
         Ok(nodes)

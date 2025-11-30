@@ -7,6 +7,8 @@ pub struct Simulation {
     pub(super) links: HashMap<String, Link>,
     pub(super) nodes: HashMap<String, Node>,
     pub(super) channels: HashMap<String, Channel>,
+    pub(super) sources: Option<Vec<PowerSource>>,
+    pub(super) sinks: Option<Vec<PowerSink>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -202,8 +204,8 @@ pub struct Node {
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
     pub(super) protocols: Option<Vec<NodeProtocol>>,
-    pub(super) sources: Option<Vec<PowerSource>>,
-    pub(super) sinks: Option<Vec<PowerSink>>,
+    pub(super) sources: Option<Vec<String>>,
+    pub(super) sinks: Option<Vec<String>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

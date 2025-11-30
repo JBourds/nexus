@@ -9,12 +9,16 @@ pub type LinkHandle = String;
 pub type ChannelHandle = String;
 pub type NodeHandle = String;
 pub type ProtocolHandle = String;
+pub type SinkHandle = String;
+pub type SourceHandle = String;
 
 #[derive(Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Node>,
+    pub sinks: HashMap<SinkHandle, PowerRate>,
+    pub sources: HashMap<SourceHandle, PowerRate>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -130,13 +134,13 @@ impl Default for ChannelType {
 
 #[derive(Clone, Debug)]
 pub struct Node {
-    pub resources: Rc<Resources>,
     pub position: Position,
-    pub internal_names: Vec<ChannelHandle>,
-    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
     pub charge: Option<Charge>,
-    pub sources: Rc<Vec<PowerRate>>,
-    pub sinks: Rc<Vec<PowerRate>>,
+    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+    pub internal_names: Vec<ChannelHandle>,
+    pub resources: Rc<Resources>,
+    pub sinks: Rc<HashSet<SinkHandle>>,
+    pub sources: Rc<HashSet<SourceHandle>>,
 }
 
 #[derive(Clone, Debug, Default)]
