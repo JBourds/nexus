@@ -2,6 +2,10 @@ use super::parse;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
+use crate::parse::PowerSink;
+use crate::parse::PowerSource;
+use crate::parse::Unit;
+use crate::units::*;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
@@ -63,6 +67,25 @@ impl DataUnit {
     }
 }
 
+impl PowerUnit {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
+        val.0[1..].make_ascii_lowercase();
+        let variant = match val.0.as_str() {
+            "nwh" | "Nwh" => Self::NanoWattHours,
+            "uwh" | "Uwh" => Self::MicroWattHours,
+            "mwh" => Self::MilliWattHours,
+            "wh" => Self::WattHours,
+            "Kwh" | "kwh" => Self::KiloWattHours,
+            "Mwh" => Self::MegaWattHours,
+            "Gwh" | "gwh" => Self::GigaWattHours,
+            s => {
+                bail!("Expected to find a valid power unit but found \"{s}\"");
+            }
+        };
+        Ok(variant)
+    }
+}
+
 impl TimeUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
@@ -95,7 +118,7 @@ impl DistanceUnit {
     }
 }
 
-impl Rate {
+impl DataRate {
     fn validate(val: parse::Rate) -> Result<Self> {
         let data = val
             .data
@@ -399,13 +422,13 @@ impl Delays {
     fn validate(val: parse::Delays) -> Result<Self> {
         let transmission = val
             .transmission
-            .map(Rate::validate)
-            .unwrap_or(Ok(Rate::default()))
+            .map(DataRate::validate)
+            .unwrap_or(Ok(DataRate::default()))
             .context("Unable to validate transmission delay rate.")?;
         let processing = val
             .processing
-            .map(Rate::validate)
-            .unwrap_or(Ok(Rate::default()))
+            .map(DataRate::validate)
+            .unwrap_or(Ok(DataRate::default()))
             .context("Unable to validate processing delay rate.")?;
         let propagation = val
             .propagation
@@ -438,7 +461,7 @@ impl DelayCalculator {
     pub(crate) fn timesteps_required(
         amount: u64,
         unit: DataUnit,
-        rate: Rate,
+        rate: DataRate,
         config: TimestepConfig,
     ) -> (u64, u64) {
         // Determine which data unit is larger (higher magnitude), and how many
@@ -566,6 +589,16 @@ impl Link {
     }
 }
 
+impl Charge {
+    fn validate(val: parse::Charge) -> Result<Self> {
+        Ok(Self {
+            quantity: val.quantity,
+            unit: PowerUnit::validate(val.unit)
+                .context("Failed to validate poer unit in charge.")?,
+        })
+    }
+}
+
 impl Position {
     fn validate(val: parse::Coordinate) -> Result<Self> {
         let point = val.point.map(Point::validate).unwrap_or_default();
@@ -606,6 +639,20 @@ impl Orientation {
     }
 }
 
+impl PowerRate {
+    fn validate(quantity: u64, unit: Unit, time: Unit, is_source: bool) -> Result<Self> {
+        let multiplier: i64 = if is_source { 1 } else { -1 };
+        let quantity: i64 = quantity
+            .try_into()
+            .context("Power quantity too large to fit in i64")?;
+        Ok(PowerRate {
+            rate: multiplier * quantity,
+            unit: PowerUnit::validate(unit).context("Failed to validate power unit")?,
+            time: TimeUnit::validate(time).context("Failed to validate time unit")?,
+        })
+    }
+}
+
 impl Node {
     pub const SELF: &'static str = "self";
     fn validate(
@@ -619,7 +666,6 @@ impl Node {
                 .unwrap_or(Ok(Resources::default()))
                 .context("Failed to validate node resource allocation.")?,
         );
-
         // No duplicate internal names
         let mut internal_names = HashSet::new();
         if let Some(names) = val.internal_names {
@@ -676,6 +722,55 @@ impl Node {
             format!("Found unused internal channels: {difference:#?}")
         );
 
+        // No duplicate source/sink names
+        let mut power_names = HashSet::new();
+
+        // Get sources/sinks for node class
+        let sources = Rc::new(
+            val.sources
+                .unwrap_or_default()
+                .into_iter()
+                .map(
+                    |PowerSource {
+                         name,
+                         quantity,
+                         unit,
+                         time,
+                     }| {
+                        if power_names.contains(&name) {
+                            bail!("Duplicate name in power sources: {name}");
+                        } else {
+                            power_names.insert(name);
+                            PowerRate::validate(quantity, unit, time, true)
+                        }
+                    },
+                )
+                .collect::<Result<Vec<_>>>()
+                .context("Failed to validate node power sources in {name}.")?,
+        );
+        let sinks = Rc::new(
+            val.sinks
+                .unwrap_or_default()
+                .into_iter()
+                .map(
+                    |PowerSink {
+                         name,
+                         quantity,
+                         unit,
+                         time,
+                     }| {
+                        if power_names.contains(&name) {
+                            bail!("Duplicate name in power sources: {name}");
+                        } else {
+                            power_names.insert(name);
+                            PowerRate::validate(quantity, unit, time, false)
+                        }
+                    },
+                )
+                .collect::<Result<Vec<_>>>()
+                .context("Failed to validate node power sinks in {name}.")?,
+        );
+
         let mut nodes = vec![];
         let Some(deployments) = val.deployments else {
             bail!("Node cannot be defined without a single deployment location.");
@@ -683,6 +778,7 @@ impl Node {
         for Deployment {
             position,
             extra_args,
+            charge,
         } in deployments
         {
             let protocols = protocols
@@ -706,11 +802,22 @@ impl Node {
                 .map(Position::validate)
                 .unwrap_or(Ok(Position::default()))
                 .context("Failed to validate node coordinates.")?;
+            // Allow user to omit charge, but if they specify it
+            // then it must pass validation.
+            let charge = if let Some(charge) = charge {
+                Some(Charge::validate(charge)?)
+            } else {
+                None
+            };
+
             nodes.push(Node {
                 resources: Rc::clone(&resources),
                 position,
                 internal_names: internal_names.clone().into_iter().collect(),
                 protocols,
+                charge,
+                sources: Rc::clone(&sources),
+                sinks: Rc::clone(&sinks),
             });
         }
         Ok(nodes)

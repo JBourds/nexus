@@ -1,3 +1,4 @@
+pub use super::units::*;
 use rand::Rng;
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
@@ -133,6 +134,9 @@ pub struct Node {
     pub position: Position,
     pub internal_names: Vec<ChannelHandle>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+    pub charge: Option<Charge>,
+    pub sources: Rc<Vec<PowerRate>>,
+    pub sinks: Rc<Vec<PowerRate>>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -154,6 +158,12 @@ pub struct Mem {
     /// If this is None, don't apply a memory limit
     pub amount: Option<NonZeroU64>,
     pub unit: DataUnit,
+}
+
+#[derive(Clone, Debug, Default)]
+pub struct Charge {
+    pub quantity: u64,
+    pub unit: PowerUnit,
 }
 
 #[derive(Clone, Debug)]
@@ -228,16 +238,16 @@ pub struct Params {
 
 #[derive(Clone, Default)]
 pub struct DelayCalculator {
-    pub transmission: Rate,
-    pub processing: Rate,
+    pub transmission: DataRate,
+    pub processing: DataRate,
     pub propagation: DistanceTimeVar,
     pub ts_config: TimestepConfig,
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Delays {
-    pub transmission: Rate,
-    pub processing: Rate,
+    pub transmission: DataRate,
+    pub processing: DataRate,
     pub propagation: DistanceTimeVar,
 }
 
@@ -321,49 +331,6 @@ impl DistanceProbVar {
         };
         func(distance, data).clamp(0.0, 1.0)
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Rate {
-    pub rate: u64,
-    pub data: DataUnit,
-    pub time: TimeUnit,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ClockUnit {
-    Hertz,
-    Kilohertz,
-    Megahertz,
-    Gigahertz,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DataUnit {
-    Bit,
-    Kilobit,
-    Megabit,
-    Gigabit,
-    Byte,
-    Kilobyte,
-    Megabyte,
-    Gigabyte,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum TimeUnit {
-    Seconds,
-    Milliseconds,
-    Microseconds,
-    Nanoseconds,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum DistanceUnit {
-    Millimeters,
-    Centimeters,
-    Meters,
-    Kilometers,
 }
 
 impl Position {
@@ -476,87 +443,6 @@ impl DelayCalculator {
     }
 }
 
-impl DataUnit {
-    /// Return the left shift ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.lshifts();
-        let right = right.lshifts();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn lshifts(&self) -> usize {
-        match self {
-            Self::Bit => 0,
-            Self::Kilobit => 10,
-            Self::Megabit => 20,
-            Self::Gigabit => 30,
-            Self::Byte => 3,
-            Self::Kilobyte => 13,
-            Self::Megabyte => 23,
-            Self::Gigabyte => 33,
-        }
-    }
-}
-
-impl ClockUnit {
-    pub fn lshifts(&self) -> usize {
-        match self {
-            Self::Hertz => 0,
-            Self::Kilohertz => 10,
-            Self::Megahertz => 20,
-            Self::Gigahertz => 30,
-        }
-    }
-}
-
-impl TimeUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
-        match self {
-            Self::Seconds => 0,
-            Self::Milliseconds => 3,
-            Self::Microseconds => 6,
-            Self::Nanoseconds => 9,
-        }
-    }
-}
-
-impl DistanceUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
-        match self {
-            Self::Millimeters => 0,
-            Self::Centimeters => 2,
-            Self::Meters => 4,
-            Self::Kilometers => 7,
-        }
-    }
-}
-
 // Manual trait impls
 
 impl std::fmt::Debug for DelayCalculator {
@@ -607,7 +493,7 @@ impl Default for SignalShape {
     }
 }
 
-impl Default for Rate {
+impl Default for DataRate {
     fn default() -> Self {
         Self {
             rate: u64::MAX,
@@ -616,31 +502,6 @@ impl Default for Rate {
         }
     }
 }
-
-impl Default for ClockUnit {
-    fn default() -> Self {
-        Self::Gigahertz
-    }
-}
-
-impl Default for DataUnit {
-    fn default() -> Self {
-        Self::Byte
-    }
-}
-
-impl Default for TimeUnit {
-    fn default() -> Self {
-        Self::Milliseconds
-    }
-}
-
-impl Default for DistanceUnit {
-    fn default() -> Self {
-        Self::Kilometers
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -652,12 +513,12 @@ mod tests {
             unit: TimeUnit::Seconds,
             count: NonZeroU64::new(1000000).unwrap(),
         };
-        let transmission = Rate {
+        let transmission = DataRate {
             rate: 200,
             data: DataUnit::Bit,
             time: TimeUnit::Seconds,
         };
-        let processing = Rate {
+        let processing = DataRate {
             rate: 200,
             data: DataUnit::Bit,
             time: TimeUnit::Seconds,

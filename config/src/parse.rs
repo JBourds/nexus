@@ -68,6 +68,7 @@ pub struct PowerSink {
     pub(super) name: String,
     pub(super) quantity: u64,
     pub(super) unit: Unit,
+    pub(super) time: Unit,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -76,6 +77,7 @@ pub struct PowerSource {
     pub(super) name: String,
     pub(super) quantity: u64,
     pub(super) unit: Unit,
+    pub(super) time: Unit,
 }
 
 #[derive(Debug, Default, Deserialize)]

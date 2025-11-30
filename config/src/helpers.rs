@@ -4,9 +4,10 @@ use anyhow::{Context, Result, bail};
 
 pub(crate) fn expand_home(path: &PathBuf) -> PathBuf {
     if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/")
-        && let Some(home_dir) = home::home_dir() {
-            return home_dir.join(stripped);
-        }
+        && let Some(home_dir) = home::home_dir()
+    {
+        return home_dir.join(stripped);
+    }
     PathBuf::from(path)
 }
 
