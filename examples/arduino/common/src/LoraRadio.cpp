@@ -15,7 +15,6 @@ namespace lora {
 static const uint8_t LORA_CS = 10;
 static const uint8_t LORA_INT = 2;
 static const uint8_t LORA_RST = 9;
-static const uint8_t LORA_POWER = 5;
 static const float LORA_FREQUENCY = 915.0;
 
 static bool INITIALIZED = false;
@@ -45,7 +44,10 @@ RC init() {
         return RC::InitFailed;
     }
 #else
-    digitalWrite(LORA_POWER, HIGH);
+    pinMode(3, OUTPUT);
+    pinMode(5, OUTPUT);
+    digitalWrite(3, HIGH);
+    digitalWrite(5, HIGH);
 
     pinMode(LORA_RST, OUTPUT);
     digitalWrite(LORA_RST, HIGH);
@@ -144,6 +146,16 @@ RC wait_recv(uint8_t buf[], uint8_t& len, uint32_t timeout_ms) {
         } else {
             len = (uint8_t)nread;
         }
+    }
+#else
+    if (timeout_ms == 0) {
+        RF95.waitAvailable();
+    } else {
+        RF95.waitAvailableTimeout(timeout_ms);
+    }
+
+    if (rc == RC::Okay && !RF95.recv(buf, &len)) {
+        rc = RC::RecvFailed;
     }
 #endif
 

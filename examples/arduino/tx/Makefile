@@ -25,7 +25,7 @@ RM := rm -rf
 .PHONY: board upload simulate run clean
 
 # Upload to device
-board: upload simulate
+board: upload monitor
 
 upload:
 	pio run -e aura --target upload --upload-port $(port)

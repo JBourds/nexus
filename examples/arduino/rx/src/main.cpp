@@ -1,6 +1,9 @@
 #include "LoraRadio.h"
 #ifdef SIMULATE
 #include <iostream>
+#else
+#include <Wire.h>
+#include <Arduino.h>
 #endif
 
 using lora::RC;
@@ -27,12 +30,22 @@ void print(const char* msg) {
 
 void setup() {
 #ifndef SIMULATE
+    Wire.begin();
     Serial.begin(9600);
     while (!Serial) {
     }
+    delay(50);
 #endif
-    if (lora::init() != RC::Okay) {
-        error("Lora init");
+    RC rc = lora::init();
+    switch (rc) {
+        case RC::InitFailed:
+            error("Failed to initialized RF95");
+            break;
+        case RC::SetFrequencyFailed:
+            error("Failed to set frequency");
+            break;
+        default:
+            break;
     }
 }
 
