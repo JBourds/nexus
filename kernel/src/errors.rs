@@ -22,7 +22,7 @@ pub enum KernelError {
     },
     #[error("Error during message routing `{0:#?}.")]
     RouterError(RouterError),
-    #[error("Error creating message source `{0:#?}.")]
+    #[error("Error creating message source `{0}`.")]
     SourceError(SourceError),
     #[error("Error encountered when creating file poll.")]
     PollCreation,
@@ -34,12 +34,12 @@ pub enum KernelError {
 
 #[derive(Error, Debug)]
 pub enum SourceError {
-    #[error("Failed to create source for simulated events.")]
-    SimulatedEvents,
-    #[error("Failed to register file descriptor with poll.")]
-    PollRegistration,
-    #[error("Error polling event sources.")]
-    PollError,
+    #[error("Failed to create source for simulated events.\n{0:#?}")]
+    SimulatedEvents(io::Error),
+    #[error("Failed to register file descriptor with poll.\n{0:#?}")]
+    PollRegistration(io::Error),
+    #[error("Error polling event sources: \n{0:#?}")]
+    PollError(io::Error),
     #[error("Error while sending to router.")]
     RouterError(RouterError),
     #[error("Error found decoding replay log file: `{0:#?}`")]

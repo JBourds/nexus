@@ -33,6 +33,8 @@ pub enum Source {
         readers: Readers,
         next_log: Option<BinaryLogRecord>,
     },
+    /// No write events happen
+    Empty,
 }
 
 impl Source {
@@ -41,7 +43,7 @@ impl Source {
         readers: Readers,
         writers: Writers,
     ) -> Result<Self, SourceError> {
-        let poll = Poll::new().map_err(|_| SourceError::SimulatedEvents)?;
+        let poll = Poll::new().map_err(SourceError::SimulatedEvents)?;
         let events = Events::with_capacity(sockets.len());
         for (index, sock) in sockets.iter().enumerate() {
             poll.registry()
@@ -50,7 +52,7 @@ impl Source {
                     Token(index),
                     Interest::READABLE,
                 )
-                .map_err(|_| SourceError::PollRegistration)?;
+                .map_err(SourceError::PollRegistration)?;
         }
         Ok(Self::Simulated {
             poll,
@@ -98,7 +100,7 @@ impl Source {
     ) -> Result<(), SourceError> {
         // Check write events
         poll.poll(events, Some(delta))
-            .map_err(|_| SourceError::PollError)?;
+            .map_err(SourceError::PollError)?;
         for event in events.iter() {
             let Token(index) = event.token();
             router
@@ -191,6 +193,7 @@ impl Source {
         delta: Duration,
     ) -> Result<(), SourceError> {
         match self {
+            Self::Empty => Ok(()),
             Self::Simulated {
                 poll,
                 events,

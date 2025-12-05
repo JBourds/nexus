@@ -247,7 +247,13 @@ impl Kernel {
         log: Option<PathBuf>,
     ) -> Result<Source, SourceError> {
         match cmd {
-            RunCmd::Simulate => Source::simulated(sockets, readers, writers),
+            RunCmd::Simulate => {
+                if sockets.is_empty() {
+                    Ok(Source::Empty)
+                } else {
+                    Source::simulated(sockets, readers, writers)
+                }
+            }
             RunCmd::Replay => {
                 let Some(log) = log else {
                     return Err(SourceError::NoReplayLog);
