@@ -1,0 +1,23 @@
+[params]
+timestep.length = 1
+timestep.unit = "ms"
+timestep.count = 5000 
+root = "~/simulations"  
+
+
+[nodes]
+
+[nodes.main]
+deployments = [ {} ]
+
+[nodes.main.resources]
+clock_rate = 16
+clock_units = "Mhz"
+
+[[nodes.main.protocols]]
+
+name = "main"
+build = "make"
+build_args = ["build"]
+runner = "./bin/main"
+
