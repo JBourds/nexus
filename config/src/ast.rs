@@ -213,8 +213,9 @@ pub struct Signal {
     pub unit: DistanceUnit,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum SignalShape {
+    #[default]
     Omnidirectional,
     Cone,
     Direct,
@@ -240,7 +241,7 @@ pub struct Params {
     pub root: PathBuf,
 }
 
-#[derive(Serialize, Deserialize, Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct DelayCalculator {
     pub transmission: DataRate,
     pub processing: DataRate,
@@ -459,12 +460,6 @@ impl DelayCalculator {
 }
 
 // Manual trait impls
-
-impl std::fmt::Debug for DelayCalculator {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "DelayCalculator {{ .. }}")
-    }
-}
 
 impl std::fmt::Display for Cmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
