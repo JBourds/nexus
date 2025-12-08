@@ -1,6 +1,7 @@
-use std::path::PathBuf;
-
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, bail};
+use crc32fast::Hasher;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 
 mod helpers;
 mod namespace;
@@ -9,6 +10,8 @@ mod units;
 mod validate;
 
 pub mod ast;
+
+const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
     let config_text = std::fs::read_to_string(&config_root).context(format!(
@@ -21,6 +24,61 @@ pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
     let validated = ast::Simulation::validate(&config_root, parsed)
         .context("Failed to validate simulation parameters from config file.")?;
     Ok(validated)
+}
+
+#[derive(Serialize, Deserialize, Debug)]
+struct ConfigSnapshot {
+    cfg: String,
+    version: String,
+    checksum: u32,
+}
+
+impl ConfigSnapshot {
+    fn new(sim: &ast::Simulation) -> Self {
+        let cfg = toml::to_string_pretty(sim).expect("unable to serialize toml to string");
+        let mut hasher = Hasher::new();
+        hasher.update(cfg.as_bytes());
+        let checksum = hasher.finalize();
+        Self {
+            cfg,
+            version: VERSION.to_string(),
+            checksum,
+        }
+    }
+
+    fn try_read(path: &Path) -> Result<Self> {
+        let config_text = std::fs::read_to_string(path).context(format!(
+            "Unable to open file located at {}",
+            path.to_string_lossy()
+        ))?;
+        let cfg: ConfigSnapshot = toml::from_str(config_text.as_str())
+            .context("Failed to parse config snapshot from path.")?;
+        let checksum = {
+            let mut hasher = Hasher::new();
+            hasher.update(cfg.cfg.as_bytes());
+            hasher.finalize()
+        };
+        if checksum != cfg.checksum {
+            bail!("Checksum mismatch for configuration file!");
+        }
+        Ok(cfg)
+    }
+}
+
+pub fn serialize_config(sim: &ast::Simulation, dest: &Path) -> Result<()> {
+    let cfg = ConfigSnapshot::new(sim);
+    let s = toml::to_string_pretty(&cfg)?;
+    std::fs::write(dest, s.as_bytes())?;
+    Ok(())
+}
+
+pub fn deserialize_config(src: &Path) -> Result<ast::Simulation> {
+    let snapshot = ConfigSnapshot::try_read(src)?;
+    if let Ok(res) = toml::from_str(snapshot.cfg.as_str()) {
+        Ok(res)
+    } else {
+        bail!("Unable to deserialize validated configuration from snapshot.");
+    }
 }
 
 #[cfg(test)]

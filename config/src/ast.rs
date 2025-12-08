@@ -497,16 +497,11 @@ impl Default for DistanceProbVar {
     }
 }
 
-impl Default for SignalShape {
-    fn default() -> Self {
-        Self::Omnidirectional
-    }
-}
-
 impl Default for DataRate {
     fn default() -> Self {
         Self {
-            rate: u64::MAX,
+            // Needs to be < i64::MAX because of TOML limitation
+            rate: u64::MAX / 2,
             data: DataUnit::default(),
             time: TimeUnit::default(),
         }

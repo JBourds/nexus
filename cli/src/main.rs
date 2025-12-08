@@ -2,10 +2,10 @@ use chrono::{DateTime, Utc};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::RunHandle;
-use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
+use std::{collections::HashSet, num::NonZeroUsize};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
@@ -16,6 +16,8 @@ use clap::Parser;
 
 use runner::RunCmd;
 use std::path::PathBuf;
+
+const CONFIG: &str = "nexus.toml";
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
@@ -38,22 +40,23 @@ pub struct Args {
     pub logs: Option<PathBuf>,
 }
 
-fn main() -> Result<()> {
-    let args = Args::parse();
-    ensure!(
-        !matches!(args.cmd, RunCmd::Replay | RunCmd::Logs) || args.logs.is_some(),
-        format!(
-            "Must provide a directory for `logs` argument when running command `{}`",
-            args.cmd
-        )
-    );
-    if args.cmd == RunCmd::Logs {
-        Source::print_logs(args.logs.unwrap())?;
-        return Ok(());
-    }
+fn simulate(args: Args) -> Result<()> {
+    let sim = config::parse((&args.config).into())?;
+    let root = make_sim_dir(&sim.params.root)?;
+    config::serialize_config(&sim, &root.join(CONFIG))?;
+    run(args, sim, root)
+}
 
-    let sim = config::parse(args.config.into())?;
-    let (write_log, read_log) = setup_logging(&sim.params.root, args.cmd)?;
+fn replay(args: Args) -> Result<()> {
+    let logs = args.logs.as_ref().expect("could not find log directory");
+    let sim = config::deserialize_config(&logs.join(CONFIG))?;
+    let root = make_sim_dir(&sim.params.root)?;
+    config::serialize_config(&sim, &root.join(CONFIG))?;
+    run(args, sim, root)
+}
+
+fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
+    let (write_log, read_log) = setup_logging(root.as_path(), args.cmd)?;
     runner::build(&sim)?;
     let (cgroup_path, run_handles) = runner::run(&sim)?;
     let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
@@ -70,6 +73,32 @@ fn main() -> Result<()> {
     println!("Write Log: {write_log:?}");
     println!("Read Log: {read_log:?}");
     Ok(())
+}
+
+fn logs(args: Args) -> Result<()> {
+    Source::print_logs(args.logs.unwrap())?;
+    Ok(())
+}
+
+fn fuzz(args: Args) -> Result<()> {
+    todo!()
+}
+
+fn main() -> Result<()> {
+    let args = Args::parse();
+    ensure!(
+        !matches!(args.cmd, RunCmd::Replay | RunCmd::Logs) || args.logs.is_some(),
+        format!(
+            "Must provide a directory for `logs` argument when running command `{}`",
+            args.cmd
+        )
+    );
+    match args.cmd {
+        RunCmd::Simulate => simulate(args),
+        RunCmd::Replay => replay(args),
+        RunCmd::Logs => logs(args),
+        RunCmd::Fuzz => fuzz(args),
+    }
 }
 
 fn summarize(mut handles: Vec<RunHandle>) -> String {
@@ -94,13 +123,17 @@ fn summarize(mut handles: Vec<RunHandle>) -> String {
     summaries.join("\n")
 }
 
-fn setup_logging(sim_root: &Path, cmd: RunCmd) -> Result<(PathBuf, PathBuf)> {
+fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
     let datetime: DateTime<Utc> = SystemTime::now().into();
     let datetime = datetime.format("%Y-%m-%d_%H:%M:%S").to_string();
     let root = sim_root.join(&datetime);
     if !root.exists() {
         std::fs::create_dir_all(&root)?;
     }
+    Ok(root)
+}
+
+fn setup_logging(root: &Path, cmd: RunCmd) -> Result<(PathBuf, PathBuf)> {
     let tx = root.join("tx");
     let rx = root.join("rx");
     let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
