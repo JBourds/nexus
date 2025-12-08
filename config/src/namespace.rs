@@ -51,7 +51,7 @@ impl<T> Namespace<T> {
         Ok(self)
     }
 
-    pub fn add(&mut self, mut name: String, mut v: T) -> Result<&mut Self, NamespaceError> {
+    pub fn add(&mut self, mut name: String, v: T) -> Result<&mut Self, NamespaceError> {
         name.make_ascii_lowercase();
         if self.entities.contains_key(&name) {
             Err(NamespaceError::DuplicateName {

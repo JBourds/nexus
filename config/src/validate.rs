@@ -10,7 +10,6 @@ use crate::units::*;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use std::path::PathBuf;
-use std::rc::Rc;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -205,12 +204,6 @@ fn link_namespace(mut links: HashMap<String, parse::Link>) -> Result<Namespace<p
     }
     ns.ban_names(&HashSet::from(["ideal"]))?
         .add_entries(links)?;
-    Ok(ns.into())
-}
-
-fn node_namespace(nodes: HashMap<String, parse::Node>) -> Result<Namespace<parse::Node>> {
-    let mut ns = Namespace::<parse::Node>::new(String::from("Nodes"));
-    ns.add_entries(nodes)?;
     Ok(ns.into())
 }
 
