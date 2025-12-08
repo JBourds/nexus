@@ -38,6 +38,8 @@ pub type WriteControl = KernelControlFile<WriteSignal>;
 pub type Readers = Vec<ReadControl>;
 pub type Writers = Vec<WriteControl>;
 
+const TX: &str = "tx";
+
 #[allow(unused)]
 pub struct Kernel {
     root: PathBuf,
@@ -244,7 +246,7 @@ impl Kernel {
         sockets: &[UnixDatagram],
         readers: Readers,
         writers: Writers,
-        log: Option<PathBuf>,
+        logs: Option<PathBuf>,
     ) -> Result<Source, SourceError> {
         match cmd {
             RunCmd::Simulate => {
@@ -255,13 +257,14 @@ impl Kernel {
                 }
             }
             RunCmd::Replay => {
-                let Some(log) = log else {
+                let Some(logs) = logs else {
                     return Err(SourceError::NoReplayLog);
                 };
-                if !log.exists() {
-                    return Err(SourceError::NonexistentReplayLog(log));
+                let logfile = logs.join(TX);
+                if !logfile.exists() {
+                    return Err(SourceError::NonexistentReplayLog(logfile));
                 }
-                Source::replay(log, readers)
+                Source::replay(logfile, readers)
             }
             _ => unreachable!(),
         }
