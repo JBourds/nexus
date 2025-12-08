@@ -1,9 +1,9 @@
 pub use super::units::*;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::NonZeroU64;
 use std::path::PathBuf;
-use std::rc::Rc;
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
@@ -12,7 +12,7 @@ pub type ProtocolHandle = String;
 pub type SinkHandle = String;
 pub type SourceHandle = String;
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
@@ -21,7 +21,7 @@ pub struct Simulation {
     pub sources: HashMap<SourceHandle, PowerRate>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Link {
     pub signal: Signal,
     pub bit_error: DistanceProbVar,
@@ -29,13 +29,13 @@ pub struct Link {
     pub delays: DelayCalculator,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Channel {
     pub link: Link,
     pub r#type: ChannelType,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub enum ChannelType {
     /// No channel buffering other than transmission & propagation time (because
     /// this is a shared medium, there can only be one source of truth for what
@@ -132,24 +132,24 @@ impl Default for ChannelType {
     }
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Node {
     pub position: Position,
     pub charge: Option<Charge>,
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
     pub internal_names: Vec<ChannelHandle>,
-    pub resources: Rc<Resources>,
-    pub sinks: Rc<HashSet<SinkHandle>>,
-    pub sources: Rc<HashSet<SourceHandle>>,
+    pub resources: Resources,
+    pub sinks: HashSet<SinkHandle>,
+    pub sources: HashSet<SourceHandle>,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Resources {
     pub cpu: Cpu,
     pub mem: Mem,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Cpu {
     pub cores: Option<NonZeroU64>,
     /// If this is None, don't apply any rate limiting
@@ -157,20 +157,20 @@ pub struct Cpu {
     pub unit: ClockUnit,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Mem {
     /// If this is None, don't apply a memory limit
     pub amount: Option<NonZeroU64>,
     pub unit: DataUnit,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Charge {
     pub quantity: u64,
     pub unit: PowerUnit,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub build: Cmd,
@@ -179,68 +179,68 @@ pub struct NodeProtocol {
     pub subscribers: HashSet<ChannelHandle>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Cmd {
     pub cmd: String,
     pub args: Vec<String>,
 }
 
-#[derive(Clone, Default, Debug)]
+#[derive(Serialize, Deserialize, Clone, Default, Debug)]
 pub struct Position {
     pub orientation: Orientation,
     pub point: Point,
     pub unit: DistanceUnit,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
 pub struct Point {
     pub x: f64,
     pub y: f64,
     pub z: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default)]
 pub struct Orientation {
     pub az: f64,
     pub el: f64,
     pub roll: f64,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Signal {
     pub range: ConnectionRange,
     pub shape: SignalShape,
     pub unit: DistanceUnit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum SignalShape {
     Omnidirectional,
     Cone,
     Direct,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub struct ConnectionRange {
     pub maximum: Option<f64>,
     pub offset: Option<f64>,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct TimestepConfig {
     pub length: NonZeroU64,
     pub unit: TimeUnit,
     pub count: NonZeroU64,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Params {
     pub timestep: TimestepConfig,
     pub seed: u64,
     pub root: PathBuf,
 }
 
-#[derive(Clone, Default)]
+#[derive(Serialize, Deserialize, Clone, Default)]
 pub struct DelayCalculator {
     pub transmission: DataRate,
     pub processing: DataRate,
@@ -248,7 +248,7 @@ pub struct DelayCalculator {
     pub ts_config: TimestepConfig,
 }
 
-#[derive(Clone, Debug, Default, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Delays {
     pub transmission: DataRate,
     pub processing: DataRate,
@@ -257,18 +257,18 @@ pub struct Delays {
 
 /// Expression of `x` (distance) which is equal to the duration in `unit`s
 /// for an event to occur (ex. Bits to propagate).
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DistanceTimeVar {
-    pub rate: meval::Expr,
+    pub rate: String,
     pub time: TimeUnit,
     pub distance: DistanceUnit,
 }
 
 /// Expression of `x` in `distance` units and `y` in `size` units which equals
 /// the probability of an event happening given a distance and payload size.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DistanceProbVar {
-    pub rate: meval::Expr,
+    pub rate: String,
     pub distance: DistanceUnit,
     pub size: DataUnit,
 }
@@ -314,7 +314,12 @@ impl DistanceProbVar {
         data: u64,
         data_unit: DataUnit,
     ) -> f64 {
-        let func = self.rate.clone().bind2("x", "y").unwrap();
+        let func = self
+            .rate
+            .parse::<meval::Expr>()
+            .expect("unable to parse meval Expression")
+            .bind2("x", "y")
+            .unwrap();
         let (should_scale_down, ratio) = DistanceUnit::ratio(self.distance, distance_unit);
         let scalar = 10u64
             .checked_pow(ratio.try_into().unwrap())
@@ -419,7 +424,13 @@ impl DelayCalculator {
     }
 
     pub fn propagation_timesteps_f64(&self, distance: f64, unit: DistanceUnit) -> f64 {
-        let func = self.propagation.rate.clone().bind("x").unwrap();
+        let func = self
+            .propagation
+            .rate
+            .parse::<meval::Expr>()
+            .expect("unable to parse meval Expression")
+            .bind("x")
+            .unwrap();
         // Number of `distance_unit` / `time_unit` for value of `distance`
         let (should_scale_down, ratio) = DistanceUnit::ratio(self.propagation.distance, unit);
         // Scale distance units

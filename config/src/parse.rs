@@ -33,7 +33,7 @@ pub struct TimestepConfig {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DistanceTimeVar {
-    pub(super) rate: Option<meval::Expr>,
+    pub(super) rate: Option<String>,
     pub(super) time: Option<Unit>,
     pub(super) distance: Option<Unit>,
 }
@@ -41,7 +41,7 @@ pub struct DistanceTimeVar {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct DistanceProbVar {
-    pub(super) rate: Option<meval::Expr>,
+    pub(super) rate: Option<String>,
     pub(super) distance: Option<Unit>,
     pub(super) size: Option<Unit>,
 }

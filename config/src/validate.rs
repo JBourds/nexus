@@ -2,7 +2,6 @@ use super::namespace::Namespace;
 use super::parse;
 use crate::ast::*;
 use crate::helpers::*;
-use crate::namespace::NamespaceError;
 use crate::parse::Deployment;
 use crate::parse::PowerSink;
 use crate::parse::PowerSource;
@@ -493,7 +492,13 @@ impl Delays {
 
 impl DelayCalculator {
     pub(crate) fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
-        if delays.propagation.rate.clone().bind("x").is_err() {
+        if delays
+            .propagation
+            .rate
+            .parse::<meval::Expr>()?
+            .bind("x")
+            .is_err()
+        {
             bail!("Link rates must be a one variable function of distance \"x\"");
         };
         Ok(Self {
@@ -570,7 +575,7 @@ impl DistanceProbVar {
     fn validate(val: parse::DistanceProbVar) -> Result<Self> {
         let def = Self::default();
         let rate = val.rate.unwrap_or(def.rate);
-        if rate.clone().bind2("x", "y").is_err() {
+        if rate.parse::<meval::Expr>()?.bind2("x", "y").is_err() {
             bail!(
                 "Distance probability variable must be a function of \"x\" (distance) and \"y\" (data)"
             );
@@ -710,12 +715,11 @@ impl Node {
         sink_handles: &HashSet<SinkHandle>,
         source_handles: &HashSet<SourceHandle>,
     ) -> Result<Vec<Self>> {
-        let resources = Rc::new(
-            val.resources
-                .map(Resources::validate)
-                .unwrap_or(Ok(Resources::default()))
-                .context("Failed to validate node resource allocation.")?,
-        );
+        let resources = val
+            .resources
+            .map(Resources::validate)
+            .unwrap_or(Ok(Resources::default()))
+            .context("Failed to validate node resource allocation.")?;
         // No duplicate internal names
         let mut internal_names = HashSet::new();
         if let Some(names) = val.internal_names {
@@ -759,15 +763,13 @@ impl Node {
             .context("Unable to validate node protocols")?;
 
         // Validate sinks/source names are valid
-        let sink_names: Rc<HashSet<_>> =
-            Rc::new(val.sinks.unwrap_or_default().into_iter().collect());
+        let sink_names: HashSet<_> = val.sinks.unwrap_or_default().into_iter().collect();
         let sink_diff: HashSet<_> = sink_names.difference(sink_handles).collect();
         ensure!(
             sink_diff.is_empty(),
             "Found undefined sink names in node: {sink_diff:#?}"
         );
-        let source_names: Rc<HashSet<_>> =
-            Rc::new(val.sources.unwrap_or_default().into_iter().collect());
+        let source_names: HashSet<_> = val.sources.unwrap_or_default().into_iter().collect();
         let source_diff: HashSet<_> = source_names.difference(source_handles).collect();
         ensure!(
             source_diff.is_empty(),
@@ -832,11 +834,11 @@ impl Node {
             nodes.push(Node {
                 charge,
                 position,
-                resources: Rc::clone(&resources),
+                resources: resources.clone(),
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
-                sinks: Rc::clone(&sink_names),
-                sources: Rc::clone(&source_names),
+                sinks: sink_names.clone(),
+                sources: source_names.clone(),
             });
         }
         Ok(nodes)

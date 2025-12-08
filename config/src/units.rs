@@ -1,18 +1,20 @@
-#[derive(Clone, Copy, Debug, PartialEq)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct DataRate {
     pub rate: u64,
     pub data: DataUnit,
     pub time: TimeUnit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct PowerRate {
     pub rate: i64,
     pub unit: PowerUnit,
     pub time: TimeUnit,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum ClockUnit {
     Hertz,
     Kilohertz,
@@ -20,7 +22,7 @@ pub enum ClockUnit {
     Gigahertz,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum DataUnit {
     Bit,
     Kilobit,
@@ -32,7 +34,7 @@ pub enum DataUnit {
     Gigabyte,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum PowerUnit {
     NanoWattHours,
     MicroWattHours,
@@ -43,7 +45,7 @@ pub enum PowerUnit {
     GigaWattHours,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum TimeUnit {
     Seconds,
     Milliseconds,
@@ -51,7 +53,7 @@ pub enum TimeUnit {
     Nanoseconds,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub enum DistanceUnit {
     Millimeters,
     Centimeters,

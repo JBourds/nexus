@@ -92,15 +92,15 @@ delays.transmission.time = "s"
 # Error Rates
 
 # Probability of bit flipping in the transfer.
-bit_error = { rate = 0, distance = "m" }          
+bit_error = { rate = "0", distance = "m" }          
 
 # Probability of experiencing packet loss
-packet_loss = { rate = 0, distance = "cm" }
+packet_loss = { rate = "0", distance = "cm" }
 
 # Network Delays
 
 delays.processing = { data = "b", time = "s" }
-delays.propagation = { rate = 0, distance = "km" }
+delays.propagation = { rate = "0", distance = "km" }
 
 [channels]
 
