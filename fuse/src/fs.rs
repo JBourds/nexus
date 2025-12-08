@@ -270,7 +270,10 @@ impl NexusFs {
         ];
         let root = self.root.clone();
         if !root.exists() {
-            fs::create_dir_all(&root).map_err(|_| FsError::CreateDirError(root.clone()))?;
+            fs::create_dir_all(&root).map_err(|err| FsError::CreateDirError {
+                dir: root.clone(),
+                err,
+            })?;
         }
         let kernel_links = core::mem::take(&mut self.kernel_links);
         let sess =

@@ -17,8 +17,8 @@ pub enum ChannelError {
 pub enum FsError {
     #[error("Failed to mount at \"`{root}`.\nError: {err}\"")]
     MountError { root: PathBuf, err: io::Error },
-    #[error("Failed to create directory at \"`{0}`\"")]
-    CreateDirError(PathBuf),
+    #[error("Failed to create directory at \"`{dir}`\"\n{err:#?}")]
+    CreateDirError { dir: PathBuf, err: io::Error },
 }
 
 #[derive(Error, Debug)]
