@@ -20,9 +20,9 @@ pub enum KernelError {
         pid: PID,
         output: Output,
     },
-    #[error("Error during message routing `{0:#?}.")]
+    #[error("Error during message routing {0:#?}.")]
     RouterError(RouterError),
-    #[error("Error creating message source `{0}`.")]
+    #[error("Error creating message source {0:#?}")]
     SourceError(SourceError),
     #[error("Error encountered when creating file poll.")]
     PollCreation,
