@@ -12,6 +12,7 @@ home = { workspace = true }
 tracing = { workspace = true }
 rand = { workspace = true }
 thiserror.workspace = true
+crc32fast = "1.5.0"
 
 [dev-dependencies]
 assert_cmd = "2.0"
