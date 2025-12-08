@@ -1,6 +1,8 @@
+use super::namespace::Namespace;
 use super::parse;
 use crate::ast::*;
 use crate::helpers::*;
+use crate::namespace::NamespaceError;
 use crate::parse::Deployment;
 use crate::parse::PowerSink;
 use crate::parse::PowerSource;
@@ -195,6 +197,54 @@ impl ChannelType {
     }
 }
 
+fn link_namespace(mut links: HashMap<String, parse::Link>) -> Result<Namespace<parse::Link>> {
+    let mut ns = Namespace::<parse::Link>::new(String::from("Links"));
+    for (_, l) in links.iter_mut() {
+        if let Some(ref mut inherit) = l.inherit {
+            inherit.make_ascii_lowercase();
+        }
+    }
+    ns.ban_names(&HashSet::from(["ideal"]))?
+        .add_entries(links)?;
+    Ok(ns.into())
+}
+
+fn node_namespace(nodes: HashMap<String, parse::Node>) -> Result<Namespace<parse::Node>> {
+    let mut ns = Namespace::<parse::Node>::new(String::from("Nodes"));
+    ns.add_entries(nodes)?;
+    Ok(ns.into())
+}
+
+fn source_namespace(sources: Vec<PowerSource>) -> Result<Namespace<PowerRate>> {
+    let mut ns = Namespace::<PowerRate>::new(String::from("PowerSource"));
+    for (name, v) in sources.into_iter().map(
+        |PowerSource {
+             name,
+             quantity,
+             unit,
+             time,
+         }| (name, PowerRate::validate(quantity, unit, time, true)),
+    ) {
+        ns.add(name, v?)?;
+    }
+    Ok(ns.into())
+}
+
+fn sink_namespace(sinks: Vec<PowerSink>) -> Result<Namespace<PowerRate>> {
+    let mut ns = Namespace::<PowerRate>::new(String::from("PowerSink"));
+    for (name, v) in sinks.into_iter().map(
+        |PowerSink {
+             name,
+             quantity,
+             unit,
+             time,
+         }| (name, PowerRate::validate(quantity, unit, time, true)),
+    ) {
+        ns.add(name, v?)?;
+    }
+    Ok(ns.into())
+}
+
 impl Simulation {
     /// Guaranteed to not have a cycle because it only traces links with a
     /// common ancestor to the default link, which is a sink node.
@@ -258,27 +308,11 @@ impl Simulation {
         let params = Params::validate(config_root, val.params)
             .context("Unable to validate simulation parameters")?;
 
-        // Convert all the links to lowercase
-        let mut links =
-            val.links
-                .into_iter()
-                .fold(HashMap::new(), |mut map, (mut name, mut link)| {
-                    name.make_ascii_lowercase();
-                    if let Some(ref mut inherit) = link.inherit {
-                        inherit.make_ascii_lowercase();
-                    }
-                    map.insert(name, link);
-                    map
-                });
-        if links.contains_key(Link::DEFAULT) {
-            bail!(
-                "Error to define a link with the name \"ideal\". This link is present by default in the link namespace and cannot be changed."
-            );
-        }
-
+        let mut links: HashMap<_, _> = link_namespace(val.links)?.into();
         // Now that the topological ordering is complete, process links in the
         // order we created
         let ordering = Self::trace_link_dependencies(&mut links)?;
+
         let mut processed = HashMap::new();
         let _ = processed
             .insert(Link::DEFAULT.to_string(), Link::default())
@@ -293,34 +327,10 @@ impl Simulation {
             let _ = processed.insert(key.to_string(), res);
         }
 
-        let mut sources = HashMap::new();
-        for PowerSource {
-            name,
-            quantity,
-            unit,
-            time,
-        } in val.sources.unwrap_or_default()
-        {
-            if sources.contains_key(&name) {
-                bail!("Duplicate name in power sources: {name}");
-            }
-            sources.insert(name, PowerRate::validate(quantity, unit, time, true)?);
-        }
+        let sources: HashMap<_, _> = source_namespace(val.sources.unwrap_or_default())?.into();
         let source_names: HashSet<_> = sources.keys().cloned().collect();
 
-        let mut sinks = HashMap::new();
-        for PowerSink {
-            name,
-            quantity,
-            unit,
-            time,
-        } in val.sinks.unwrap_or_default()
-        {
-            if sinks.contains_key(&name) {
-                bail!("Duplicate name in power sinks: {name}");
-            }
-            sinks.insert(name, PowerRate::validate(quantity, unit, time, true)?);
-        }
+        let sinks: HashMap<_, _> = sink_namespace(val.sinks.unwrap_or_default())?.into();
         let sink_names: HashSet<_> = sinks.keys().cloned().collect();
 
         let channels: HashMap<_, _> = val

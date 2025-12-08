@@ -1,4 +1,7 @@
 Error {
     context: "Failed to validate simulation parameters from config file.",
-    source: "Error to define a link with the name \"ideal\". This link is present by default in the link namespace and cannot be changed.",
+    source: Keyword {
+        name: "Links",
+        kw: "ideal",
+    },
 }

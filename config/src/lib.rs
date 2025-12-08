@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 mod helpers;
+mod namespace;
 pub(crate) mod parse;
 mod units;
 mod validate;
