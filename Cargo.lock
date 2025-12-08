@@ -257,6 +257,7 @@ dependencies = [
  "pretty_assertions",
  "rand",
  "serde",
+ "thiserror",
  "toml",
  "tracing",
 ]
