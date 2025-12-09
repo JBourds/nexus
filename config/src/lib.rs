@@ -13,6 +13,9 @@ pub mod ast;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
+const CONTROL_FILES: [&str; 2] = ["energy", "position"];
+const RESERVED_LINKS: [&str; 1] = ["ideal"];
+
 pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
     let config_text = std::fs::read_to_string(&config_root).context(format!(
         "Unable to open file located at {}",

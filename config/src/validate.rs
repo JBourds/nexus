@@ -1,5 +1,7 @@
 use super::namespace::Namespace;
 use super::parse;
+use crate::CONTROL_FILES;
+use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
@@ -202,9 +204,9 @@ fn link_namespace(mut links: HashMap<String, parse::Link>) -> Result<Namespace<p
             inherit.make_ascii_lowercase();
         }
     }
-    ns.ban_names(&HashSet::from(["ideal"]))?
+    ns.ban_names(&HashSet::from(RESERVED_LINKS))?
         .add_entries(links)?;
-    Ok(ns.into())
+    Ok(ns)
 }
 
 fn source_namespace(sources: Vec<PowerSource>) -> Result<Namespace<PowerRate>> {
@@ -219,7 +221,7 @@ fn source_namespace(sources: Vec<PowerSource>) -> Result<Namespace<PowerRate>> {
     ) {
         ns.add(name, v?)?;
     }
-    Ok(ns.into())
+    Ok(ns)
 }
 
 fn sink_namespace(sinks: Vec<PowerSink>) -> Result<Namespace<PowerRate>> {
@@ -234,7 +236,19 @@ fn sink_namespace(sinks: Vec<PowerSink>) -> Result<Namespace<PowerRate>> {
     ) {
         ns.add(name, v?)?;
     }
-    Ok(ns.into())
+    Ok(ns)
+}
+
+fn channel_namespace(
+    channels: HashMap<String, parse::Channel>,
+    processed: &HashMap<LinkHandle, Link>,
+) -> Result<Namespace<Channel>> {
+    let mut ns = Namespace::<Channel>::new(String::from("Channel"));
+    ns.ban_names(&HashSet::from(CONTROL_FILES))?;
+    for (name, channel) in channels {
+        ns.add(name, Channel::validate(channel, processed)?)?;
+    }
+    Ok(ns)
 }
 
 impl Simulation {
@@ -325,12 +339,7 @@ impl Simulation {
         let sinks: HashMap<_, _> = sink_namespace(val.sinks.unwrap_or_default())?.into();
         let sink_names: HashSet<_> = sinks.keys().cloned().collect();
 
-        let channels: HashMap<_, _> = val
-            .channels
-            .into_iter()
-            .map(|(name, channel)| Channel::validate(channel, &processed).map(|val| (name, val)))
-            .collect::<Result<_>>()
-            .context("Failed to validate channels.")?;
+        let channels: HashMap<_, _> = channel_namespace(val.channels, &processed)?.into();
         let channel_handles = channels.keys().cloned().collect::<HashSet<_>>();
         let validated_nodes = val
             .nodes
