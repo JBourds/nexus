@@ -38,14 +38,14 @@ pub enum DataUnit {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum PowerUnit {
-    NanoWattHours,
-    MicroWattHours,
-    MilliWattHours,
+    NanoWatt,
+    MicroWatt,
+    MilliWatt,
     #[default]
-    WattHours,
-    KiloWattHours,
-    MegaWattHours,
-    GigaWattHours,
+    Watt,
+    KiloWatt,
+    MegaWatt,
+    GigaWatt,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -117,13 +117,13 @@ impl PowerUnit {
 
     pub fn power(&self) -> usize {
         match self {
-            Self::NanoWattHours => 0,
-            Self::MicroWattHours => 3,
-            Self::MilliWattHours => 6,
-            Self::WattHours => 9,
-            Self::KiloWattHours => 12,
-            Self::MegaWattHours => 15,
-            Self::GigaWattHours => 18,
+            Self::NanoWatt => 0,
+            Self::MicroWatt => 3,
+            Self::MilliWatt => 6,
+            Self::Watt => 9,
+            Self::KiloWatt => 12,
+            Self::MegaWatt => 15,
+            Self::GigaWatt => 18,
         }
     }
 }

@@ -73,13 +73,13 @@ impl PowerUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0[1..].make_ascii_lowercase();
         let variant = match val.0.as_str() {
-            "nwh" | "Nwh" => Self::NanoWattHours,
-            "uwh" | "Uwh" => Self::MicroWattHours,
-            "mwh" => Self::MilliWattHours,
-            "wh" => Self::WattHours,
-            "Kwh" | "kwh" => Self::KiloWattHours,
-            "Mwh" => Self::MegaWattHours,
-            "Gwh" | "gwh" => Self::GigaWattHours,
+            "Nanowatt" | "nanowatt" | "nw" | "Nw" => Self::NanoWatt,
+            "Microwatt" | "microwatt" | "uw" | "Uw" => Self::MicroWatt,
+            "Milliwatt" | "milliwatt" | "mw" => Self::MilliWatt,
+            "Watt" | "watt" | "w" => Self::Watt,
+            "Kilowatt" | "kilowatt" | "Kw" | "kw" => Self::KiloWatt,
+            "Megawatt" | "megawatt" | "Mw" => Self::MegaWatt,
+            "Gigawatt" | "gigawatt" | "Gw" | "gw" => Self::GigaWatt,
             s => {
                 bail!("Expected to find a valid power unit but found \"{s}\"");
             }
