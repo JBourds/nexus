@@ -1,0 +1,42 @@
+# Simulate client/server communication over a perfect connection
+
+[params]
+timestep.length = 1          
+timestep.unit = "s"
+timestep.count = 5        
+seed = 42                       
+root = "~/simulations"  
+
+[[sources]]
+name = "solar_panel"
+quantity = 400
+unit = "wh"
+
+[[sinks]]
+name = "sleep"
+quantity = 20
+unit = "uwh"
+
+[[sinks]]
+name = "standby"
+quantity = 200
+unit = "uwh"
+
+[[sinks]]
+name = "processing"
+quantity = 80
+unit = "mwh"
+
+[nodes]
+
+[nodes.main]
+deployments = [ {} ]
+sources = ["solar_panel"]
+sinks = ["sleep", "standby", "processing"]
+
+[[nodes.main.protocols]]
+
+name = "main"
+runner = "python3"
+runner_args = ["client.py"]
+
