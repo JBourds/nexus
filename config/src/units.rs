@@ -50,6 +50,8 @@ pub enum PowerUnit {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum TimeUnit {
+    Hours,
+    Minutes,
     #[default]
     Seconds,
     Milliseconds,
@@ -146,6 +148,7 @@ impl TimeUnit {
             Self::Milliseconds => 3,
             Self::Microseconds => 6,
             Self::Nanoseconds => 9,
+            _ => unimplemented!("power() only supported on time intervals with SI prefices."),
         }
     }
 }

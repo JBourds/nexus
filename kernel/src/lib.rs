@@ -277,6 +277,7 @@ impl Kernel {
             ast::TimeUnit::Milliseconds => Duration::from_millis(length),
             ast::TimeUnit::Microseconds => Duration::from_micros(length),
             ast::TimeUnit::Nanoseconds => Duration::from_nanos(length),
+            _ => unreachable!(),
         }
     }
 }

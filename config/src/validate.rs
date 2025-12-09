@@ -92,6 +92,8 @@ impl TimeUnit {
     fn validate(mut val: parse::Unit) -> Result<Self> {
         val.0.make_ascii_lowercase();
         let variant = match val.0.as_str() {
+            "hours" | "h" => Self::Hours,
+            "minutes" | "m" => Self::Minutes,
             "seconds" | "s" => Self::Seconds,
             "milliseconds" | "ms" => Self::Milliseconds,
             "microseconds" | "us" => Self::Microseconds,
@@ -433,6 +435,9 @@ impl TimestepConfig {
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate time unit in timestep config")?;
+        if matches!(unit, TimeUnit::Minutes | TimeUnit::Hours) {
+            bail!("Simulation timestamp must be in seconds or smaller.");
+        }
         let count = val
             .count
             .map(NonZeroU64::new)

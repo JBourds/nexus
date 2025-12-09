@@ -10,22 +10,26 @@ root = "~/simulations"
 [[sources]]
 name = "solar_panel"
 quantity = 400
-unit = "wh"
+unit = "w"
+time = "h"
 
 [[sinks]]
 name = "sleep"
 quantity = 20
-unit = "uwh"
+unit = "uw"
+time = "s"
 
 [[sinks]]
 name = "standby"
 quantity = 200
-unit = "uwh"
+unit = "uw"
+time = "s"
 
 [[sinks]]
 name = "processing"
 quantity = 80
-unit = "mwh"
+unit = "mw"
+time = "s"
 
 [nodes]
 
