@@ -55,7 +55,7 @@ impl Channel {
     }
 
     pub(super) fn new_internal(handle: NodeHandle) -> Self {
-        let set = [handle].into_iter().collect::<HashSet<_>>();
+        let set = HashSet::from([handle]);
         Self {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
