@@ -14,50 +14,55 @@ pub struct PowerRate {
     pub time: TimeUnit,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum ClockUnit {
+    #[default]
     Hertz,
     Kilohertz,
     Megahertz,
     Gigahertz,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum DataUnit {
     Bit,
     Kilobit,
     Megabit,
     Gigabit,
+    #[default]
     Byte,
     Kilobyte,
     Megabyte,
     Gigabyte,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum PowerUnit {
     NanoWattHours,
     MicroWattHours,
     MilliWattHours,
+    #[default]
     WattHours,
     KiloWattHours,
     MegaWattHours,
     GigaWattHours,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum TimeUnit {
+    #[default]
     Seconds,
     Milliseconds,
     Microseconds,
     Nanoseconds,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum DistanceUnit {
     Millimeters,
     Centimeters,
     Meters,
+    #[default]
     Kilometers,
 }
 
@@ -164,35 +169,5 @@ impl DistanceUnit {
             Self::Meters => 4,
             Self::Kilometers => 7,
         }
-    }
-}
-
-impl Default for PowerUnit {
-    fn default() -> Self {
-        Self::WattHours
-    }
-}
-
-impl Default for ClockUnit {
-    fn default() -> Self {
-        Self::Gigahertz
-    }
-}
-
-impl Default for DataUnit {
-    fn default() -> Self {
-        Self::Byte
-    }
-}
-
-impl Default for TimeUnit {
-    fn default() -> Self {
-        Self::Milliseconds
-    }
-}
-
-impl Default for DistanceUnit {
-    fn default() -> Self {
-        Self::Kilometers
     }
 }
