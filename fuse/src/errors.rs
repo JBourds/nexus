@@ -1,5 +1,6 @@
 use std::io;
 use std::path::PathBuf;
+use std::sync::mpsc::RecvError;
 
 use thiserror::Error;
 
@@ -19,6 +20,8 @@ pub enum FsError {
     MountError { root: PathBuf, err: io::Error },
     #[error("Failed to create directory at \"`{dir}`\"\n{err:#?}")]
     CreateDirError { dir: PathBuf, err: io::Error },
+    #[error("Kernel shutdown. Error on read request: {0:#?}")]
+    KernelShutdown(Box<dyn std::error::Error>),
 }
 
 #[derive(Error, Debug)]
