@@ -96,6 +96,9 @@ impl NexusFs {
         Ok(self)
     }
 
+    /// Request a message from the kernel for the channel identified by `id`.
+    /// Performs blocking I/O on the channel to send a request and receive the
+    /// response from the kernel.
     fn pull_message(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
         fs_side
             .0
@@ -111,8 +114,7 @@ impl NexusFs {
     }
 
     /// Mount the filesystem without blocking, yield the background session it
-    /// is mounted in, and return the hash map with one side of the underlying
-    /// sockets for the kernel to use.
+    /// is mounted in, and return the kernel's end of
     pub fn mount(mut self) -> Result<(BackgroundSession, KernelChannels), FsError> {
         let options = vec![
             MountOption::FSName("nexus".to_string()),
@@ -194,6 +196,8 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
+
+        // Key files by the process and its channel name
         let key = (req.pid(), file.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
@@ -204,6 +208,8 @@ impl Filesystem for NexusFs {
             reply.error(EACCES);
             return;
         }
+
+        // Make sure files are opened with valid permissions
         match (file.mode, flags & O_ACCMODE) {
             (ChannelMode::ReadWrite, _)
             | (ChannelMode::ReplayWrites, _)
@@ -306,6 +312,7 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         };
+
         let key = (req.pid(), file.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
