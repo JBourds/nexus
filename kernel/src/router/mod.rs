@@ -38,26 +38,6 @@ use delivery::*;
 pub use errors::*;
 use table::*;
 
-// info!(
-//     "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-//     format!(
-//         "{}.{}.{}",
-//         log.node_name.as_ref(),
-//         log.pid,
-//         log.channel_name.as_ref()
-//     ),
-//     format_u8_buf(data),
-//     log.timestep,
-//     log.expiration,
-// );
-
-// info!(
-//     "{:<30} [TX]: {}",
-//     format!("{}.{pid}.{channel_name}", self.node_names[src_node]),
-//     format_u8_buf(&recv_buf)
-// );
-//
-
 #[derive(Debug)]
 #[allow(dead_code)]
 pub(crate) struct Router {
@@ -124,8 +104,18 @@ impl Router {
     /// nodes listening on the channel.
     pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
         let index = self.get_handle_index(&msg.id);
-        let (_, src_node, channel_handle) = self.channels.handles[index];
+        let (pid, src_node, channel_handle) = self.channels.handles[index];
+        let channel_name = &self.channels.channel_names[channel_handle];
         let timestep = self.timestep;
+        info!(
+            "{:<30} [TX]: {}",
+            format!(
+                "{}.{pid}.{channel_name}",
+                self.channels.node_names[src_node]
+            ),
+            format_u8_buf(&msg.data)
+        );
+
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
         self.post_to_mailboxes(src_node, channel_handle, msg.data)
     }
@@ -178,7 +168,7 @@ impl Router {
             if channel
                 .r#type
                 .max_buffered()
-                .is_none_or(|n| n.get() as usize > mailbox.len())
+                .is_none_or(|n| n.get() > mailbox.len())
             {
                 mailbox.push_back(frame.msg);
             } else {

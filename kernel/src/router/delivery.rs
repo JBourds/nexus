@@ -154,13 +154,7 @@ impl Router {
         let channel_name = &self.channels.channel_names[channel_handle];
         let node_name = &self.channels.node_names[node_handle];
         let timestep = self.timestep;
-        let mut log_info = RxLogInfo {
-            timestep,
-            expiration: None,
-            pid,
-            node_name,
-            channel_name,
-        };
+
         let mailbox = &mut self.mailboxes[index];
 
         match mailbox.len().cmp(&1) {
@@ -179,6 +173,25 @@ impl Router {
                     unit,
                     &mut self.rng,
                 ) {
+                    let mut log_info = RxLogInfo {
+                        timestep,
+                        expiration: None,
+                        pid,
+                        node_name,
+                        channel_name,
+                    };
+                    info!(
+                        "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                        format!(
+                            "{}.{}.{}",
+                            log_info.node_name.as_ref(),
+                            log_info.pid,
+                            log_info.channel_name.as_ref()
+                        ),
+                        format_u8_buf(&buf),
+                        log_info.timestep,
+                        log_info.expiration,
+                    );
                     let msg = fuse::Message {
                         id: (pid, node_name.clone()),
                         data: buf.to_vec(),
