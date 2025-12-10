@@ -256,6 +256,15 @@ impl Router {
                 );
                 return Ok(false);
             }
+            let node_name = &self.channels.node_names[node_handle];
+            let channel_name = &self.channels.channel_names[channel_handle];
+            info!(
+                "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                format!("{}.{}.{}", node_name, pid, channel_name),
+                format_u8_buf(&msg.buf),
+                self.timestep,
+                msg.expiration,
+            );
             let msg = fuse::Message {
                 id: (pid, self.channels.node_names[node_handle].clone()),
                 data: msg.buf.to_vec(),
