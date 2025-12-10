@@ -26,7 +26,7 @@ use tracing::{Level, debug, event, info, instrument, warn};
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
-pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, AddressedMsg)>;
+pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, usize, AddressedMsg)>;
 pub type Mailbox = VecDeque<QueuedMessage>;
 
 mod delivery;
@@ -149,9 +149,9 @@ impl Router {
         while self
             .queued
             .peek()
-            .is_some_and(|(ts, _)| ts.0 <= self.timestep)
+            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
         {
-            let Some((_, frame)) = self.queued.pop() else {
+            let Some((_, _, frame)) = self.queued.pop() else {
                 return Err(RouterError::StepError);
             };
             let (_, _, channel_index) = self.channels.handles[frame.handle_ptr];

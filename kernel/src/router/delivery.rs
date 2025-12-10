@@ -1,4 +1,7 @@
 use super::*;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
+static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 /// Internal struct which marks a queued message as being targeted at
 /// `handle_ptr`, the specific endpoint it should be delivered to in the FS.
@@ -87,7 +90,8 @@ impl Router {
                     },
                 };
 
-                self.queued.push((Reverse(becomes_active_at), msg));
+                let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                self.queued.push((Reverse(becomes_active_at), num, msg));
             }
         }
 
@@ -142,7 +146,8 @@ impl Router {
                     },
                 };
 
-                self.queued.push((Reverse(becomes_active_at), msg));
+                let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+                self.queued.push((Reverse(becomes_active_at), num, msg));
             }
         }
 
