@@ -133,13 +133,14 @@ impl Router {
     /// Wrapper function which will attempt to deliver any available messages
     /// to the ID identified in the message, but will send an "Empty" message
     /// if none is found.
-    pub fn request_read(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        if let Ok(false) = self.deliver_msg(self.get_handle_index(&msg.id)) {
-            self.tx
+    pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
+        match self.deliver_msg(self.get_handle_index(&msg.id)) {
+            Ok(true) => Ok(()),
+            Ok(false) => self
+                .tx
                 .send(fuse::KernelMessage::Empty(msg))
-                .map_err(|e| RouterError::SendError(e))
-        } else {
-            Ok(())
+                .map_err(RouterError::SendError),
+            Err(e) => Err(e),
         }
     }
 
