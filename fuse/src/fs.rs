@@ -68,10 +68,7 @@ impl NexusFs {
         &self.root
     }
 
-    pub fn with_channels(
-        &mut self,
-        channels: Vec<NexusChannel>,
-    ) -> Result<&mut Self, ChannelError> {
+    pub fn with_channels(mut self, channels: Vec<NexusChannel>) -> Result<Self, ChannelError> {
         for NexusChannel {
             pid,
             node: _,
@@ -102,7 +99,10 @@ impl NexusFs {
     fn pull_message(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
         fs_side
             .0
-            .send(FsMessage::Read(id))
+            .send(FsMessage::Read(Message {
+                id,
+                data: Vec::new(),
+            }))
             .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
         fs_side
             .1
@@ -267,8 +267,12 @@ impl Filesystem for NexusFs {
         // See if there is anything for client to read
         if let Ok(msg) = Self::pull_message(&mut self.fs_side, key) {
             let (allow_incremental_reads, msg) = match msg {
-                KernelMessage::Exclusive(message) => (true, message.msg),
-                KernelMessage::Shared(message) => (false, message.msg),
+                KernelMessage::Exclusive(msg) => (true, msg.data),
+                KernelMessage::Shared(msg) => (false, msg.data),
+                KernelMessage::Empty(_) => {
+                    reply.data(&[]);
+                    return;
+                }
             };
             let read_size = min(msg.len(), size as usize);
             reply.data(&msg[..read_size as usize]);
@@ -316,7 +320,7 @@ impl Filesystem for NexusFs {
 
         let msg = FsMessage::Write(Message {
             id: key,
-            msg: data.to_vec(),
+            data: data.to_vec(),
         });
         if self.fs_side.0.send(msg).is_err() {
             reply.written(0);

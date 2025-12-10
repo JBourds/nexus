@@ -17,16 +17,17 @@ pub type FsChannels = (mpsc::Sender<FsMessage>, mpsc::Receiver<KernelMessage>);
 pub enum KernelMessage {
     Exclusive(Message),
     Shared(Message),
+    Empty(Message),
 }
 
 #[derive(Clone, Debug)]
 pub enum FsMessage {
     Write(Message),
-    Read(ChannelId),
+    Read(Message),
 }
 
 #[derive(Clone, Debug)]
 pub struct Message {
-    id: ChannelId,
-    msg: Vec<u8>,
+    pub id: ChannelId,
+    pub data: Vec<u8>,
 }

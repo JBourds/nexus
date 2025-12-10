@@ -1,9 +1,8 @@
 use fuser::FileType;
-use std::{collections::VecDeque, num::NonZeroUsize, time::SystemTime};
+use std::{num::NonZeroUsize, time::SystemTime};
 
 use fuser::FileAttr;
 
-use crate::KernelMessage;
 use crate::channel::ChannelMode;
 
 /// Struct containing file system metadata and all queued messages
@@ -13,6 +12,7 @@ use crate::channel::ChannelMode;
 pub(crate) struct NexusFile {
     pub mode: ChannelMode,
     pub attr: FileAttr,
+    #[allow(unused)]
     pub max_msg_size: NonZeroUsize,
     pub unread_msg: Option<(usize, Vec<u8>)>,
 }

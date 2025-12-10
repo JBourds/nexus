@@ -1,6 +1,5 @@
 use std::io;
 use std::path::PathBuf;
-use std::sync::mpsc::RecvError;
 
 use thiserror::Error;
 
