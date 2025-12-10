@@ -2,7 +2,7 @@ pub use super::units::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use std::num::NonZeroU64;
+use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 
 pub type LinkHandle = String;
@@ -49,7 +49,7 @@ pub enum ChannelType {
         /// Should a sender be able to read their own writes?
         read_own_writes: bool,
         /// Maximum message size in bytes.
-        max_size: NonZeroU64,
+        max_size: NonZeroUsize,
     },
     /// Buffer some number of messages at a time for each node.
     Exclusive {
@@ -58,9 +58,9 @@ pub enum ChannelType {
         /// Time unit `ttl` is in
         unit: TimeUnit,
         /// Maximum message size in bytes.
-        max_size: NonZeroU64,
+        max_size: NonZeroUsize,
         /// Number of buffered messages per node. If None, is infinite.
-        nbuffered: Option<NonZeroU64>,
+        nbuffered: Option<NonZeroUsize>,
         /// Should a sender be able to read their own writes?
         /// eg. In an internal link.
         read_own_writes: bool,
@@ -68,7 +68,7 @@ pub enum ChannelType {
 }
 
 impl ChannelType {
-    pub const MSG_MAX_DEFAULT: NonZeroU64 = NonZeroU64::new(4096).unwrap();
+    pub const MSG_MAX_DEFAULT: NonZeroUsize = NonZeroUsize::new(4096).unwrap();
 
     pub fn time_units(&self) -> TimeUnit {
         match self {
@@ -84,14 +84,14 @@ impl ChannelType {
         }
     }
 
-    pub fn max_buffered(&self) -> Option<NonZeroU64> {
+    pub fn max_buffered(&self) -> Option<NonZeroUsize> {
         match self {
-            ChannelType::Shared { .. } => Some(NonZeroU64::MAX),
+            ChannelType::Shared { .. } => Some(NonZeroUsize::MAX),
             ChannelType::Exclusive { nbuffered, .. } => *nbuffered,
         }
     }
 
-    pub fn max_buf_size(&self) -> NonZeroU64 {
+    pub fn max_buf_size(&self) -> NonZeroUsize {
         match self {
             ChannelType::Shared { max_size, .. } => *max_size,
             ChannelType::Exclusive { max_size, .. } => *max_size,

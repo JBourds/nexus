@@ -1,5 +1,8 @@
 use serde::Deserialize;
-use std::{collections::HashMap, num::NonZeroU64};
+use std::{
+    collections::HashMap,
+    num::{NonZeroU64, NonZeroUsize},
+};
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Simulation {
@@ -108,15 +111,15 @@ pub enum ChannelType {
     Shared {
         ttl: Option<NonZeroU64>,
         unit: Option<Unit>,
-        max_size: Option<NonZeroU64>,
+        max_size: Option<NonZeroUsize>,
         read_own_writes: Option<bool>,
     },
     Exclusive {
         ttl: Option<NonZeroU64>,
         unit: Option<Unit>,
-        max_size: Option<NonZeroU64>,
+        max_size: Option<NonZeroUsize>,
         read_own_writes: Option<bool>,
-        nbuffered: Option<NonZeroU64>,
+        nbuffered: Option<NonZeroUsize>,
     },
 }
 
