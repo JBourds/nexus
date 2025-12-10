@@ -1,4 +1,5 @@
 use super::*;
+
 impl Router {
     /// Calculate the timesteps at which the message should be moved to its
     /// destination and, optionally (if ttl is specified), its expiration.

@@ -1,19 +1,26 @@
 use super::*;
 
+/// Internal struct which marks a queued message as being targeted at
+/// `handle_ptr`, the specific endpoint it should be delivered to in the FS.
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
 pub(crate) struct AddressedMsg {
     pub(super) handle_ptr: usize,
-    pub(super) msg: Msg,
+    pub(super) msg: QueuedMessage,
 }
+
+/// Internal struct used for keeping track of where a queued messag is from and
+/// its expiration.
 #[derive(Clone, Debug, Eq, PartialOrd, Ord, PartialEq)]
-pub(crate) struct Msg {
+pub(crate) struct QueuedMessage {
     pub(super) src: NodeHandle,
     pub(super) buf: Rc<[u8]>,
     pub(super) expiration: Option<NonZeroU64>,
 }
 
 impl Router {
-    pub fn post_to_mailboxes(
+    /// Take a message along the channel indicated by `channel_handle` from
+    /// `src_node` and post it to the queue along the precomputed route.
+    pub fn queue_message(
         &mut self,
         src_node: NodeHandle,
         channel_handle: ChannelHandle,
@@ -24,17 +31,20 @@ impl Router {
 
         match channel.r#type {
             ChannelType::Shared { .. } => {
-                self.post_shared(src_node, channel_handle, msg, sz)?;
+                self.queue_shared(src_node, channel_handle, msg, sz)?;
             }
             ChannelType::Exclusive { .. } => {
-                self.post_exclusive(src_node, channel_handle, msg, sz)?;
+                self.queue_exclusive(src_node, channel_handle, msg, sz)?;
             }
         }
 
         Ok(())
     }
 
-    fn post_shared(
+    /// Queue a message along a shared channel. This could get garbled once
+    /// it's actually delivered to the endpoint if its arrival coincides with
+    /// the period of time a previous message is still "alive".
+    fn queue_shared(
         &mut self,
         src_node: NodeHandle,
         channel_handle: ChannelHandle,
@@ -70,7 +80,7 @@ impl Router {
 
                 let msg = AddressedMsg {
                     handle_ptr: *handle_ptr,
-                    msg: Msg {
+                    msg: QueuedMessage {
                         src: src_node,
                         buf: Rc::clone(&buf),
                         expiration,
@@ -84,7 +94,9 @@ impl Router {
         Ok(())
     }
 
-    fn post_exclusive(
+    /// Queue a message along an exclusive channel. This preserves message
+    /// contents.
+    fn queue_exclusive(
         &mut self,
         src_node: NodeHandle,
         channel_handle: ChannelHandle,
@@ -121,7 +133,7 @@ impl Router {
 
                     let msg = AddressedMsg {
                         handle_ptr: *handle_ptr,
-                        msg: Msg {
+                        msg: QueuedMessage {
                             src: src_node,
                             buf: buf.into(),
                             expiration,

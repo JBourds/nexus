@@ -9,6 +9,7 @@ use crate::{
     types::{self, Channel, ChannelHandle, Node, NodeHandle},
 };
 
+/// Struct which resolves all strings within AST structs to integers.
 #[derive(Debug)]
 pub(crate) struct ResolvedChannels {
     pub(crate) nodes: Vec<types::Node>,
@@ -66,6 +67,8 @@ impl ResolvedChannels {
                 internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
             }
         }
+
+        // Resolve handles to use integer handles
         let handles = file_handles
             .into_iter()
             .map(|(pid, node, channel)| {

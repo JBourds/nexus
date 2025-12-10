@@ -1,13 +1,37 @@
 use super::*;
 
+/// Struct containing routes for every channel.
 #[derive(Debug)]
 pub struct RoutingTable {
     pub entries: Vec<ChannelRoutes>,
 }
 
+/// Struct containing route information for a single channel.
+/// A single channel could have potentially many subscribers, each of which are
+/// tied to a node class. A given node class can have multiple concrete
+/// instances, hence why this is a collection. For each node class (`NodeHandle`)
+/// the vector of routes will be a route to every concrete instance of it.
 #[derive(Debug)]
 pub struct ChannelRoutes {
+    /// Mapping of node handles for a node class (`NodeHandle`) to a vector of
+    /// routes, where each route is route information to a specific instance of
+    /// a node from that class.
     pub nodes: HashMap<NodeHandle, Vec<Route>>,
+}
+
+/// Single route containing computed information about an endpoint relative to
+/// a single node and distance from it. Uses `handle_ptr` to lookup the channel
+/// information and compute appropriate delays/bit errors/dropped packets at
+/// runtime (nodes could move).
+#[derive(Clone, Debug)]
+pub(crate) struct Route {
+    /// Index pointer into the `handles` array for the specific channel the
+    /// route is connected to.
+    pub handle_ptr: usize,
+    /// Euclidean distance between the nodes.
+    pub distance: f64,
+    /// Units for `distance` field
+    pub unit: DistanceUnit,
 }
 
 impl RoutingTable {
@@ -30,13 +54,6 @@ impl ChannelRoutes {
             .collect::<HashMap<_, _>>();
         Self { nodes }
     }
-}
-
-#[derive(Clone, Debug)]
-pub(crate) struct Route {
-    pub handle_ptr: usize,
-    pub distance: f64,
-    pub unit: DistanceUnit,
 }
 
 impl Route {

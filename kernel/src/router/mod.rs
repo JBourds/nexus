@@ -27,7 +27,7 @@ use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
 pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, AddressedMsg)>;
-pub type Mailbox = VecDeque<Msg>;
+pub type Mailbox = VecDeque<QueuedMessage>;
 
 mod delivery;
 mod errors;
@@ -117,7 +117,7 @@ impl Router {
         );
 
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
-        self.post_to_mailboxes(src_node, channel_handle, msg.data)
+        self.queue_message(src_node, channel_handle, msg.data)
     }
 
     /// Wrapper function which will attempt to deliver any available messages
