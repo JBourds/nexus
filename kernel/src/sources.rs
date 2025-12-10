@@ -93,7 +93,7 @@ impl Source {
         if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
             if let Some(Err(e)) = next_log
                 .take()
-                .map(|rec| router.post_to_mailboxes(rec.node, rec.channel, rec.data))
+                .map(|rec| router.queue_message(rec.node, rec.channel, rec.data))
             {
                 return Err(SourceError::RouterError(e));
             }
@@ -116,7 +116,7 @@ impl Source {
                         data,
                         ..
                     }) => {
-                        if let Err(e) = router.post_to_mailboxes(node, channel, data) {
+                        if let Err(e) = router.queue_message(node, channel, data) {
                             break Err(SourceError::RouterError(e));
                         }
                     }
