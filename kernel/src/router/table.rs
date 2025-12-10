@@ -50,7 +50,7 @@ impl ChannelRoutes {
         let publishers = &channels.channels[index].publishers;
         let nodes = publishers
             .iter()
-            .map(|src_node| (index, Route::outgoing(channels, index, *src_node)))
+            .map(|src_node| (*src_node, Route::outgoing(channels, index, *src_node)))
             .collect::<HashMap<_, _>>();
         Self { nodes }
     }
