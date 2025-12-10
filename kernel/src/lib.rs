@@ -1,30 +1,31 @@
 pub mod errors;
 mod helpers;
 pub mod log;
+mod resolver;
 mod router;
 pub mod sources;
 mod types;
 
-use fuse::fs::{ReadSignal, WriteSignal};
-use fuse::{KernelChannelHandle, KernelControlFile};
-
+use fuse::PID;
 use helpers::{make_handles, unzip};
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
     path::PathBuf,
+    sync::mpsc::{self, Receiver},
     time::{Duration, SystemTime},
 };
-
-use std::{collections::HashMap, os::unix::net::UnixDatagram};
 
 use config::ast::{self, TimestepConfig};
 use runner::{RunCmd, RunHandle, cgroups};
 use tracing::{error, instrument, warn};
 use types::*;
 
-use crate::errors::{ConversionError, KernelError, SourceError};
 use crate::router::Router;
 use crate::sources::Source;
+use crate::{
+    errors::{KernelError, SourceError},
+    resolver::ResolvedChannels,
+};
 extern crate tracing;
 
 /// Unique identifier for a channel belonging to a node protocol
@@ -33,11 +34,6 @@ extern crate tracing;
 /// - `ChannelHandle`: Channel the connection is over.
 pub type ChannelId = (fuse::PID, NodeHandle, ChannelHandle);
 
-pub type ReadControl = KernelControlFile<ReadSignal>;
-pub type WriteControl = KernelControlFile<WriteSignal>;
-pub type Readers = Vec<ReadControl>;
-pub type Writers = Vec<WriteControl>;
-
 const TX: &str = "tx";
 
 #[allow(unused)]
@@ -45,15 +41,10 @@ pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
     timestep: TimestepConfig,
-    channels: Vec<Channel>,
-    nodes: Vec<Node>,
-    handles: Vec<ChannelId>,
-    sockets: Vec<UnixDatagram>,
-    readers: Readers,
-    writers: Writers,
-    channel_names: Vec<String>,
-    node_names: Vec<String>,
+    channels: ResolvedChannels,
     run_handles: Vec<RunHandle>,
+    tx: mpsc::Sender<fuse::KernelMessage>,
+    rx: mpsc::Receiver<fuse::FsMessage>,
 }
 
 impl Kernel {
@@ -61,13 +52,15 @@ impl Kernel {
     ///
     /// # Arguments
     /// * `sim`: Simulation AST.
-    /// * `files`: List of mappings from open channels within an executing node
-    ///   protocol to the node it belongs to and its unix domain socket pair.
     /// * `run_handles`: Handles used to monitor each executing program.
+    /// * `rx`: Channel to receive file system requests for.
+    /// * `tx`: Channel to deliver kernel responses to the file system.
     pub fn new(
         sim: ast::Simulation,
-        files: fuse::KernelChannels,
         run_handles: Vec<RunHandle>,
+        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+        rx: mpsc::Receiver<fuse::FsMessage>,
+        tx: mpsc::Sender<fuse::KernelMessage>,
     ) -> Result<Self, KernelError> {
         // CRUCIAL: Sort nodes by their name lexicographically since we are
         // not guaranteed a consistent ordering by hash maps
@@ -75,75 +68,21 @@ impl Kernel {
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
         let (node_names, nodes) = unzip(sorted_nodes);
         let node_handles = make_handles(node_names.clone());
-
-        // We need to resolve any internal channels as new channels over an
-        // ideal link.
-        let (mut channel_names, channels) = unzip(sim.channels);
-        let channel_handles = make_handles(channel_names.clone());
-        let mut new_nodes = vec![];
-        let mut internal_channels = vec![];
-        let mut internal_node_channel_handles = HashMap::new();
-        for (handle, (node_name, node)) in node_names
-            .clone()
-            .into_iter()
-            .zip(nodes.into_iter())
-            .enumerate()
-        {
-            let (new_node, new_internals) =
-                Node::from_ast(node, handle, &channel_handles, &node_handles)
-                    .map_err(KernelError::KernelInit)?;
-            let (new_internal_names, new_internal_channels) = unzip(new_internals);
-            new_nodes.push(new_node);
-            channel_names.extend(new_internal_names.clone());
-            internal_channels.extend(new_internal_channels);
-            for (handle, internal_name) in
-                (channel_names.len() - 1..).zip(new_internal_names.into_iter())
-            {
-                internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
-            }
-        }
-
-        let channels = Channel::from_ast(channels, internal_channels, &new_nodes)
-            .map_err(KernelError::KernelInit)?;
-
-        let lookup_channel = |pid: fuse::PID, channel_name: String, handle: KernelChannelHandle| {
-            let node_handle = *node_handles.get(&handle.node).unwrap();
-            internal_node_channel_handles
-                .get(&(handle.node.clone(), channel_name.clone()))
-                .or(channel_handles.get(&channel_name))
-                .ok_or(KernelError::KernelInit(
-                    ConversionError::ChannelHandleConversion(channel_name),
-                ))
-                .map(|channel_handle| ((pid, node_handle, *channel_handle), handle))
-        };
-        let files = files
-            .into_iter()
-            .map(|((pid, channel_name), handle)| lookup_channel(pid, channel_name, handle))
-            .collect::<Result<HashMap<ChannelId, KernelChannelHandle>, KernelError>>()?;
-        let (handles, files) = unzip(files);
-        let (readers, writers, sockets) = files.into_iter().fold(
-            (Vec::new(), Vec::new(), Vec::new()),
-            |(mut readers, mut writers, mut sockets), handle| {
-                readers.push(handle.read);
-                writers.push(handle.write);
-                sockets.push(handle.file);
-                (readers, writers, sockets)
-            },
-        );
-
+        let channels = ResolvedChannels::try_resolve(
+            sim.channels,
+            node_names,
+            nodes,
+            &node_handles,
+            file_handles,
+        )?;
         Ok(Self {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
             channels,
-            nodes: new_nodes,
-            readers,
-            writers,
-            handles,
-            sockets,
-            channel_names,
-            node_names,
             run_handles,
+            rx,
+            tx,
         })
     }
 
@@ -161,27 +100,12 @@ impl Kernel {
             rng,
             timestep,
             channels,
-            nodes,
-            handles,
-            sockets,
-            readers,
-            writers,
-            channel_names,
-            node_names,
             mut run_handles,
+            tx,
+            rx,
         } = self;
-        let mut source = Self::get_write_source(cmd, &sockets, readers, writers, log)
-            .map_err(KernelError::SourceError)?;
-        let mut router = Router::new(
-            nodes,
-            node_names,
-            channels,
-            channel_names,
-            handles,
-            sockets,
-            timestep,
-            rng,
-        );
+        let mut source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
+        let mut router = Router::new(tx, channels, timestep, rng);
 
         let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
         cgroups::freeze(&node_cgroup, false);
@@ -190,7 +114,7 @@ impl Kernel {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
                 source
-                    .poll(&mut router, timestep, delta)
+                    .poll(&mut router, timestep)
                     .map_err(KernelError::SourceError)?;
                 run_handles = Self::check_handles(run_handles)?;
             }
@@ -202,7 +126,7 @@ impl Kernel {
         // Handle any outstanding FS requests so it can be cleanly unmounted
         cgroups::freeze(&node_cgroup, true);
         source
-            .poll(&mut router, self.timestep.count.into(), delta)
+            .poll(&mut router, self.timestep.count.into())
             .map_err(KernelError::SourceError)?;
 
         Ok(run_handles)
@@ -242,20 +166,12 @@ impl Kernel {
 
     #[instrument(skip_all)]
     fn get_write_source(
+        rx: Receiver<fuse::FsMessage>,
         cmd: RunCmd,
-        sockets: &[UnixDatagram],
-        readers: Readers,
-        writers: Writers,
         logs: Option<PathBuf>,
     ) -> Result<Source, SourceError> {
         match cmd {
-            RunCmd::Simulate => {
-                if sockets.is_empty() {
-                    Ok(Source::Empty)
-                } else {
-                    Source::simulated(sockets, readers, writers)
-                }
-            }
+            RunCmd::Simulate => Source::simulated(rx),
             RunCmd::Replay => {
                 let Some(logs) = logs else {
                     return Err(SourceError::NoReplayLog);
@@ -264,7 +180,7 @@ impl Kernel {
                 if !logfile.exists() {
                     return Err(SourceError::NonexistentReplayLog(logfile));
                 }
-                Source::replay(logfile, readers)
+                Source::replay(logfile)
             }
             _ => unreachable!(),
         }

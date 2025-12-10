@@ -25,6 +25,12 @@ pub struct Channel {
 }
 
 impl Channel {
+    /// Combine top-level channels and internal channels into one vector
+    /// which can be indexed by the usize handles from the resolver.
+    ///
+    /// * `channels`: Top-level channels from config.
+    /// * `internal_channels`: All internal channels created from nodes.
+    /// * `nodes`: Set of nodes to use when constructing pub/sub lists.
     #[instrument]
     pub(super) fn from_ast(
         channels: Vec<ast::Channel>,

@@ -3,9 +3,11 @@ use std::path::PathBuf;
 use std::{io, process::Output};
 
 use config::ast;
-use fuse::{PID, errors::SocketError};
+use fuse::PID;
 
 use thiserror::Error;
+
+use crate::router::RouterError;
 
 #[derive(Error, Debug)]
 pub enum KernelError {
@@ -60,54 +62,4 @@ pub enum ConversionError {
     ChannelHandleConversion(ast::ChannelHandle),
     #[error("Failed to convert node `{0}` to handle")]
     NodeHandleConversion(ast::NodeHandle),
-}
-
-#[derive(Error, Debug)]
-pub enum RouterError {
-    #[error(
-        "Failed to route message from node `{node_name}`, PID `{sender}`, to channel `{channel_name}` at timestep `{timestep}`"
-    )]
-    SendError {
-        sender: PID,
-        node_name: String,
-        channel_name: String,
-        timestep: u64,
-        base: Box<Self>,
-    },
-    #[error("Failed to deliver queued messages.")]
-    RouteError,
-    #[error("Resource temporarily blocked.")]
-    Busy,
-    #[error("Error encountered with socket file: `{0:#?}`")]
-    FileError(SocketError),
-    #[error("Impossible error encountered during `step` function!")]
-    StepError,
-    #[error("Failed to create simulator publisher.")]
-    SimulatorCreation,
-    #[error("Failed to create replay publisher.")]
-    ReplayCreation,
-}
-
-impl RouterError {
-    pub fn recoverable(&self) -> bool {
-        match self {
-            Self::Busy => true,
-            Self::SendError { base, .. } => base.recoverable(),
-            Self::FileError(inner) => match inner {
-                SocketError::NothingToRead => true,
-                SocketError::SocketReadError { ioerr, .. }
-                    if ioerr.kind() == io::ErrorKind::WouldBlock =>
-                {
-                    true
-                }
-                SocketError::SocketWriteError { ioerr, .. }
-                    if ioerr.kind() == io::ErrorKind::WouldBlock =>
-                {
-                    true
-                }
-                _ => false,
-            },
-            _ => false,
-        }
-    }
 }

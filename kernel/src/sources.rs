@@ -1,16 +1,13 @@
+//! sources.rs
+//! Abstraction for different ways which messages get delivered to the router.
 use bincode::config;
 use bincode::error::DecodeError;
 use std::io;
-use std::os::fd::AsRawFd;
 use std::path::Path;
-use std::time::Duration;
-use std::{fs::File, io::BufReader, os::unix::net::UnixDatagram};
+use std::sync::mpsc;
+use std::{fs::File, io::BufReader};
 
 use crate::log::BinaryLogRecord;
-use fuse::fs::WriteSignal;
-use mio::{Events, Interest, Poll, Token, unix::SourceFd};
-
-use crate::{Readers, Writers};
 use crate::{
     errors::SourceError,
     router::{Router, Timestep},
@@ -19,18 +16,13 @@ use crate::{
 /// Different sources for write events
 /// * `Simulate`: Take actual writes from processes.
 /// * `Replay`: Use the timesteps writes were logged at from simulation.
+/// * `Empty`: Stub. No messages get delivered.
 pub enum Source {
     /// Write events come from executing processes.
-    Simulated {
-        poll: Poll,
-        events: Events,
-        readers: Readers,
-        writers: Writers,
-    },
+    Simulated { rx: mpsc::Receiver<fuse::FsMessage> },
     /// Write events come from a log.
     Replay {
         src: BufReader<File>,
-        readers: Readers,
         next_log: Option<BinaryLogRecord>,
     },
     /// No write events happen
@@ -38,35 +30,14 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn simulated(
-        sockets: &[UnixDatagram],
-        readers: Readers,
-        writers: Writers,
-    ) -> Result<Self, SourceError> {
-        let poll = Poll::new().map_err(SourceError::SimulatedEvents)?;
-        let events = Events::with_capacity(sockets.len());
-        for (index, sock) in sockets.iter().enumerate() {
-            poll.registry()
-                .register(
-                    &mut SourceFd(&sock.as_raw_fd()),
-                    Token(index),
-                    Interest::READABLE,
-                )
-                .map_err(SourceError::PollRegistration)?;
-        }
-        Ok(Self::Simulated {
-            poll,
-            events,
-            readers,
-            writers,
-        })
+    pub fn simulated(rx: mpsc::Receiver<fuse::FsMessage>) -> Result<Self, SourceError> {
+        Ok(Self::Simulated { rx })
     }
 
-    pub fn replay(log: impl AsRef<Path>, readers: Readers) -> Result<Self, SourceError> {
+    pub fn replay(log: impl AsRef<Path>) -> Result<Self, SourceError> {
         let src = BufReader::new(File::open(log).map_err(SourceError::ReplayLogOpen)?);
         Ok(Self::Replay {
             src,
-            readers,
             next_log: None,
         })
     }
@@ -91,44 +62,29 @@ impl Source {
     }
 
     fn poll_simulated(
-        poll: &mut Poll,
-        events: &mut Events,
-        readers: &Readers,
-        writers: &Writers,
+        rx: &mut mpsc::Receiver<fuse::FsMessage>,
         router: &mut Router,
-        delta: Duration,
     ) -> Result<(), SourceError> {
-        // Check write events
-        poll.poll(events, Some(delta))
-            .map_err(SourceError::PollError)?;
-        for event in events.iter() {
-            let Token(index) = event.token();
-            router
-                .receive_write(index)
-                .map_err(SourceError::RouterError)?;
-        }
-        for writer in writers.iter() {
-            while writer.request.try_recv().is_ok() {
-                let _ = writer.ack.send(WriteSignal::Done);
+        // Receive all write requests from FS then let router ingest them
+        for msg in rx.try_iter() {
+            match msg {
+                fuse::FsMessage::Write(msg) => {
+                    router
+                        .receive_write(msg)
+                        .map_err(SourceError::RouterError)?;
+                }
+                fuse::FsMessage::Read(msg) => {
+                    router.request_read(msg).map_err(SourceError::RouterError)?;
+                }
             }
         }
         router.step().map_err(SourceError::RouterError)?;
-        for (index, reader) in readers.iter().enumerate() {
-            while reader.request.try_recv().is_ok() {
-                let _ = reader.ack.send(
-                    router
-                        .deliver_msg(index)
-                        .map_err(SourceError::RouterError)?,
-                );
-            }
-        }
         Ok(())
     }
 
     fn poll_log(
         src: &mut BufReader<File>,
         ts: Timestep,
-        readers: &Readers,
         router: &mut Router,
         next_log: &mut Option<BinaryLogRecord>,
     ) -> Result<(), SourceError> {
@@ -174,37 +130,14 @@ impl Source {
             }?;
         }
         router.step().map_err(SourceError::RouterError)?;
-        for (index, reader) in readers.iter().enumerate() {
-            while reader.request.try_recv().is_ok() {
-                let _ = reader.ack.send(
-                    router
-                        .deliver_msg(index)
-                        .map_err(SourceError::RouterError)?,
-                );
-            }
-        }
         Ok(())
     }
 
-    pub(crate) fn poll(
-        &mut self,
-        router: &mut Router,
-        ts: Timestep,
-        delta: Duration,
-    ) -> Result<(), SourceError> {
+    pub(crate) fn poll(&mut self, router: &mut Router, ts: Timestep) -> Result<(), SourceError> {
         match self {
             Self::Empty => Ok(()),
-            Self::Simulated {
-                poll,
-                events,
-                readers,
-                writers,
-            } => Self::poll_simulated(poll, events, readers, writers, router, delta),
-            Self::Replay {
-                src,
-                readers,
-                next_log,
-            } => Self::poll_log(src, ts, readers, router, next_log),
+            Self::Simulated { rx } => Self::poll_simulated(rx, router),
+            Self::Replay { src, next_log } => Self::poll_log(src, ts, router, next_log),
         }
     }
 }
