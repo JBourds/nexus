@@ -114,34 +114,35 @@ impl Router {
         } in self.routes.entries[channel_handle].nodes[&src_node].iter()
         {
             let dst_node = self.channels.handles[*handle_ptr].1;
-            if dst_node != src_node || channel.r#type.delivers_to_self() {
-                if let Some(buf) = Self::send_through_channel(
+            if !(dst_node != src_node || channel.r#type.delivers_to_self()) {
+                continue;
+            }
+            if let Some(buf) = Self::send_through_channel(
+                channel,
+                Cow::from(&msg),
+                *distance,
+                *distance_unit,
+                &mut self.rng,
+            ) {
+                let (becomes_active_at, expiration) = Self::message_timesteps(
                     channel,
-                    Cow::from(&msg),
+                    sz,
+                    ts_config,
+                    timestep,
                     *distance,
                     *distance_unit,
-                    &mut self.rng,
-                ) {
-                    let (becomes_active_at, expiration) = Self::message_timesteps(
-                        channel,
-                        sz,
-                        ts_config,
-                        timestep,
-                        *distance,
-                        *distance_unit,
-                    );
+                );
 
-                    let msg = AddressedMsg {
-                        handle_ptr: *handle_ptr,
-                        msg: QueuedMessage {
-                            src: src_node,
-                            buf: buf.into(),
-                            expiration,
-                        },
-                    };
+                let msg = AddressedMsg {
+                    handle_ptr: *handle_ptr,
+                    msg: QueuedMessage {
+                        src: src_node,
+                        buf: buf.into(),
+                        expiration,
+                    },
+                };
 
-                    self.queued.push((Reverse(becomes_active_at), msg));
-                }
+                self.queued.push((Reverse(becomes_active_at), msg));
             }
         }
 
@@ -152,15 +153,12 @@ impl Router {
         let (_, _, channel_handle) = self.channels.handles[index];
         let channel = &mut self.channels.channels[channel_handle];
         match &channel.r#type {
-            ChannelType::Shared { .. } => self.deliver_shared_msg::<String>(index),
-            ChannelType::Exclusive { .. } => self.deliver_exclusive_msg::<String>(index),
+            ChannelType::Shared { .. } => self.deliver_shared_msg(index),
+            ChannelType::Exclusive { .. } => self.deliver_exclusive_msg(index),
         }
     }
 
-    fn deliver_shared_msg<'a, S>(&mut self, index: usize) -> Result<bool, RouterError>
-    where
-        S: AsRef<str> + std::fmt::Debug,
-    {
+    fn deliver_shared_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
         let channel = &self.channels.channels[channel_handle];
         let channel_name = &self.channels.channel_names[channel_handle];
@@ -173,8 +171,6 @@ impl Router {
             std::cmp::Ordering::Less => Ok(false),
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.front().unwrap();
-                log_info.expiration = msg.expiration;
-
                 let Route { distance, unit, .. } =
                     self.routes.entries[channel_handle].nodes[&msg.src][node_handle];
 
@@ -185,24 +181,12 @@ impl Router {
                     unit,
                     &mut self.rng,
                 ) {
-                    let mut log_info = RxLogInfo {
-                        timestep,
-                        expiration: None,
-                        pid,
-                        node_name,
-                        channel_name,
-                    };
                     info!(
                         "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                        format!(
-                            "{}.{}.{}",
-                            log_info.node_name.as_ref(),
-                            log_info.pid,
-                            log_info.channel_name.as_ref()
-                        ),
+                        format!("{}.{}.{}", node_name, pid, channel_name),
                         format_u8_buf(&buf),
-                        log_info.timestep,
-                        log_info.expiration,
+                        timestep,
+                        msg.expiration,
                     );
                     let msg = fuse::Message {
                         id: (pid, node_name.clone()),
@@ -211,16 +195,13 @@ impl Router {
                     self.tx
                         .send(fuse::KernelMessage::Shared(msg))
                         .map(|_| true)
-                        .map_err(|e| RouterError::SendError(e))
+                        .map_err(RouterError::SendError)
                 } else {
                     Ok(false)
                 }
             }
-
             std::cmp::Ordering::Greater => {
                 warn!("Detected collision on shared medium.");
-                log_info.expiration = mailbox.front().unwrap().expiration;
-
                 let ChannelType::Shared { max_size, .. } = channel.r#type else {
                     unreachable!()
                 };
@@ -239,18 +220,14 @@ impl Router {
                 });
 
                 // Combine signals
-                let buf = filtered.fold(
-                    Vec::with_capacity(max_size.get().try_into().unwrap()),
-                    |mut v, msg| {
-                        let small = v.len().min(msg.len());
-                        for i in 0..small {
-                            v[i] |= msg[i];
-                        }
-                        v.extend_from_slice(&msg[small..]);
-                        v
-                    },
-                );
-
+                let buf = filtered.fold(Vec::with_capacity(max_size.get()), |mut v, msg| {
+                    let small = v.len().min(msg.len());
+                    for i in 0..small {
+                        v[i] |= msg[i];
+                    }
+                    v.extend_from_slice(&msg[small..]);
+                    v
+                });
                 event!(
                     target: "rx", Level::INFO, timestep, channel = channel_handle,
                     node = node_handle, tx = false, data = buf.as_slice()
@@ -262,29 +239,15 @@ impl Router {
                 self.tx
                     .send(fuse::KernelMessage::Shared(msg))
                     .map(|_| true)
-                    .map_err(|e| RouterError::SendError(e))
+                    .map_err(RouterError::SendError)
             }
         }
     }
 
-    fn deliver_exclusive_msg<'a, S>(&mut self, index: usize) -> Result<bool, RouterError>
-    where
-        S: AsRef<str> + std::fmt::Debug,
-    {
+    fn deliver_exclusive_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
-        let channel_name = &self.channels.channel_names[channel_handle];
-        let node_name = &self.channels.node_names[node_handle];
-        let timestep = self.timestep;
-        let mut log_info = RxLogInfo {
-            timestep,
-            expiration: None,
-            pid,
-            node_name,
-            channel_name,
-        };
         let mailbox = &mut self.mailboxes[index];
         if let Some(msg) = mailbox.pop_front() {
-            log_info.expiration = msg.expiration;
             if msg.expiration.is_some_and(|e| e.get() < self.timestep) {
                 warn!(
                     "Message dropped due to timeout (Now: {}, Expiration: {})",
@@ -305,7 +268,7 @@ impl Router {
             self.tx
                 .send(fuse::KernelMessage::Exclusive(msg))
                 .map(|_| true)
-                .map_err(|e| RouterError::SendError(e))
+                .map_err(RouterError::SendError)
         } else {
             Ok(false)
         }

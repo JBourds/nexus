@@ -64,15 +64,6 @@ pub(crate) struct Router {
     tx: mpsc::Sender<fuse::KernelMessage>,
 }
 
-#[derive(Debug)]
-struct RxLogInfo<'a, A: AsRef<str> + std::fmt::Debug> {
-    timestep: u64,
-    expiration: Option<NonZeroU64>,
-    pid: fuse::PID,
-    node_name: &'a A,
-    channel_name: &'a A,
-}
-
 impl Router {
     /// Build the routing table during initialization.
     #[instrument]
