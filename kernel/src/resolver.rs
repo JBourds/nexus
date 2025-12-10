@@ -93,4 +93,24 @@ impl ResolvedChannels {
                 handles,
             })
     }
+
+    /// Produce a map for the FUSE filesystem to use which maps the process ID
+    /// and channel handle to the handle index which should be used.
+    ///
+    /// This is used in a "patch" step during startup. At the beginning, FUSE
+    /// modules only identify the process ID of a running node protocol and the
+    /// string name for the channel it reads/writes to. The kernel module
+    /// resolves all string names to flattened integer handles to resolve
+    /// ambiguity with internal node channels (and to speed up routine lookup
+    /// operations by removing the need for a hash map). This function creates
+    /// the mapping between the key used by the FUSE module and the handle
+    /// used by the kernel. This gets sent over as a message to the FUSE fs
+    /// during startup and is used to resolve all indices within the kernel.
+    pub fn make_fuse_mapping(&self) -> HashMap<fuse::ChannelId, usize> {
+        self.handles
+            .iter()
+            .enumerate()
+            .map(|(index, (pid, _, channel))| ((*pid, self.channel_names[*channel].clone()), index))
+            .collect()
+    }
 }

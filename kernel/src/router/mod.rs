@@ -51,6 +51,8 @@ pub(crate) struct Router {
     routes: RoutingTable,
     /// AddressedMsgs queued to become active at a specific timestep.
     queued: MessageQueue,
+    /// Mapping from channel keys used by FUSE to those used by the kernel.
+    fuse_mapping: HashMap<fuse::ChannelId, usize>,
     /// Per-handle file mailbox with buffered messages ready to be read.
     /// Also contains an optional TTL which marks it as expired if it is in the
     /// past. Uses the niche optimization that the ttl for a channel cannot be
@@ -80,6 +82,7 @@ impl Router {
         ts_config: TimestepConfig,
         rng: StdRng,
     ) -> Self {
+        let fuse_mapping = channels.make_fuse_mapping();
         let handles_count = channels.handles.len();
         let routes = RoutingTable::new(&channels);
         Self {
@@ -89,6 +92,7 @@ impl Router {
             routes,
             queued: BinaryHeap::new(),
             mailboxes: vec![VecDeque::new(); handles_count],
+            fuse_mapping,
             ts_config,
             rng,
             tx,
@@ -96,8 +100,8 @@ impl Router {
     }
 
     /// Map the ID communicated by the FUSE FS to a handle index
-    fn get_handle_index(&self, _id: &fuse::ChannelId) -> usize {
-        unimplemented!()
+    fn get_handle_index(&self, id: &fuse::ChannelId) -> usize {
+        self.fuse_mapping[id]
     }
 
     /// Receive a message from the FS and post it to the mailboxes of any
