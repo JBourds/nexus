@@ -1,4 +1,5 @@
 use chrono::{DateTime, Utc};
+use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::RunHandle;
@@ -10,7 +11,7 @@ use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
 use config::ast::{self, ChannelType};
-use fuse::fs::*;
+use fuse::{PID, fs::*};
 
 use clap::Parser;
 
@@ -59,15 +60,22 @@ fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     let (write_log, read_log) = setup_logging(root.as_path(), args.cmd)?;
     runner::build(&sim)?;
     let (cgroup_path, run_handles) = runner::run(&sim)?;
-    let protocol_channels = get_fs_channels(&sim, &run_handles, args.cmd)?;
+    let protocol_channels = make_fs_channels(&sim, &run_handles, args.cmd)?;
 
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     #[allow(unused_variables)]
-    let (sess, kernel_channels) = fs.with_channels(protocol_channels)?.mount()?;
+    let (sess, (tx, rx)) = fs
+        .with_channels(protocol_channels)?
+        .mount()
+        .expect("unable to mount file system");
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
-    let run_handles =
-        Kernel::new(sim, kernel_channels, run_handles)?.run(args.cmd, cgroup_path, args.logs)?;
+    let file_handles = make_file_handles(&sim, &run_handles);
+    let run_handles = Kernel::new(sim, run_handles, file_handles, rx, tx)?.run(
+        args.cmd,
+        cgroup_path,
+        args.logs,
+    )?;
 
     println!("Simulation Summary:\n\n{}", summarize(run_handles));
     println!("Write Log: {write_log:?}");
@@ -165,7 +173,35 @@ fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
     File::options().create(true).append(true).open(&path)
 }
 
-fn get_fs_channels(
+fn make_file_handles(
+    sim: &ast::Simulation,
+    handles: &[runner::RunHandle],
+) -> Vec<(PID, ast::NodeHandle, ast::ChannelHandle)> {
+    let mut res = vec![];
+    for runner::RunHandle {
+        node: node_handle,
+        protocol: protocol_handle,
+        process,
+    } in handles
+    {
+        let node = &sim.nodes.get(node_handle).unwrap();
+        let protocol = node.protocols.get(protocol_handle).unwrap();
+        let pid = process.id();
+
+        for channel in protocol
+            .subscribers
+            .iter()
+            .chain(protocol.publishers.iter())
+            .collect::<HashSet<&ast::ChannelHandle>>()
+            .into_iter()
+        {
+            res.push((pid, node_handle.clone(), channel.clone()));
+        }
+    }
+    res
+}
+
+fn make_fs_channels(
     sim: &ast::Simulation,
     handles: &[runner::RunHandle],
     run_cmd: RunCmd,
