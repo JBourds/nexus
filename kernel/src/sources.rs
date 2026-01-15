@@ -17,6 +17,7 @@ use crate::{
 /// * `Simulate`: Take actual writes from processes.
 /// * `Replay`: Use the timesteps writes were logged at from simulation.
 /// * `Empty`: Stub. No messages get delivered.
+#[derive(Debug)]
 pub enum Source {
     /// Write events come from executing processes.
     Simulated { rx: mpsc::Receiver<fuse::FsMessage> },

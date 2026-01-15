@@ -200,7 +200,7 @@ impl Router {
                     self.tx
                         .send(fuse::KernelMessage::Shared(msg))
                         .map(|_| true)
-                        .map_err(RouterError::SendError)
+                        .map_err(RouterError::FuseSendError)
                 } else {
                     Ok(false)
                 }
@@ -244,7 +244,7 @@ impl Router {
                 self.tx
                     .send(fuse::KernelMessage::Shared(msg))
                     .map(|_| true)
-                    .map_err(RouterError::SendError)
+                    .map_err(RouterError::FuseSendError)
             }
         }
     }
@@ -282,7 +282,7 @@ impl Router {
             self.tx
                 .send(fuse::KernelMessage::Exclusive(msg))
                 .map(|_| true)
-                .map_err(RouterError::SendError)
+                .map_err(RouterError::FuseSendError)
         } else {
             Ok(false)
         }

@@ -12,6 +12,7 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver},
+    thread::JoinHandle,
     time::{Duration, SystemTime},
 };
 
@@ -33,6 +34,19 @@ extern crate tracing;
 /// - `NodeHandle`: Node the process belongs to.
 /// - `ChannelHandle`: Channel the connection is over.
 pub type ChannelId = (fuse::PID, NodeHandle, ChannelHandle);
+pub type FileHandles = Vec<(u32, String, String)>;
+
+struct KernelServer<H, S, R> {
+    handle: JoinHandle<H>,
+    tx: mpsc::Sender<S>,
+    rx: mpsc::Receiver<R>,
+}
+
+impl<H, S, R> KernelServer<H, S, R> {
+    fn new(handle: JoinHandle<H>, tx: mpsc::Sender<S>, rx: mpsc::Receiver<R>) -> Self {
+        Self { handle, tx, rx }
+    }
+}
 
 const TX: &str = "tx";
 
@@ -104,8 +118,10 @@ impl Kernel {
             tx,
             rx,
         } = self;
-        let mut source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
-        let mut router = Router::new(tx, channels, timestep, rng);
+        let mut router_server = {
+            let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
+            Router::new(tx, channels, timestep, rng, source)
+        }?;
 
         let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
         cgroups::freeze(&node_cgroup, false);
@@ -113,9 +129,7 @@ impl Kernel {
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
-                source
-                    .poll(&mut router, timestep)
-                    .map_err(KernelError::SourceError)?;
+                router_server.poll(timestep)?;
                 run_handles = Self::check_handles(run_handles)?;
             }
             if start.elapsed().is_err() {
@@ -125,9 +139,7 @@ impl Kernel {
 
         // Handle any outstanding FS requests so it can be cleanly unmounted
         cgroups::freeze(&node_cgroup, true);
-        source
-            .poll(&mut router, self.timestep.count.into())
-            .map_err(KernelError::SourceError)?;
+        router_server.shutdown()?;
 
         Ok(run_handles)
     }

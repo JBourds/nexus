@@ -1,11 +1,16 @@
-use std::sync::mpsc::{RecvError, SendError};
+use std::{
+    io,
+    sync::mpsc::{RecvError, SendError},
+};
 
 use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RouterError {
-    #[error("Error sending message: {0:#?}")]
-    SendError(SendError<fuse::KernelMessage>),
+    #[error("Error sending fuse message: {0:#?}")]
+    FuseSendError(SendError<fuse::KernelMessage>),
+    #[error("Error sending kernel message: {0:#?}")]
+    KernelSendError(SendError<crate::router::KernelMessage>),
     #[error("Error receiving message: {0:#?}")]
     RecvError(RecvError),
     #[error("Failed to deliver queued messages.")]
@@ -16,4 +21,6 @@ pub enum RouterError {
     SimulatorCreation,
     #[error("Failed to create replay publisher.")]
     ReplayCreation,
+    #[error("Error creating thread: {0}")]
+    ThreadCreation(io::Error),
 }
