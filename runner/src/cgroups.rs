@@ -4,8 +4,6 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use crate::assignment::Assignment;
-
 pub const NODES: &str = "nodes";
 pub const KERNEL: &str = "kernel";
 pub const PROCS: &str = "cgroup.procs";
@@ -59,40 +57,15 @@ pub(crate) fn simulation_cgroup() -> (PathBuf, PathBuf) {
     (cgroup_path, nodes_cgroup_path)
 }
 
-pub(crate) fn node_cgroup(parent: &Path, name: &str, assignment: Option<Assignment>) -> PathBuf {
+pub(crate) fn node_cgroup(parent: &Path, name: &str) -> PathBuf {
     let new_cgroup = parent.join(name);
     fs::create_dir(&new_cgroup).unwrap();
-    if let Some(assignment) = assignment {
-        let arg = format!("{} {}", assignment.bandwidth, assignment.period);
-        // TODO: Fix errors when one of these values is out of bounds
-        let _ = OpenOptions::new()
-            .write(true)
-            .open(new_cgroup.join(CPU_MAX))
-            .unwrap()
-            .write(arg.as_bytes())
-            .unwrap();
-        subtree_control(&new_cgroup);
-    }
-
     new_cgroup
 }
 
-pub(crate) fn protocol_cgroup(
-    node_cgroup: &Path,
-    name: &str,
-    assignment: Option<&Assignment>,
-) -> PathBuf {
+pub(crate) fn protocol_cgroup(node_cgroup: &Path, name: &str) -> PathBuf {
     let new_cgroup = node_cgroup.join(name);
     fs::create_dir(&new_cgroup).unwrap();
-    if let Some(assignment) = assignment {
-        let _ = OpenOptions::new()
-            .write(true)
-            .open(new_cgroup.join(CPU_MAX))
-            .unwrap()
-            .write(format!("{} {}", assignment.bandwidth, assignment.period).as_bytes())
-            .unwrap();
-    }
-
     new_cgroup
 }
 

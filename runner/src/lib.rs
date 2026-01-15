@@ -2,20 +2,15 @@ use config::ast::{self, Cmd, NodeProtocol};
 use std::{
     fmt::Display,
     io,
-    num::NonZeroU64,
     path::{Path, PathBuf},
     process::{Child, Command, Stdio},
     str::FromStr,
 };
-mod assignment;
 pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::{
-    assignment::{Assignment, CpuAssignment},
-    cgroups::{node_cgroup, protocol_cgroup, simulation_cgroup},
-};
+use crate::cgroups::{node_cgroup, protocol_cgroup, simulation_cgroup};
 
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
@@ -67,18 +62,10 @@ impl Display for RunCmd {
 /// Ensures two things:
 ///     1. Wrapper shell command gets process ID into the correct cgroup before
 ///     starting to execute the actual program.
-///     2. Protocol gets its CPU assignment applied (affinity & resources)
-fn run_protocol(
-    p: &NodeProtocol,
-    assignment: Option<&Assignment>,
-    cgroup: &Path,
-) -> io::Result<Child> {
+fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
     let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
-    if let Some(a) = assignment {
-        script.push_str(&format!("{TASKSET} --cpu-list {} ", a.set.cpu_list()));
-    }
     script.push_str(&format!("{} {}", p.runner.cmd, p.runner.args.join(" ")));
     cmd.current_dir(&p.root)
         .stdout(Stdio::piped())
@@ -156,20 +143,12 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolError> {
     let mut processes = vec![];
     let (sim_cgroup, nodes_cgroup) = simulation_cgroup();
-    let mut assignments = CpuAssignment::new();
 
     for (node_name, node) in &sim.nodes {
-        let requested_cycles = node.resources.cpu.requested_cycles();
-        let node_assignment = requested_cycles.and_then(|r| assignments.assign(r));
-        let protocol_assignment = node_assignment.as_ref().map(|a| {
-            a.clone()
-                .split_into(node.resources.cpu.cores.map(NonZeroU64::get).unwrap_or(1))
-        });
-        let root_cgroup = node_cgroup(&nodes_cgroup, node_name, node_assignment);
+        let root_cgroup = node_cgroup(&nodes_cgroup, node_name);
         for (protocol_name, protocol) in &node.protocols {
-            let cgroup = protocol_cgroup(&root_cgroup, protocol_name, protocol_assignment.as_ref());
-            let process = run_protocol(protocol, protocol_assignment.as_ref(), &cgroup)
-                .expect("Failed to execute process");
+            let cgroup = protocol_cgroup(&root_cgroup, protocol_name);
+            let process = run_protocol(protocol, &cgroup).expect("Failed to execute process");
             cgroups::move_process(&cgroup, process.id());
 
             processes.push(RunHandle {
