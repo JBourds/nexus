@@ -12,7 +12,6 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::{
     path::PathBuf,
     sync::mpsc::{self, Receiver},
-    thread::JoinHandle,
     time::{Duration, SystemTime},
 };
 
@@ -29,6 +28,8 @@ use crate::{
 };
 extern crate tracing;
 
+const TX: &str = "tx";
+
 /// Unique identifier for a channel belonging to a node protocol
 /// - `fuse::PID`: Process identifier (executing node protocol)
 /// - `NodeHandle`: Node the process belongs to.
@@ -36,19 +37,22 @@ extern crate tracing;
 pub type ChannelId = (fuse::PID, NodeHandle, ChannelHandle);
 pub type FileHandles = Vec<(u32, String, String)>;
 
+/// Basic interface for any server.
+/// - handle: Controlling handle (typically join handle) for server
+/// - tx: Channel to send messages to.
+/// - rx: Channel to receive messages from.
+#[derive(Debug)]
 struct KernelServer<H, S, R> {
-    handle: JoinHandle<H>,
+    handle: H,
     tx: mpsc::Sender<S>,
     rx: mpsc::Receiver<R>,
 }
 
 impl<H, S, R> KernelServer<H, S, R> {
-    fn new(handle: JoinHandle<H>, tx: mpsc::Sender<S>, rx: mpsc::Receiver<R>) -> Self {
+    fn new(handle: H, tx: mpsc::Sender<S>, rx: mpsc::Receiver<R>) -> Self {
         Self { handle, tx, rx }
     }
 }
-
-const TX: &str = "tx";
 
 #[allow(unused)]
 pub struct Kernel {
@@ -120,7 +124,7 @@ impl Kernel {
         } = self;
         let mut router_server = {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
-            Router::new(tx, channels, timestep, rng, source)
+            Router::serve(tx, channels, timestep, rng, source)
         }?;
 
         let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);

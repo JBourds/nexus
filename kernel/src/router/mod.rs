@@ -7,8 +7,6 @@
 //! 2. Computing route information for link simulation.
 //! 3. Delivering messages after link simulation.
 
-use std::{thread, time::Duration};
-
 use crate::{
     KernelServer, ResolvedChannels,
     errors::KernelError,
@@ -22,9 +20,10 @@ use config::ast::{
 };
 use rand::rngs::StdRng;
 use std::rc::Rc;
+use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
-use std::{collections::HashMap, sync::mpsc::Receiver, thread::JoinHandle};
+use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
@@ -45,15 +44,13 @@ pub use errors::*;
 pub use messages::*;
 use table::*;
 
-type ServerHandle = Result<(), KernelError>;
+type ServerHandle = JoinHandle<Result<(), KernelError>>;
 
 impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
     pub fn poll(&mut self, timestep: u64) -> Result<(), KernelError> {
-        let res = self
-            .tx
+        self.tx
             .send(router::KernelMessage::Poll(timestep))
-            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)));
-        res
+            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
     }
     pub fn shutdown(&mut self) -> Result<(), KernelError> {
         self.tx
@@ -91,7 +88,7 @@ pub(crate) struct Router {
 impl Router {
     /// Build the routing table during initialization.
     #[instrument]
-    pub fn new(
+    pub fn serve(
         tx: mpsc::Sender<fuse::KernelMessage>,
         channels: ResolvedChannels,
         ts_config: TimestepConfig,
@@ -99,8 +96,8 @@ impl Router {
         mut source: Source,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
-        let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
-        let res = thread::Builder::new()
+        let (_router_tx, router_rx) = mpsc::channel::<RouterMessage>();
+        thread::Builder::new()
             .name("nexus_router".to_string())
             .spawn(move || {
                 let fuse_mapping = channels.make_fuse_mapping();
@@ -124,7 +121,9 @@ impl Router {
                             return Ok(());
                         }
                         Ok(KernelMessage::Poll(timestep)) => {
-                            source.poll(&mut router, timestep);
+                            if let Err(e) = source.poll(&mut router, timestep) {
+                                break Err(KernelError::SourceError(e));
+                            }
                         }
                         Err(e) => {
                             break Err(KernelError::RouterError(RouterError::RecvError(e)));
@@ -133,8 +132,7 @@ impl Router {
                 }
             })
             .map_err(|e| KernelError::RouterError(RouterError::ThreadCreation(e)))
-            .map(|handle| KernelServer::new(handle, kernel_tx, router_rx));
-        res
+            .map(|handle| KernelServer::new(handle, kernel_tx, router_rx))
     }
 
     /// Map the ID communicated by the FUSE FS to a handle index
