@@ -61,7 +61,7 @@ impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
 
 #[derive(Debug)]
 #[allow(dead_code)]
-pub(crate) struct Router {
+pub(crate) struct RoutingServer {
     /// Current simulation timestep.
     timestep: Timestep,
     /// Configuration for the timestep
@@ -85,7 +85,7 @@ pub(crate) struct Router {
     tx: mpsc::Sender<fuse::KernelMessage>,
 }
 
-impl Router {
+impl RoutingServer {
     /// Build the routing table during initialization.
     #[instrument]
     pub fn serve(

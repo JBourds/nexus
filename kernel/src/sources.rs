@@ -8,10 +8,8 @@ use std::sync::mpsc;
 use std::{fs::File, io::BufReader};
 
 use crate::log::BinaryLogRecord;
-use crate::{
-    errors::SourceError,
-    router::{Router, Timestep},
-};
+use crate::router::RoutingServer;
+use crate::{errors::SourceError, router::Timestep};
 
 /// Different sources for write events
 /// * `Simulate`: Take actual writes from processes.
@@ -64,7 +62,7 @@ impl Source {
 
     fn poll_simulated(
         rx: &mut mpsc::Receiver<fuse::FsMessage>,
-        router: &mut Router,
+        router: &mut RoutingServer,
     ) -> Result<(), SourceError> {
         // Receive all write requests from FS then let router ingest them
         for msg in rx.try_iter() {
@@ -86,7 +84,7 @@ impl Source {
     fn poll_log(
         src: &mut BufReader<File>,
         ts: Timestep,
-        router: &mut Router,
+        router: &mut RoutingServer,
         next_log: &mut Option<BinaryLogRecord>,
     ) -> Result<(), SourceError> {
         // Only do this I/O if we either don't know when the next log
@@ -134,7 +132,11 @@ impl Source {
         Ok(())
     }
 
-    pub(crate) fn poll(&mut self, router: &mut Router, ts: Timestep) -> Result<(), SourceError> {
+    pub(crate) fn poll(
+        &mut self,
+        router: &mut RoutingServer,
+        ts: Timestep,
+    ) -> Result<(), SourceError> {
         match self {
             Self::Empty => Ok(()),
             Self::Simulated { rx } => Self::poll_simulated(rx, router),

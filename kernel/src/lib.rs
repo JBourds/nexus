@@ -20,7 +20,7 @@ use runner::{RunCmd, RunHandle, cgroups};
 use tracing::{error, instrument, warn};
 use types::*;
 
-use crate::router::Router;
+use crate::router::RoutingServer;
 use crate::sources::Source;
 use crate::{
     errors::{KernelError, SourceError},
@@ -122,9 +122,9 @@ impl Kernel {
             tx,
             rx,
         } = self;
-        let mut router_server = {
+        let mut routing_server = {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
-            Router::serve(tx, channels, timestep, rng, source)
+            RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
 
         let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
@@ -133,7 +133,7 @@ impl Kernel {
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
-                router_server.poll(timestep)?;
+                routing_server.poll(timestep)?;
                 run_handles = Self::check_handles(run_handles)?;
             }
             if start.elapsed().is_err() {
@@ -143,7 +143,7 @@ impl Kernel {
 
         // Handle any outstanding FS requests so it can be cleanly unmounted
         cgroups::freeze(&node_cgroup, true);
-        router_server.shutdown()?;
+        routing_server.shutdown()?;
 
         Ok(run_handles)
     }

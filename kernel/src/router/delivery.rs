@@ -20,7 +20,7 @@ pub(crate) struct QueuedMessage {
     pub(super) expiration: Option<NonZeroU64>,
 }
 
-impl Router {
+impl RoutingServer {
     /// Take a message along the channel indicated by `channel_handle` from
     /// `src_node` and post it to the queue along the precomputed route.
     pub fn queue_message(
