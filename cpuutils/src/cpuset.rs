@@ -95,6 +95,21 @@ impl CpuSet {
         Ok(Self { set })
     }
 
+    pub fn enabled_ids(&self) -> Vec<usize> {
+        let mut ids = Vec::new();
+        let mut id = 0;
+        for byte in self.set.iter().copied() {
+            for bit_index in 0..BITS_IN_BYTE {
+                let is_set = byte & (1 << bit_index) != 0;
+                if is_set {
+                    ids.push(id);
+                }
+                id += 1;
+            }
+        }
+        ids
+    }
+
     fn cpuset_size(&self) -> usize {
         std::cmp::max(self.set.len(), core::mem::size_of::<cpu_set_t>())
     }
@@ -119,22 +134,12 @@ impl CpuSet {
 impl Display for CpuSet {
     /// display as comma-separated list of IDs
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        let mut is_first = true;
-        let mut id = 0;
-        for byte in self.set.iter().copied() {
-            for bit_index in 0..BITS_IN_BYTE {
-                let is_set = byte & (1 << bit_index) != 0;
-                if is_set {
-                    if is_first {
-                        f.write_fmt(format_args!("{id}"))?;
-                        is_first = false;
-                    } else {
-                        f.write_fmt(format_args!(",{id}"))?;
-                    }
-                }
-                id += 1;
-            }
-        }
+        let ids: Vec<_> = self
+            .enabled_ids()
+            .into_iter()
+            .map(|i| i.to_string())
+            .collect();
+        f.write_str(&ids.join(","))?;
         Ok(())
     }
 }

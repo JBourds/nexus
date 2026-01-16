@@ -1,6 +1,8 @@
 extern crate errno;
 extern crate libc;
 
-mod cpuset;
+pub mod cpufreq;
+pub mod cpuset;
 
+pub use cpufreq::*;
 pub use cpuset::*;
