@@ -68,7 +68,7 @@ impl CpuSet {
     }
 
     /// Get the PID for the currently running process
-    pub fn current_affinity(&mut self) -> Result<&mut Self, ()> {
+    pub fn get_current_affinity(&mut self) -> Result<&mut Self, ()> {
         self.get_affinity(0)
     }
 
@@ -225,9 +225,9 @@ mod tests {
     }
 
     #[test]
-    fn get_current_affinity_does_not_fail() {
+    fn get_get_current_affinity_does_not_fail() {
         let mut cpus = CpuSet::with_nprocs().unwrap();
-        cpus.current_affinity().expect("get_affinity failed");
+        cpus.get_current_affinity().expect("get_affinity failed");
     }
 
     #[test]

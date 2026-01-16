@@ -1,12 +1,8 @@
 use std::collections::HashSet;
 use std::io::{BufRead, BufReader, Read};
-use std::{
-    collections::{BTreeMap, HashMap},
-    fs::File,
-    path::Path,
-};
+use std::{collections::BTreeMap, fs::File, path::Path};
 
-use crate::CpuSet;
+use crate::cpuset::CpuSet;
 
 const SYSFS_CPUS: &str = "/sys/devices/system/cpu";
 const PROCFS_CPUINFO: &str = "/proc/cpuinfo";
@@ -15,6 +11,7 @@ const MEGA: f64 = 1_000_000.0;
 /// CPUs could be doing frequency scaling or could be static.
 /// This enum reflects the best effort reporting and it is up to application
 /// code to use this appropriately.
+#[derive(Debug)]
 pub enum CpuInfo {
     Scaling {
         min_hz: u64,

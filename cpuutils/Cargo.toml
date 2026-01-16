@@ -4,6 +4,4 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-libc = { workspace = true }
-errno = "0.3"
-
+libc.workspace = true
