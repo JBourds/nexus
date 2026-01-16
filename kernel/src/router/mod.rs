@@ -52,10 +52,11 @@ impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
             .send(router::KernelMessage::Poll(timestep))
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
     }
-    pub fn shutdown(&mut self) -> Result<(), KernelError> {
+    pub fn shutdown(self) -> Result<(), KernelError> {
         self.tx
             .send(router::KernelMessage::Shutdown)
-            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
+            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
+        self.handle.join().expect("thread panic!")
     }
 }
 
