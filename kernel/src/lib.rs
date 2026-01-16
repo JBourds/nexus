@@ -4,6 +4,7 @@ pub mod log;
 mod resolver;
 mod router;
 pub mod sources;
+mod status;
 mod types;
 
 use fuse::PID;
@@ -20,12 +21,12 @@ use runner::{CgroupController, ProtocolHandle, RunCmd};
 use tracing::{error, instrument, warn};
 use types::*;
 
-use crate::router::RoutingServer;
 use crate::sources::Source;
 use crate::{
     errors::{KernelError, SourceError},
     resolver::ResolvedChannels,
 };
+use crate::{router::RoutingServer, status::StatusServer};
 extern crate tracing;
 
 const TX: &str = "tx";
@@ -122,8 +123,8 @@ impl Kernel {
             rng,
             timestep,
             channels,
-            mut run_handles,
-            mut cgroup_controller,
+            run_handles,
+            cgroup_controller,
             tx,
             rx,
         } = self;
@@ -131,13 +132,19 @@ impl Kernel {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
+        let mut status_server = StatusServer::serve(1.0, cgroup_controller, run_handles)?;
 
-        cgroup_controller.unfreeze_nodes();
-        for timestep in 0..self.timestep.count.into() {
+        'outer: for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
+                // send all commands
+                match status_server.check_health()? {
+                    status::messages::StatusMessage::Ok => {}
+                    status::messages::StatusMessage::PrematureExit => {
+                        break 'outer;
+                    }
+                }
                 routing_server.poll(timestep)?;
-                run_handles = Self::check_handles(run_handles)?;
             }
             if start.elapsed().is_err() {
                 return Err(KernelError::TimestepError(timestep));
@@ -145,42 +152,10 @@ impl Kernel {
         }
 
         // Handle any outstanding FS requests so it can be cleanly unmounted
-        cgroup_controller.freeze_nodes();
+        let run_handles = status_server.shutdown()?;
         routing_server.shutdown()?;
 
         Ok(run_handles)
-    }
-
-    #[instrument(skip_all)]
-    fn check_handles(handles: Vec<ProtocolHandle>) -> Result<Vec<ProtocolHandle>, KernelError> {
-        let mut process_error = None;
-        let mut good_handles = vec![];
-        for mut handle in handles {
-            if process_error.is_some() {
-                let _ = handle.process.kill();
-            }
-            if let Ok(Some(_)) = handle.process.try_wait() {
-                error!("Process prematurely exited");
-                let pid = handle.process.id();
-                let output = handle.process.wait_with_output().unwrap();
-                process_error = Some(KernelError::ProcessExit {
-                    node: handle.node,
-                    protocol: handle.protocol,
-                    pid,
-                    output,
-                });
-            } else {
-                good_handles.push(handle);
-            }
-        }
-        if let Some(e) = process_error {
-            for mut handle in good_handles {
-                let _ = handle.process.kill();
-            }
-            Err(e)
-        } else {
-            Ok(good_handles)
-        }
     }
 
     #[instrument(skip_all)]

@@ -8,6 +8,7 @@ use fuse::PID;
 use thiserror::Error;
 
 use crate::router::RouterError;
+use crate::status::errors::StatusError;
 
 #[derive(Error, Debug)]
 pub enum KernelError {
@@ -22,8 +23,10 @@ pub enum KernelError {
         pid: PID,
         output: Output,
     },
-    #[error("Error during message routing {0:#?}.")]
+    #[error("Error from router server {0:#?}.")]
     RouterError(RouterError),
+    #[error("Error from status server {0:#?}.")]
+    StatusError(StatusError),
     #[error("Error creating message source {0:#?}")]
     SourceError(SourceError),
     #[error("Error encountered when creating file poll.")]
@@ -42,8 +45,10 @@ pub enum SourceError {
     PollRegistration(io::Error),
     #[error("Error polling event sources: \n{0:#?}")]
     PollError(io::Error),
-    #[error("Error while sending to router.")]
+    #[error("Error from routing server: {0}")]
     RouterError(RouterError),
+    #[error("Error from status server: {0}")]
+    StatusError(StatusError),
     #[error("Error found decoding replay log file: `{0:#?}`")]
     ReplayLogRead(DecodeError),
     #[error("Expected the `tx` logs for replay but found `rx` logs.")]
