@@ -1,4 +1,5 @@
 use config::ast::{self, Cmd, NodeProtocol};
+use cpuutils::{cpufreq::get_cpu_info, cpuset::CpuSet};
 use std::{
     fmt::Display,
     io,
@@ -6,15 +7,16 @@ use std::{
     process::{Child, Command, Stdio},
     str::FromStr,
 };
+pub mod assignment;
 pub mod cgroups;
 pub mod errors;
 use errors::*;
 
+use crate::assignment::AffinityAssignment;
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
-const TASKSET: &str = "taskset";
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RunCmd {
@@ -135,12 +137,28 @@ pub fn run(
 ) -> Result<(CgroupController, Vec<ProtocolHandle>), ProtocolError> {
     let mut cgroup_controller = CgroupController::new();
     let mut handles = Vec::new();
+    let mut cpuset = CpuSet::default();
+    cpuset
+        .get_current_affinity()
+        .expect("couldn't get parent process CPU affinity");
+    let mut affinity = AffinityAssignment::new(&cpuset.enabled_ids());
+    cpuset.clear();
     for (node_name, node) in &sim.nodes {
+        // assign all protocols to the same CPU
+        let cpu_id = affinity
+            .assign_node(&node.resources)
+            .expect("must have at least one core to run on");
+        cpuset.enable_cpu(cpu_id).expect("couldn't enable CPU");
+
         let handle = cgroup_controller.add_node(node_name, node.resources.clone());
         for (protocol_name, protocol) in &node.protocols {
             let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
+            cpuset
+                .set_affinity(protocol_handle.process.id())
+                .expect("error setting CPU affinity");
             handles.push(protocol_handle);
         }
+        cpuset.disable_cpu(cpu_id).expect("couldn't enable CPU");
     }
 
     Ok((cgroup_controller, handles))
