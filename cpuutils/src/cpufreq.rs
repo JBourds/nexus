@@ -8,11 +8,26 @@ const SYSFS_CPUS: &str = "/sys/devices/system/cpu";
 const PROCFS_CPUINFO: &str = "/proc/cpuinfo";
 const MEGA: f64 = 1_000_000.0;
 
+#[derive(Debug, Default)]
+pub struct CpuInfo {
+    uses_scaling: bool,
+    pub cores: BTreeMap<usize, CoreInfo>,
+}
+
+impl CpuInfo {
+    pub fn max_core_id(&self) -> Option<usize> {
+        self.cores.keys().max().copied()
+    }
+    pub fn ncores(&self) -> usize {
+        self.cores.len()
+    }
+}
+
 /// CPUs could be doing frequency scaling or could be static.
 /// This enum reflects the best effort reporting and it is up to application
 /// code to use this appropriately.
 #[derive(Debug)]
-pub enum CpuInfo {
+pub enum CoreInfo {
     Scaling {
         min_hz: u64,
         max_hz: u64,
@@ -21,6 +36,15 @@ pub enum CpuInfo {
     Static {
         current_hz: u64,
     },
+}
+
+impl CoreInfo {
+    pub fn frequency(&self) -> u64 {
+        match self {
+            CoreInfo::Scaling { current_hz, .. } => *current_hz,
+            CoreInfo::Static { current_hz } => *current_hz,
+        }
+    }
 }
 
 fn read_sysfs_u64(path: impl AsRef<Path>) -> Option<u64> {
@@ -39,7 +63,7 @@ fn read_sysfs_u64(path: impl AsRef<Path>) -> Option<u64> {
     }
 }
 
-impl CpuInfo {
+impl CoreInfo {
     fn scaling(id: usize) -> Option<Self> {
         let base = Path::new(SYSFS_CPUS)
             .join(format!("cpu{id}"))
@@ -55,23 +79,32 @@ impl CpuInfo {
     }
 }
 
-pub fn get_cpu_info(cpuset: &CpuSet) -> BTreeMap<usize, CpuInfo> {
+pub fn get_cpu_info(cpuset: &CpuSet) -> CpuInfo {
     let ids: HashSet<usize> = cpuset.enabled_ids().into_iter().collect();
     parse_scaling_cpuinfo(&ids)
-        .or_else(|| parse_static_cpuinfo(&ids))
+        .map(|cores| CpuInfo {
+            uses_scaling: true,
+            cores,
+        })
+        .or_else(|| {
+            parse_static_cpuinfo(&ids).map(|cores| CpuInfo {
+                uses_scaling: false,
+                cores,
+            })
+        })
         .unwrap_or_default()
 }
 
-pub fn parse_scaling_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CpuInfo>> {
+pub fn parse_scaling_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CoreInfo>> {
     let mut cpu_frequencies = BTreeMap::new();
     for &id in cpuset.iter() {
-        let info = CpuInfo::scaling(id)?;
+        let info = CoreInfo::scaling(id)?;
         cpu_frequencies.insert(id, info);
     }
     Some(cpu_frequencies)
 }
 
-pub fn parse_static_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CpuInfo>> {
+pub fn parse_static_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CoreInfo>> {
     let mut cpu_frequencies = BTreeMap::new();
     let file = File::open(PROCFS_CPUINFO).expect("couldn't open procfs file");
     let reader = BufReader::new(file);
@@ -90,7 +123,7 @@ pub fn parse_static_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, C
             let frequency_hz = (frequency_mhz * MEGA) as u64;
             cpu_frequencies.insert(
                 id,
-                CpuInfo::Static {
+                CoreInfo::Static {
                     current_hz: frequency_hz,
                 },
             );

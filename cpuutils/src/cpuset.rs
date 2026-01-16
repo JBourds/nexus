@@ -131,6 +131,14 @@ impl CpuSet {
     }
 }
 
+impl Default for CpuSet {
+    fn default() -> Self {
+        Self {
+            set: vec![0; core::mem::size_of::<cpu_set_t>()],
+        }
+    }
+}
+
 impl Display for CpuSet {
     /// display as comma-separated list of IDs
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
