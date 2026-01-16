@@ -16,7 +16,7 @@ use std::{
 };
 
 use config::ast::{self, TimestepConfig};
-use runner::{RunCmd, RunHandle, cgroups};
+use runner::{CgroupController, ProtocolHandle, RunCmd};
 use tracing::{error, instrument, warn};
 use types::*;
 
@@ -60,7 +60,8 @@ pub struct Kernel {
     rng: StdRng,
     timestep: TimestepConfig,
     channels: ResolvedChannels,
-    run_handles: Vec<RunHandle>,
+    run_handles: Vec<ProtocolHandle>,
+    cgroup_controller: CgroupController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
 }
@@ -71,11 +72,14 @@ impl Kernel {
     /// # Arguments
     /// * `sim`: Simulation AST.
     /// * `run_handles`: Handles used to monitor each executing program.
+    /// * `cgroup_controller`: Object for making cgroup operations simpler.
+    /// * `file_handles`: Handles used for each unique file in fuse FS.
     /// * `rx`: Channel to receive file system requests for.
     /// * `tx`: Channel to deliver kernel responses to the file system.
     pub fn new(
         sim: ast::Simulation,
-        run_handles: Vec<RunHandle>,
+        run_handles: Vec<ProtocolHandle>,
+        cgroup_controller: CgroupController,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
@@ -99,6 +103,7 @@ impl Kernel {
             timestep: sim.params.timestep,
             channels,
             run_handles,
+            cgroup_controller,
             rx,
             tx,
         })
@@ -109,9 +114,8 @@ impl Kernel {
     pub fn run(
         self,
         cmd: RunCmd,
-        root_cgroup: PathBuf,
         log: Option<PathBuf>,
-    ) -> Result<Vec<RunHandle>, KernelError> {
+    ) -> Result<Vec<ProtocolHandle>, KernelError> {
         let delta = self.time_delta();
         let Self {
             root,
@@ -119,6 +123,7 @@ impl Kernel {
             timestep,
             channels,
             mut run_handles,
+            mut cgroup_controller,
             tx,
             rx,
         } = self;
@@ -127,9 +132,7 @@ impl Kernel {
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
 
-        let node_cgroup = cgroups::nodes_cgroup(&root_cgroup);
-        cgroups::freeze(&node_cgroup, false);
-
+        cgroup_controller.unfreeze_nodes();
         for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
@@ -142,14 +145,14 @@ impl Kernel {
         }
 
         // Handle any outstanding FS requests so it can be cleanly unmounted
-        cgroups::freeze(&node_cgroup, true);
+        cgroup_controller.freeze_nodes();
         routing_server.shutdown()?;
 
         Ok(run_handles)
     }
 
     #[instrument(skip_all)]
-    fn check_handles(handles: Vec<RunHandle>) -> Result<Vec<RunHandle>, KernelError> {
+    fn check_handles(handles: Vec<ProtocolHandle>) -> Result<Vec<ProtocolHandle>, KernelError> {
         let mut process_error = None;
         let mut good_handles = vec![];
         for mut handle in handles {

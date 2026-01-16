@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
-use runner::RunHandle;
+use runner::ProtocolHandle;
 use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
@@ -59,8 +59,8 @@ fn replay(args: Args) -> Result<()> {
 fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     let (write_log, read_log) = setup_logging(root.as_path(), args.cmd)?;
     runner::build(&sim)?;
-    let (cgroup_path, run_handles) = runner::run(&sim)?;
-    let protocol_channels = make_fs_channels(&sim, &run_handles, args.cmd)?;
+    let (cgroup_controller, protocol_handles) = runner::run(&sim)?;
+    let protocol_channels = make_fs_channels(&sim, &protocol_handles, args.cmd)?;
 
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     #[allow(unused_variables)]
@@ -70,14 +70,18 @@ fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         .expect("unable to mount file system");
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
-    let file_handles = make_file_handles(&sim, &run_handles);
-    let run_handles = Kernel::new(sim, run_handles, file_handles, rx, tx)?.run(
-        args.cmd,
-        cgroup_path,
-        args.logs,
-    )?;
+    let file_handles = make_file_handles(&sim, &protocol_handles);
+    let protocol_handles = Kernel::new(
+        sim,
+        protocol_handles,
+        cgroup_controller,
+        file_handles,
+        rx,
+        tx,
+    )?
+    .run(args.cmd, args.logs)?;
 
-    println!("Simulation Summary:\n\n{}", summarize(run_handles));
+    println!("Simulation Summary:\n\n{}", summarize(protocol_handles));
     println!("Write Log: {write_log:?}");
     println!("Read Log: {read_log:?}");
     Ok(())
@@ -109,7 +113,7 @@ fn main() -> Result<()> {
     }
 }
 
-fn summarize(mut handles: Vec<RunHandle>) -> String {
+fn summarize(mut handles: Vec<ProtocolHandle>) -> String {
     let mut summaries = Vec::with_capacity(handles.len());
     for handle in handles.iter_mut() {
         handle.process.kill().expect("Couldn't kill process.");
@@ -175,13 +179,14 @@ fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
 
 fn make_file_handles(
     sim: &ast::Simulation,
-    handles: &[runner::RunHandle],
+    handles: &[runner::ProtocolHandle],
 ) -> Vec<(PID, ast::NodeHandle, ast::ChannelHandle)> {
     let mut res = vec![];
-    for runner::RunHandle {
+    for runner::ProtocolHandle {
         node: node_handle,
         protocol: protocol_handle,
         process,
+        ..
     } in handles
     {
         let node = &sim.nodes.get(node_handle).unwrap();
@@ -203,14 +208,15 @@ fn make_file_handles(
 
 fn make_fs_channels(
     sim: &ast::Simulation,
-    handles: &[runner::RunHandle],
+    handles: &[runner::ProtocolHandle],
     run_cmd: RunCmd,
 ) -> Result<Vec<NexusChannel>, fuse::errors::ChannelError> {
     let mut channels = vec![];
-    for runner::RunHandle {
+    for runner::ProtocolHandle {
         node: node_handle,
         protocol: protocol_handle,
         process,
+        ..
     } in handles
     {
         let node = &sim.nodes.get(node_handle).unwrap();

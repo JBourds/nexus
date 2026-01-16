@@ -149,6 +149,15 @@ pub struct Resources {
     pub mem: Mem,
 }
 
+impl Resources {
+    pub fn has_cpu_limit(&self) -> bool {
+        self.cpu.has_limit()
+    }
+    pub fn has_mem_limit(&self) -> bool {
+        self.mem.has_limit()
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Cpu {
     pub cores: Option<NonZeroU64>,
@@ -157,11 +166,23 @@ pub struct Cpu {
     pub unit: ClockUnit,
 }
 
+impl Cpu {
+    pub fn has_limit(&self) -> bool {
+        self.hertz.is_some()
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Mem {
     /// If this is None, don't apply a memory limit
     pub amount: Option<NonZeroU64>,
     pub unit: DataUnit,
+}
+
+impl Mem {
+    pub fn has_limit(&self) -> bool {
+        self.amount.is_some()
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

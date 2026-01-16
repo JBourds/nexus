@@ -2,7 +2,7 @@ use config::ast::{self, Cmd, NodeProtocol};
 use std::{
     fmt::Display,
     io,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Command, Stdio},
     str::FromStr,
 };
@@ -10,21 +10,11 @@ pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::cgroups::{node_cgroup, protocol_cgroup, simulation_cgroup};
+pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
 const TASKSET: &str = "taskset";
-
-#[derive(Debug)]
-pub struct RunHandle {
-    /// Name of the node. Unique identifer within the simulation.
-    pub node: ast::NodeHandle,
-    /// Name of the protocol. Unique identifier for a process within a node.
-    pub protocol: ast::ProtocolHandle,
-    /// Handle for the executing process.
-    pub process: Child,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RunCmd {
@@ -140,24 +130,18 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
-pub fn run(sim: &ast::Simulation) -> Result<(PathBuf, Vec<RunHandle>), ProtocolError> {
-    let mut processes = vec![];
-    let (sim_cgroup, nodes_cgroup) = simulation_cgroup();
-
+pub fn run(
+    sim: &ast::Simulation,
+) -> Result<(CgroupController, Vec<ProtocolHandle>), ProtocolError> {
+    let mut cgroup_controller = CgroupController::new();
+    let mut handles = Vec::new();
     for (node_name, node) in &sim.nodes {
-        let root_cgroup = node_cgroup(&nodes_cgroup, node_name);
+        let handle = cgroup_controller.add_node(node_name, node.resources.clone());
         for (protocol_name, protocol) in &node.protocols {
-            let cgroup = protocol_cgroup(&root_cgroup, protocol_name);
-            let process = run_protocol(protocol, &cgroup).expect("Failed to execute process");
-            cgroups::move_process(&cgroup, process.id());
-
-            processes.push(RunHandle {
-                node: node_name.clone(),
-                protocol: protocol_name.clone(),
-                process,
-            });
+            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
+            handles.push(protocol_handle);
         }
     }
 
-    Ok((sim_cgroup, processes))
+    Ok((cgroup_controller, handles))
 }
