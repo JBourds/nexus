@@ -21,6 +21,13 @@ impl CpuInfo {
     pub fn ncores(&self) -> usize {
         self.cores.len()
     }
+    pub fn refresh(&mut self) {
+        if self.uses_scaling {
+            refresh_scaling_cpuinfo(&mut self.cores);
+        } else {
+            refresh_static_cpuinfo(&mut self.cores);
+        }
+    }
 }
 
 /// CPUs could be doing frequency scaling or could be static.
@@ -81,18 +88,19 @@ impl CoreInfo {
 
 pub fn get_cpu_info(cpuset: &CpuSet) -> CpuInfo {
     let ids: HashSet<usize> = cpuset.enabled_ids().into_iter().collect();
-    parse_scaling_cpuinfo(&ids)
-        .map(|cores| CpuInfo {
+    if let Some(cores) = parse_scaling_cpuinfo(&ids) {
+        CpuInfo {
             uses_scaling: true,
             cores,
-        })
-        .or_else(|| {
-            parse_static_cpuinfo(&ids).map(|cores| CpuInfo {
-                uses_scaling: false,
-                cores,
-            })
-        })
-        .unwrap_or_default()
+        }
+    } else if let Some(cores) = parse_static_cpuinfo(&ids) {
+        CpuInfo {
+            uses_scaling: false,
+            cores,
+        }
+    } else {
+        CpuInfo::default()
+    }
 }
 
 pub fn parse_scaling_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CoreInfo>> {
@@ -104,45 +112,61 @@ pub fn parse_scaling_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, 
     Some(cpu_frequencies)
 }
 
-pub fn parse_static_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CoreInfo>> {
-    let mut cpu_frequencies = BTreeMap::new();
+fn refresh_scaling_cpuinfo(cores: &mut BTreeMap<usize, CoreInfo>) {
+    for (&id, info) in cores.iter_mut() {
+        *info = CoreInfo::scaling(id).expect("CPU core no longer available");
+    }
+}
+
+fn iter_cpuinfo_hz() -> impl Iterator<Item = (usize, u64)> {
     let file = File::open(PROCFS_CPUINFO).expect("couldn't open procfs file");
     let reader = BufReader::new(file);
-    let mut current = None;
-    for line in reader.lines().map_while(Result::ok) {
-        if let Some(id) = current {
-            let Some(line) = line.strip_prefix("cpu MHz") else {
-                continue;
-            };
-            let line = line
-                .trim_start()
-                .strip_prefix(":")
-                .expect("/proc/cpuinfo file format is incorrect")
-                .trim_start();
-            let frequency_mhz = line.parse::<f64>().expect("couldn't parse frequency");
-            let frequency_hz = (frequency_mhz * MEGA) as u64;
-            cpu_frequencies.insert(
-                id,
-                CoreInfo::Static {
-                    current_hz: frequency_hz,
-                },
-            );
-            current = None;
-        } else {
-            let Some(line) = line.strip_prefix("processor") else {
-                continue;
-            };
-            let line = line.trim_start();
-            let line = line
-                .trim_start()
-                .strip_prefix(":")
-                .expect("/proc/cpuinfo file format is incorrect")
-                .trim_start();
-            let id = line.parse::<usize>().expect("couldn't parse frequency");
-            if cpuset.contains(&id) {
+
+    let mut current: Option<usize> = None;
+
+    reader
+        .lines()
+        .map_while(Result::ok)
+        .filter_map(move |line| {
+            if let Some(id) = current {
+                let line = line.strip_prefix("cpu MHz")?;
+                let mhz: f64 = line
+                    .trim_start()
+                    .strip_prefix(":")?
+                    .trim_start()
+                    .parse()
+                    .ok()?;
+
+                current = None;
+                Some((id, (mhz * MEGA) as u64))
+            } else {
+                let line = line.strip_prefix("processor")?;
+                let id: usize = line
+                    .trim_start()
+                    .strip_prefix(":")?
+                    .trim_start()
+                    .parse()
+                    .ok()?;
+
                 current = Some(id);
+                None
             }
+        })
+}
+
+pub fn parse_static_cpuinfo(cpuset: &HashSet<usize>) -> Option<BTreeMap<usize, CoreInfo>> {
+    Some(
+        iter_cpuinfo_hz()
+            .filter(|(id, _)| cpuset.contains(id))
+            .map(|(id, hz)| (id, CoreInfo::Static { current_hz: hz }))
+            .collect(),
+    )
+}
+
+pub fn refresh_static_cpuinfo(map: &mut BTreeMap<usize, CoreInfo>) {
+    iter_cpuinfo_hz().for_each(|(id, hz)| {
+        if let Some(info) = map.get_mut(&id) {
+            *info = CoreInfo::Static { current_hz: hz };
         }
-    }
-    Some(cpu_frequencies)
+    })
 }
