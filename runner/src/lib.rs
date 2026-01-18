@@ -1,5 +1,4 @@
 use config::ast::{self, Cmd, NodeProtocol};
-use cpuutils::{cpufreq::get_cpu_info, cpuset::CpuSet};
 use std::{
     fmt::Display,
     io,
@@ -12,7 +11,7 @@ pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::assignment::{Affinity, AffinityBuilder, Relative, RelativeBuilder};
+use crate::assignment::{AffinityBuilder, RelativeBuilder};
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";

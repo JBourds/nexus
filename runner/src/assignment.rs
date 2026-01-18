@@ -1,7 +1,4 @@
-use std::{
-    collections::{BTreeMap, HashMap},
-    num::NonZeroU64,
-};
+use std::collections::{BTreeMap, HashMap};
 
 use config::ast::{self, Resources};
 use cpuutils::cpuset::CpuSet;

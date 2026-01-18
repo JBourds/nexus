@@ -3,10 +3,10 @@ use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::ProtocolHandle;
+use std::collections::HashSet;
 use std::fs::File;
 use std::path::Path;
 use std::time::SystemTime;
-use std::{collections::HashSet, num::NonZeroUsize};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};

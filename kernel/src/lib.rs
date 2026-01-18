@@ -18,7 +18,7 @@ use std::{
 
 use config::ast::{self, TimestepConfig};
 use runner::{CgroupController, ProtocolHandle, RunCmd};
-use tracing::{error, instrument, warn};
+use tracing::{instrument, warn};
 use types::*;
 
 use crate::sources::Source;

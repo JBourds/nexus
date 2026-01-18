@@ -87,6 +87,12 @@ impl NodeBucket {
     }
 }
 
+impl Default for CgroupController {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CgroupController {
     pub fn new() -> Self {
         let pid = std::process::id();
