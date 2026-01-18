@@ -7,7 +7,29 @@ use std::{
 
 use config::ast::{self, NodeProtocol, Resources};
 
-use crate::run_protocol;
+use crate::{assignment::Relative, run_protocol};
+
+pub const NODES_LIMITED: &str = "nodes_limited";
+pub const NODES_UNLIMITED: &str = "nodes_unlimited";
+pub const KERNEL: &str = "kernel";
+pub const PROCS: &str = "cgroup.procs";
+pub const FREEZE: &str = "cgroup.freeze";
+pub const SUBTREE: &str = "cgroup.subtree_control";
+pub const CPU_MAX: &str = "cpu.max";
+pub const CPU_WEIGHT: &str = "cpu.weight";
+pub const CPU_WEIGHT_MIN: u64 = 1;
+pub const CPU_WEIGHT_MAX: u64 = 10000;
+const SUBTREE_SUBSYSTEMS: &str = "+cpu +memory";
+
+#[derive(Debug)]
+pub struct CgroupController {
+    /// root cgroup path
+    pub root: PathBuf,
+    /// cgroup with nodes that have limited resources
+    pub nodes_limited: NodeBucket,
+    /// cgroup with nodes that have no specified resource limit
+    pub nodes_unlimited: NodeBucket,
+}
 
 #[derive(Clone, Debug)]
 pub struct NodeHandle {
@@ -29,15 +51,6 @@ pub struct ProtocolHandle {
     pub process: Child,
 }
 
-pub const NODES_LIMITED: &str = "nodes_limited";
-pub const NODES_UNLIMITED: &str = "nodes_unlimited";
-pub const KERNEL: &str = "kernel";
-pub const PROCS: &str = "cgroup.procs";
-pub const FREEZE: &str = "cgroup.freeze";
-pub const SUBTREE: &str = "cgroup.subtree_control";
-pub const CPU_MAX: &str = "cpu.max";
-const SUBTREE_SUBSYSTEMS: &str = "+cpu +memory";
-
 #[derive(Debug)]
 pub struct ProtocolCgroup {
     path: PathBuf,
@@ -51,16 +64,16 @@ pub struct NodeCgroup {
     protocols: Vec<ProtocolCgroup>,
 }
 
-impl NodeCgroup {
-    pub fn add(&mut self, path: PathBuf) {
-        self.protocols.push(ProtocolCgroup { path });
-    }
-}
-
 #[derive(Debug)]
 pub struct NodeBucket {
     root: PathBuf,
     nodes: Vec<NodeCgroup>,
+}
+
+impl NodeCgroup {
+    pub fn add(&mut self, path: PathBuf) {
+        self.protocols.push(ProtocolCgroup { path });
+    }
 }
 
 impl NodeBucket {
@@ -72,16 +85,6 @@ impl NodeBucket {
             nodes: Vec::new(),
         }
     }
-}
-
-#[derive(Debug)]
-pub struct CgroupController {
-    /// root cgroup path
-    pub root: PathBuf,
-    /// cgroup with nodes that have limited resources
-    pub nodes_limited: NodeBucket,
-    /// cgroup with nodes that have no specified resource limit
-    pub nodes_unlimited: NodeBucket,
 }
 
 impl CgroupController {
@@ -165,6 +168,16 @@ impl CgroupController {
         node.add(path);
 
         handle
+    }
+
+    pub fn make_cpu_weight_assignments(&mut self, relative_assignments: &Relative) {
+        for (name, weight) in relative_assignments.weights() {
+            let path = self.nodes_limited.root.join(name).join(CPU_WEIGHT);
+            let mut f = OpenOptions::new().write(true).open(path).unwrap();
+            let _ = f
+                .write(weight.to_string().as_bytes())
+                .expect("unable to write cpu weight to cpu.weight file");
+        }
     }
 
     fn get_node(&mut self, handle: &NodeHandle) -> Option<&mut NodeCgroup> {

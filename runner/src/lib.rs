@@ -12,7 +12,7 @@ pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::assignment::AffinityAssignment;
+use crate::assignment::{Affinity, AffinityBuilder, Relative, RelativeBuilder};
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
@@ -137,29 +137,21 @@ pub fn run(
 ) -> Result<(CgroupController, Vec<ProtocolHandle>), ProtocolError> {
     let mut cgroup_controller = CgroupController::new();
     let mut handles = Vec::new();
-    let mut cpuset = CpuSet::default();
-    cpuset
-        .get_current_affinity()
-        .expect("couldn't get parent process CPU affinity");
-    let mut affinity = AffinityAssignment::new(&cpuset.enabled_ids());
-    cpuset.clear();
+    let mut affinity_builder = AffinityBuilder::new();
+    let mut relative_builder = RelativeBuilder::new();
     for (node_name, node) in &sim.nodes {
-        // assign all protocols to the same CPU
-        let cpu_id = affinity
-            .assign_node(&node.resources)
-            .expect("must have at least one core to run on");
-        cpuset.enable_cpu(cpu_id).expect("couldn't enable CPU");
-
+        affinity_builder.add_node(node_name, &node.resources);
+        relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone());
         for (protocol_name, protocol) in &node.protocols {
             let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
-            cpuset
-                .set_affinity(protocol_handle.process.id())
-                .expect("error setting CPU affinity");
+            affinity_builder.add_protocol(node_name, protocol_handle.process.id());
             handles.push(protocol_handle);
         }
-        cpuset.disable_cpu(cpu_id).expect("couldn't enable CPU");
     }
+    let _ = affinity_builder.build();
+    let relative_assignment = relative_builder.build(CPU_WEIGHT_MIN, CPU_WEIGHT_MAX);
+    cgroup_controller.make_cpu_weight_assignments(&relative_assignment);
 
     Ok((cgroup_controller, handles))
 }
