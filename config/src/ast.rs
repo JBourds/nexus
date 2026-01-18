@@ -170,6 +170,15 @@ impl Cpu {
     pub fn has_limit(&self) -> bool {
         self.hertz.is_some()
     }
+
+    /// Returns the maximum bandwidth limit and period (corresponds to cpu.max
+    /// in cgroup limits if a limit should be imposed.
+    pub fn requested_cycles(&self) -> Option<u64> {
+        let cores = self.cores.map(NonZeroU64::get).unwrap_or(1);
+        let rate = self.hertz.map(NonZeroU64::get)?;
+        let rate_lshifts = self.unit.lshifts() as u64;
+        Some(cores * (rate << rate_lshifts))
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -293,17 +302,6 @@ pub struct DistanceProbVar {
     pub rate: String,
     pub distance: DistanceUnit,
     pub size: DataUnit,
-}
-
-impl Cpu {
-    /// Returns the maximum bandwidth limit and period (corresponds to cpu.max
-    /// in cgroup limits if a limit should be imposed.
-    pub fn requested_cycles(&self) -> Option<u64> {
-        let cores = self.cores.map(NonZeroU64::get).unwrap_or(1);
-        let rate = self.hertz.map(NonZeroU64::get)?;
-        let rate_lshifts = self.unit.lshifts() as u64;
-        Some(cores * (rate << rate_lshifts))
-    }
 }
 
 impl DistanceProbVar {
