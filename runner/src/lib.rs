@@ -1,4 +1,5 @@
 use config::ast::{self, Cmd, NodeProtocol};
+use cpuutils::{cpufreq::get_cpu_info, cpuset::CpuSet};
 use std::{
     fmt::Display,
     io,
@@ -11,7 +12,7 @@ pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::assignment::{AffinityBuilder, RelativeBuilder};
+use crate::assignment::{AffinityBuilder, Bandwidth, RelativeBuilder};
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
@@ -148,9 +149,12 @@ pub fn run(
             handles.push(protocol_handle);
         }
     }
-    let _ = affinity_builder.build();
-    let relative_assignment = relative_builder.build(CPU_WEIGHT_MIN, CPU_WEIGHT_MAX);
-    cgroup_controller.make_cpu_weight_assignments(&relative_assignment);
+    let affinity_assignments = affinity_builder.build();
+    let relative_assignments = relative_builder.build(CPU_WEIGHT_MIN, CPU_WEIGHT_MAX);
+    cgroup_controller.assign_cpu_weights(&relative_assignments);
+    let cpuinfo = get_cpu_info(&affinity_assignments.cpuset);
+    let bandwidth_assignments = Bandwidth::new(&affinity_assignments, &cpuinfo);
+    cgroup_controller.assign_cpu_bandwidths(&bandwidth_assignments);
 
     Ok((cgroup_controller, handles))
 }

@@ -18,9 +18,11 @@ impl CpuInfo {
     pub fn max_core_id(&self) -> Option<usize> {
         self.cores.keys().max().copied()
     }
+
     pub fn ncores(&self) -> usize {
         self.cores.len()
     }
+
     pub fn refresh(&mut self) {
         if self.uses_scaling {
             refresh_scaling_cpuinfo(&mut self.cores);

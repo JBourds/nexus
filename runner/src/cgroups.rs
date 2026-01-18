@@ -7,7 +7,10 @@ use std::{
 
 use config::ast::{self, NodeProtocol, Resources};
 
-use crate::{assignment::Relative, run_protocol};
+use crate::{
+    assignment::{Bandwidth, Relative},
+    run_protocol,
+};
 
 pub const NODES_LIMITED: &str = "nodes_limited";
 pub const NODES_UNLIMITED: &str = "nodes_unlimited";
@@ -16,9 +19,15 @@ pub const PROCS: &str = "cgroup.procs";
 pub const FREEZE: &str = "cgroup.freeze";
 pub const SUBTREE: &str = "cgroup.subtree_control";
 pub const CPU_MAX: &str = "cpu.max";
+pub const CPU_BANDWIDTH_MIN: u64 = 1_000;
+// True max is much larger but that's not a case we would ever
+// run into. This is already way larger than what is needed.
+pub const CPU_BANDWIDTH_MAX: u64 = 1_000_000_000;
+pub const CPU_PERIOD_MIN: u64 = 1_000;
+pub const CPU_PERIOD_MAX: u64 = 1_000_000;
 pub const CPU_WEIGHT: &str = "cpu.weight";
 pub const CPU_WEIGHT_MIN: u64 = 1;
-pub const CPU_WEIGHT_MAX: u64 = 10000;
+pub const CPU_WEIGHT_MAX: u64 = 10_000;
 const SUBTREE_SUBSYSTEMS: &str = "+cpu +memory";
 
 #[derive(Debug)]
@@ -176,12 +185,22 @@ impl CgroupController {
         handle
     }
 
-    pub fn make_cpu_weight_assignments(&mut self, relative_assignments: &Relative) {
+    pub fn assign_cpu_weights(&mut self, relative_assignments: &Relative) {
         for (name, weight) in relative_assignments.weights() {
             let path = self.nodes_limited.root.join(name).join(CPU_WEIGHT);
             let mut f = OpenOptions::new().write(true).open(path).unwrap();
             let _ = f
                 .write(weight.to_string().as_bytes())
+                .expect("unable to write cpu weight to cpu.weight file");
+        }
+    }
+
+    pub fn assign_cpu_bandwidths(&mut self, bandwidth_assignments: &Bandwidth) {
+        for (name, (bandwidth, period)) in bandwidth_assignments.assignments() {
+            let path = self.nodes_limited.root.join(name).join(CPU_MAX);
+            let mut f = OpenOptions::new().write(true).open(path).unwrap();
+            let _ = f
+                .write(format!("{bandwidth} {period}").as_bytes())
                 .expect("unable to write cpu weight to cpu.weight file");
         }
     }
