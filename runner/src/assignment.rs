@@ -171,6 +171,9 @@ impl RelativeBuilder {
 /// Assigns absolute bandwidths based on CPU frequency.
 #[derive(Debug)]
 pub struct Bandwidth {
+    /// mapping from node handle to:
+    ///     - bandwidth (numerator)
+    ///     - period (denominator)
     assignments: HashMap<ast::NodeHandle, (u64, u64)>,
 }
 

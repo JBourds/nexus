@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
@@ -18,6 +19,8 @@ pub const KERNEL: &str = "kernel";
 pub const PROCS: &str = "cgroup.procs";
 pub const FREEZE: &str = "cgroup.freeze";
 pub const SUBTREE: &str = "cgroup.subtree_control";
+pub const UCLAMP_MIN: &str = "cpu.uclamp.min";
+pub const UCLAMP_MAX: &str = "cpu.uclamp.max";
 pub const CPU_MAX: &str = "cpu.max";
 pub const CPU_BANDWIDTH_MIN: u64 = 1_000;
 // True max is much larger but that's not a case we would ever
@@ -43,7 +46,7 @@ pub struct CgroupController {
 #[derive(Clone, Debug)]
 pub struct NodeHandle {
     has_limited_resources: bool,
-    index: usize,
+    key: String,
 }
 
 #[derive(Debug)]
@@ -67,16 +70,17 @@ pub struct ProtocolCgroup {
 
 #[derive(Debug)]
 pub struct NodeCgroup {
-    name: ast::NodeHandle,
     path: PathBuf,
     resources: Resources,
     protocols: Vec<ProtocolCgroup>,
+    uclamp_min: f64,
+    uclamp_max: f64,
 }
 
 #[derive(Debug)]
 pub struct NodeBucket {
     root: PathBuf,
-    nodes: Vec<NodeCgroup>,
+    nodes: HashMap<ast::NodeHandle, NodeCgroup>,
 }
 
 impl NodeCgroup {
@@ -91,7 +95,7 @@ impl NodeBucket {
         enable_subtree_control(&root);
         Self {
             root,
-            nodes: Vec::new(),
+            nodes: HashMap::new(),
         }
     }
 }
@@ -148,14 +152,18 @@ impl CgroupController {
         fs::create_dir(&path).expect("couldn't create cgroup path when adding node");
         let handle = NodeHandle {
             has_limited_resources,
-            index: parent.nodes.len(),
+            key: name.to_string(),
         };
-        parent.nodes.push(NodeCgroup {
-            name: name.to_string(),
-            path,
-            resources,
-            protocols: Vec::new(),
-        });
+        parent.nodes.insert(
+            name.to_string(),
+            NodeCgroup {
+                path,
+                resources,
+                protocols: Vec::new(),
+                uclamp_min: 0.0,
+                uclamp_max: 100.0,
+            },
+        );
         handle
     }
 
@@ -176,7 +184,7 @@ impl CgroupController {
         let handle = ProtocolHandle {
             node_handle: handle.clone(),
             index: node.protocols.len(),
-            node: node.name.clone(),
+            node: handle.key.clone(),
             protocol: name.to_string(),
             process,
         };
@@ -197,19 +205,34 @@ impl CgroupController {
 
     pub fn assign_cpu_bandwidths(&mut self, bandwidth_assignments: &Bandwidth) {
         for (name, (bandwidth, period)) in bandwidth_assignments.assignments() {
-            let path = self.nodes_limited.root.join(name).join(CPU_MAX);
-            let mut f = OpenOptions::new().write(true).open(path).unwrap();
-            let _ = f
-                .write(format!("{bandwidth} {period}").as_bytes())
-                .expect("unable to write cpu weight to cpu.weight file");
+            if let Some(cgroup) = self.nodes_limited.nodes.get_mut(name) {
+                let cpu_max_path = cgroup.path.join(CPU_MAX);
+                let mut f = OpenOptions::new().write(true).open(cpu_max_path).unwrap();
+                let _ = f
+                    .write(format!("{bandwidth} {period}").as_bytes())
+                    .expect("unable to write cpu weight to cpu.weight file");
+                // increase uclamp minimum to hint to scheduler current policy is
+                // not keeping up
+                if bandwidth > period {
+                    cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(0.0, 100.0);
+                    let uclamp_min_path = cgroup.path.join(UCLAMP_MIN);
+                    let mut f = OpenOptions::new()
+                        .write(true)
+                        .open(uclamp_min_path)
+                        .unwrap();
+                    let _ = f
+                        .write(format!("{:.2}", cgroup.uclamp_min).as_bytes())
+                        .expect("unable to write minimum usage to cpu.uclamp.min");
+                }
+            }
         }
     }
 
     fn get_node(&mut self, handle: &NodeHandle) -> Option<&mut NodeCgroup> {
         if handle.has_limited_resources {
-            self.nodes_limited.nodes.get_mut(handle.index)
+            self.nodes_limited.nodes.get_mut(&handle.key)
         } else {
-            self.nodes_unlimited.nodes.get_mut(handle.index)
+            self.nodes_unlimited.nodes.get_mut(&handle.key)
         }
     }
 }
