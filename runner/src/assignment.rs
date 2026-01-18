@@ -65,6 +65,7 @@ impl AffinityBuilder {
 
 /// Assigns a PID to specific CPU core(s).
 /// Tries to evenly distribute assignments across all available cores.
+#[derive(Debug)]
 pub struct Affinity {
     /// amount of frequency assigned to each CPU
     usage: BTreeMap<usize, u64>,
@@ -122,7 +123,7 @@ pub struct RelativeBuilder {
     requirements: Vec<u64>,
 }
 
-#[derive(Default)]
+#[derive(Debug, Default)]
 pub struct Relative {
     weights: HashMap<ast::NodeHandle, u64>,
 }

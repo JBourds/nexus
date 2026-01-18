@@ -17,7 +17,7 @@ use std::{
 };
 
 use config::ast::{self, TimestepConfig};
-use runner::{CgroupController, ProtocolHandle, RunCmd};
+use runner::{CgroupController, ProtocolHandle, RunCmd, RunController};
 use tracing::{instrument, warn};
 use types::*;
 
@@ -61,8 +61,7 @@ pub struct Kernel {
     rng: StdRng,
     timestep: TimestepConfig,
     channels: ResolvedChannels,
-    run_handles: Vec<ProtocolHandle>,
-    cgroup_controller: CgroupController,
+    runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
 }
@@ -72,15 +71,14 @@ impl Kernel {
     ///
     /// # Arguments
     /// * `sim`: Simulation AST.
-    /// * `run_handles`: Handles used to monitor each executing program.
-    /// * `cgroup_controller`: Object for making cgroup operations simpler.
+    /// * `runc`: Unified controller with all information for handling runtime
+    ///   management of processes.
     /// * `file_handles`: Handles used for each unique file in fuse FS.
     /// * `rx`: Channel to receive file system requests for.
     /// * `tx`: Channel to deliver kernel responses to the file system.
     pub fn new(
         sim: ast::Simulation,
-        run_handles: Vec<ProtocolHandle>,
-        cgroup_controller: CgroupController,
+        runc: RunController,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
@@ -103,8 +101,7 @@ impl Kernel {
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
             channels,
-            run_handles,
-            cgroup_controller,
+            runc,
             rx,
             tx,
         })
@@ -123,8 +120,7 @@ impl Kernel {
             rng,
             timestep,
             channels,
-            run_handles,
-            cgroup_controller,
+            runc,
             tx,
             rx,
         } = self;
@@ -132,7 +128,7 @@ impl Kernel {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
-        let mut status_server = StatusServer::serve(1.0, cgroup_controller, run_handles)?;
+        let mut status_server = StatusServer::serve(1.0, runc)?;
 
         'outer: for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
@@ -144,6 +140,7 @@ impl Kernel {
                         break 'outer;
                     }
                 }
+                status_server.update_resources();
                 routing_server.poll(timestep)?;
             }
             if start.elapsed().is_err() {

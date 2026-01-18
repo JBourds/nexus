@@ -1,5 +1,6 @@
 pub enum KernelMessage {
     HealthCheck,
+    UpdateResources,
     Freeze,
     Unfreeze,
     Shutdown,

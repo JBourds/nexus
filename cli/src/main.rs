@@ -59,8 +59,8 @@ fn replay(args: Args) -> Result<()> {
 fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     let (write_log, read_log) = setup_logging(root.as_path(), args.cmd)?;
     runner::build(&sim)?;
-    let (cgroup_controller, protocol_handles) = runner::run(&sim)?;
-    let protocol_channels = make_fs_channels(&sim, &protocol_handles, args.cmd)?;
+    let runc = runner::run(&sim)?;
+    let protocol_channels = make_fs_channels(&sim, &runc.handles, args.cmd)?;
 
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     #[allow(unused_variables)]
@@ -70,16 +70,9 @@ fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         .expect("unable to mount file system");
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
-    let file_handles = make_file_handles(&sim, &protocol_handles);
-    let protocol_handles = Kernel::new(
-        sim,
-        protocol_handles,
-        cgroup_controller,
-        file_handles,
-        rx,
-        tx,
-    )?
-    .run(args.cmd, args.logs)?;
+    let file_handles = make_file_handles(&sim, &runc.handles);
+    let protocol_handles =
+        Kernel::new(sim, runc, file_handles, rx, tx)?.run(args.cmd, args.logs)?;
 
     println!("Simulation Summary:\n\n{}", summarize(protocol_handles));
     println!("Write Log: {write_log:?}");

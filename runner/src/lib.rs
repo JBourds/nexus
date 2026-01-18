@@ -12,11 +12,20 @@ pub mod cgroups;
 pub mod errors;
 use errors::*;
 
-use crate::assignment::{AffinityBuilder, Bandwidth, RelativeBuilder};
+use crate::assignment::{Affinity, AffinityBuilder, Bandwidth, Relative, RelativeBuilder};
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
+
+#[derive(Debug)]
+pub struct RunController {
+    pub cgroups: CgroupController,
+    pub affinity: Affinity,
+    pub weights: Relative,
+    pub bandwidth: Bandwidth,
+    pub handles: Vec<ProtocolHandle>,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum RunCmd {
@@ -132,9 +141,7 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
-pub fn run(
-    sim: &ast::Simulation,
-) -> Result<(CgroupController, Vec<ProtocolHandle>), ProtocolError> {
+pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
     let mut cgroup_controller = CgroupController::new();
     let mut handles = Vec::new();
     let mut affinity_builder = AffinityBuilder::new();
@@ -156,5 +163,11 @@ pub fn run(
     let bandwidth_assignments = Bandwidth::new(&affinity_assignments, &cpuinfo);
     cgroup_controller.assign_cpu_bandwidths(&bandwidth_assignments);
 
-    Ok((cgroup_controller, handles))
+    Ok(RunController {
+        cgroups: cgroup_controller,
+        affinity: affinity_assignments,
+        weights: relative_assignments,
+        bandwidth: bandwidth_assignments,
+        handles,
+    })
 }

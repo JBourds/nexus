@@ -4,6 +4,7 @@ use libc::{_SC_NPROCESSORS_ONLN, cpu_set_t, pid_t, sched_getaffinity, sched_seta
 
 const BITS_IN_BYTE: usize = 8;
 
+#[derive(Debug)]
 pub struct CpuSet {
     set: Vec<u8>,
 }
