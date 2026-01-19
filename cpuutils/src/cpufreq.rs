@@ -55,6 +55,13 @@ impl CoreInfo {
             CoreInfo::Static { current_hz } => *current_hz,
         }
     }
+
+    pub fn max_frequency(&self) -> u64 {
+        match self {
+            CoreInfo::Scaling { max_hz, .. } => *max_hz,
+            CoreInfo::Static { current_hz } => *current_hz,
+        }
+    }
 }
 
 fn read_sysfs_u64(path: impl AsRef<Path>) -> Option<u64> {

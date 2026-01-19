@@ -155,6 +155,7 @@ impl CgroupController {
         let path = parent.root.join(name);
         fs::create_dir(&path).expect("couldn't create cgroup path when adding node");
         enable_subtree_control(&path);
+        uclamp_min(&path, b"max");
         let handle = NodeHandle {
             has_limited_resources,
             key: name.to_string(),
@@ -165,7 +166,7 @@ impl CgroupController {
                 path,
                 resources,
                 protocols: Vec::new(),
-                uclamp_min: 0.0,
+                uclamp_min: 1000.0,
                 uclamp_max: 100.0,
                 bandwidth: CPU_BANDWIDTH_MIN,
                 period: CPU_PERIOD_MIN,
@@ -226,6 +227,7 @@ impl CgroupController {
                 if ratio >= low && ratio <= high {
                     return;
                 }
+                dbg!(&bandwidth, &period, bandwidth as f64 / period as f64);
                 cgroup.bandwidth = bandwidth;
                 cgroup.period = period;
                 cgroup.adjustment_threshold = (ratio - EPSILON, ratio + EPSILON);

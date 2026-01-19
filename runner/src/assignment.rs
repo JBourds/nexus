@@ -199,7 +199,11 @@ impl Bandwidth {
         cpuinfo: &CpuInfo,
     ) {
         for (node, (core, required_cycles)) in affinity.assignments.iter() {
-            if let Some(current_frequency) = cpuinfo.cores.get(core).map(CoreInfo::frequency) {
+            // NOTE: using `max_frequency` here seems to give a more consistent
+            // result than getting the current frequency with `frequency` since
+            // we set `cpu.uclamp.min` to max causing the CPU to run at max
+            // capacity once it actually runs the task.
+            if let Some(current_frequency) = cpuinfo.cores.get(core).map(CoreInfo::max_frequency) {
                 let ratio = *required_cycles as f64 / current_frequency as f64;
                 // try to minimize the period as much as possible to ensure
                 // scheduling requests are honored on tighter timeframes
