@@ -60,6 +60,7 @@ pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
     timestep: TimestepConfig,
+    time_dilation: f64,
     channels: ResolvedChannels,
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
@@ -100,6 +101,7 @@ impl Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
+            time_dilation: sim.params.time_dilation,
             channels,
             runc,
             rx,
@@ -119,6 +121,7 @@ impl Kernel {
             root,
             rng,
             timestep,
+            time_dilation,
             channels,
             runc,
             tx,
@@ -128,7 +131,7 @@ impl Kernel {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
-        let mut status_server = StatusServer::serve(1.0, runc)?;
+        let mut status_server = StatusServer::serve(time_dilation, runc)?;
 
         'outer: for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
@@ -140,7 +143,7 @@ impl Kernel {
                         break 'outer;
                     }
                 }
-                status_server.update_resources();
+                status_server.update_resources()?;
                 routing_server.poll(timestep)?;
             }
             if start.elapsed().is_err() {
