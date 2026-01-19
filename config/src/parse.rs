@@ -20,6 +20,7 @@ pub struct Params {
     pub(super) timestep: Option<TimestepConfig>,
     pub(super) seed: Option<u64>,
     pub(super) root: String,
+    pub(super) time_dilation: Option<f64>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]

@@ -153,6 +153,11 @@ impl Resources {
     pub fn has_cpu_limit(&self) -> bool {
         self.cpu.has_limit()
     }
+
+    pub fn scale_cpu(&mut self, ratio: f64) {
+        self.cpu.scale_cycles(ratio);
+    }
+
     pub fn has_mem_limit(&self) -> bool {
         self.mem.has_limit()
     }
@@ -167,6 +172,13 @@ pub struct Cpu {
 }
 
 impl Cpu {
+    pub fn scale_cycles(&mut self, ratio: f64) {
+        if let Some(hertz) = self.hertz.as_mut() {
+            let res = (hertz.get() as f64 * ratio) as u64;
+            *hertz = NonZeroU64::new(res).unwrap_or(*hertz);
+        }
+    }
+
     pub fn has_limit(&self) -> bool {
         self.hertz.is_some()
     }
@@ -269,6 +281,7 @@ pub struct Params {
     pub timestep: TimestepConfig,
     pub seed: u64,
     pub root: PathBuf,
+    pub time_dilation: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

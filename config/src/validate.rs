@@ -254,6 +254,14 @@ fn channel_namespace(
 }
 
 impl Simulation {
+    /// Used for time dilation to increase the amount of CPU time given to each
+    /// node.
+    pub(crate) fn scale_cpu(&mut self, ratio: f64) {
+        for (_, node) in self.nodes.iter_mut() {
+            node.resources.scale_cpu(ratio);
+        }
+    }
+
     /// Guaranteed to not have a cycle because it only traces links with a
     /// common ancestor to the default link, which is a sink node.
     fn topological_sort(
@@ -385,13 +393,15 @@ impl Simulation {
             );
         }
 
-        Ok(Self {
+        let mut res = Self {
             params,
             nodes,
             channels,
             sinks,
             sources,
-        })
+        };
+        res.scale_cpu(res.params.time_dilation);
+        Ok(res)
     }
 }
 
@@ -464,10 +474,12 @@ impl Params {
             .map(TimestepConfig::validate)
             .unwrap_or(Ok(TimestepConfig::default()))
             .context("Unable to validate timestep configuration in simulation config.")?;
+        let time_dilation = val.time_dilation.unwrap_or(1.0);
         Ok(Self {
             timestep,
             seed: val.seed.unwrap_or_default(),
             root,
+            time_dilation,
         })
     }
 }
