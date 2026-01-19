@@ -149,7 +149,6 @@ impl CgroupController {
             &mut self.nodes_unlimited
         };
         let path = parent.root.join(name);
-
         fs::create_dir(&path).expect("couldn't create cgroup path when adding node");
         let handle = NodeHandle {
             has_limited_resources,
@@ -216,14 +215,8 @@ impl CgroupController {
                 // not keeping up
                 if bandwidth > period {
                     cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(0.0, 100.0);
-                    let uclamp_min_path = cgroup.path.join(UCLAMP_MIN);
-                    let mut f = OpenOptions::new()
-                        .write(true)
-                        .open(uclamp_min_path)
-                        .unwrap();
-                    let _ = f
-                        .write(format!("{:.2}", cgroup.uclamp_min).as_bytes())
-                        .expect("unable to write minimum usage to cpu.uclamp.min");
+                    let s = format!("{:.2}", cgroup.uclamp_min);
+                    uclamp_min(&cgroup.path, s.as_bytes());
                 }
             }
         }
@@ -236,6 +229,14 @@ impl CgroupController {
             self.nodes_unlimited.nodes.get_mut(&handle.key)
         }
     }
+}
+
+fn uclamp_min(cgroup: &Path, bytes: &[u8]) {
+    let path = cgroup.join(UCLAMP_MIN);
+    let mut f = OpenOptions::new().write(true).open(path).unwrap();
+    let _ = f
+        .write(bytes)
+        .expect("unable to write minimum usage to cpu.uclamp.min");
 }
 
 fn make_root(pid: u32) -> PathBuf {
