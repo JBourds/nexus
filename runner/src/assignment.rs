@@ -6,7 +6,7 @@ use cpuutils::{
     cpuset::CpuSet,
 };
 
-use crate::{CPU_BANDWIDTH_MIN, CPU_PERIOD_MIN};
+use crate::{CPU_BANDWIDTH_MIN, CPU_MAX_SCALAR_DIFFERENCE, CPU_PERIOD_MIN};
 
 /// Builder struct which tracks the requested resources for each
 /// node and the PIDs of protocols running on that node.
@@ -70,7 +70,7 @@ pub struct Affinity {
     /// amount of frequency assigned to each CPU
     usage: BTreeMap<usize, u64>,
     /// assignment of each node to a CPU core and required number of cycles
-    assignments: HashMap<ast::NodeHandle, (usize, u64)>,
+    pub assignments: HashMap<ast::NodeHandle, (usize, u64)>,
     /// cached cpuset for the parent process
     pub cpuset: CpuSet,
 }
@@ -203,15 +203,22 @@ impl Bandwidth {
                 let ratio = *required_cycles as f64 / current_frequency as f64;
                 // try to minimize the period as much as possible to ensure
                 // scheduling requests are honored on tighter timeframes
-                if *required_cycles > current_frequency {
+                let (bandwidth, period) = if ratio >= 1.0 {
                     let period = CPU_PERIOD_MIN;
-                    let bandwidth = (CPU_PERIOD_MIN as f64 * ratio) as u64;
-                    let _ = assignments.insert(node.clone(), (bandwidth, period));
+                    let bandwidth = std::cmp::min(
+                        (CPU_PERIOD_MIN as f64 * ratio) as u64,
+                        CPU_PERIOD_MIN * CPU_MAX_SCALAR_DIFFERENCE,
+                    );
+                    (bandwidth, period)
                 } else {
-                    let period = (CPU_PERIOD_MIN as f64 / ratio) as u64;
+                    let period = std::cmp::min(
+                        (CPU_PERIOD_MIN as f64 / ratio) as u64,
+                        CPU_BANDWIDTH_MIN * CPU_MAX_SCALAR_DIFFERENCE,
+                    );
                     let bandwidth = CPU_BANDWIDTH_MIN;
-                    let _ = assignments.insert(node.clone(), (bandwidth, period));
-                }
+                    (bandwidth, period)
+                };
+                let _ = assignments.insert(node.clone(), (bandwidth, period));
             } else {
                 unreachable!("couldn't find CPU core");
             }

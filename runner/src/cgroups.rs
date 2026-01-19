@@ -22,6 +22,7 @@ pub const SUBTREE: &str = "cgroup.subtree_control";
 pub const UCLAMP_MIN: &str = "cpu.uclamp.min";
 pub const UCLAMP_MAX: &str = "cpu.uclamp.max";
 pub const CPU_MAX: &str = "cpu.max";
+pub const CPU_MAX_SCALAR_DIFFERENCE: u64 = 1000;
 pub const CPU_BANDWIDTH_MIN: u64 = 1_000;
 // True max is much larger but that's not a case we would ever
 // run into. This is already way larger than what is needed.
