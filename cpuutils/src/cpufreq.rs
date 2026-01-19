@@ -6,6 +6,7 @@ use crate::cpuset::CpuSet;
 
 const SYSFS_CPUS: &str = "/sys/devices/system/cpu";
 const PROCFS_CPUINFO: &str = "/proc/cpuinfo";
+const KILO: u64 = 1_000;
 const MEGA: f64 = 1_000_000.0;
 
 #[derive(Debug, Default)]
@@ -77,9 +78,9 @@ impl CoreInfo {
         let base = Path::new(SYSFS_CPUS)
             .join(format!("cpu{id}"))
             .join("cpufreq");
-        let min_hz = read_sysfs_u64(base.join("cpuinfo_min_freq"))?;
-        let max_hz = read_sysfs_u64(base.join("cpuinfo_max_freq"))?;
-        let current_hz = read_sysfs_u64(base.join("scaling_cur_freq"))?;
+        let min_hz = read_sysfs_u64(base.join("cpuinfo_min_freq"))? * KILO;
+        let max_hz = read_sysfs_u64(base.join("cpuinfo_max_freq"))? * KILO;
+        let current_hz = read_sysfs_u64(base.join("scaling_cur_freq"))? * KILO;
         Some(Self::Scaling {
             min_hz,
             max_hz,
