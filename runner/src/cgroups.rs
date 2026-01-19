@@ -214,7 +214,6 @@ impl CgroupController {
                 // increase uclamp minimum to hint to scheduler current policy is
                 // not keeping up
                 if bandwidth > period {
-                    println!("increasing uclamp.min");
                     cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(0.0, 100.0);
                     let uclamp_min_path = cgroup.path.join(UCLAMP_MIN);
                     let mut f = OpenOptions::new()
