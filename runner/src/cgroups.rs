@@ -76,6 +76,10 @@ pub struct NodeCgroup {
     protocols: Vec<ProtocolCgroup>,
     uclamp_min: f64,
     uclamp_max: f64,
+    bandwidth: u64,
+    period: u64,
+    // cached result of `bandwidth / period += epsilon * bandwidth / period`
+    adjustment_threshold: (f64, f64),
 }
 
 #[derive(Debug)]
@@ -92,7 +96,7 @@ impl NodeCgroup {
 
 impl NodeBucket {
     fn new(root: PathBuf) -> Self {
-        fs::create_dir(&root).unwrap();
+        fs::create_dir(&root);
         enable_subtree_control(&root);
         Self {
             root,
@@ -117,7 +121,7 @@ impl CgroupController {
         move_process(&kernel_cgroup_path, pid);
         enable_subtree_control(&root);
 
-        let nodes_unlimited = NodeBucket::new(root.join(NODES_UNLIMITED));
+        let nodes_unlimited = NodeBucket::new(root.join(NODES_LIMITED));
         let nodes_limited = NodeBucket::new(root.join(NODES_LIMITED));
 
         let mut obj = Self {
@@ -150,6 +154,7 @@ impl CgroupController {
         };
         let path = parent.root.join(name);
         fs::create_dir(&path).expect("couldn't create cgroup path when adding node");
+        enable_subtree_control(&path);
         let handle = NodeHandle {
             has_limited_resources,
             key: name.to_string(),
@@ -162,6 +167,9 @@ impl CgroupController {
                 protocols: Vec::new(),
                 uclamp_min: 0.0,
                 uclamp_max: 100.0,
+                bandwidth: CPU_BANDWIDTH_MIN,
+                period: CPU_PERIOD_MIN,
+                adjustment_threshold: (0.0, 0.0),
             },
         );
         handle
@@ -203,9 +211,25 @@ impl CgroupController {
         }
     }
 
+    /// Potentially reassign bandwidth/period.
+    /// If this gets reassigned too frequently it prevents cpu.max from actually
+    /// applying due to the time it takes for the kernel to get up to speed.
+    /// Therefore, we set a somewhat arbitrary epsilon where any change smaller
+    /// than it will not lead to an update.
     pub fn assign_cpu_bandwidths(&mut self, bandwidth_assignments: &Bandwidth) {
-        for (name, (bandwidth, period)) in bandwidth_assignments.assignments() {
+        const EPSILON: f64 = 0.05;
+        for (name, &(bandwidth, period)) in bandwidth_assignments.assignments() {
             if let Some(cgroup) = self.nodes_limited.nodes.get_mut(name) {
+                let ratio = bandwidth as f64 / period as f64;
+                // ignore small fluctuations
+                let (low, high) = cgroup.adjustment_threshold;
+                if ratio >= low && ratio <= high {
+                    return;
+                }
+                cgroup.bandwidth = bandwidth;
+                cgroup.period = period;
+                cgroup.adjustment_threshold = (ratio - EPSILON, ratio + EPSILON);
+
                 let cpu_max_path = cgroup.path.join(CPU_MAX);
                 let mut f = OpenOptions::new().write(true).open(cpu_max_path).unwrap();
                 let _ = f
