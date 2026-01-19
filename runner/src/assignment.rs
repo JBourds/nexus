@@ -208,7 +208,7 @@ impl Bandwidth {
                     let bandwidth = (CPU_PERIOD_MIN as f64 * ratio) as u64;
                     let _ = assignments.insert(node.clone(), (bandwidth, period));
                 } else {
-                    let period = (CPU_PERIOD_MIN as f64 * ratio) as u64;
+                    let period = (CPU_PERIOD_MIN as f64 / ratio) as u64;
                     let bandwidth = CPU_BANDWIDTH_MIN;
                     let _ = assignments.insert(node.clone(), (bandwidth, period));
                 }
