@@ -1,4 +1,5 @@
 pub mod errors;
+mod events;
 mod helpers;
 pub mod log;
 mod resolver;
@@ -9,8 +10,10 @@ mod types;
 
 use fuse::PID;
 use helpers::{make_handles, unzip};
+
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
+    collections::BTreeMap,
     path::PathBuf,
     sync::mpsc::{self, Receiver},
     time::{Duration, SystemTime},
@@ -24,6 +27,7 @@ use types::*;
 use crate::sources::Source;
 use crate::{
     errors::{KernelError, SourceError},
+    events::Event,
     resolver::ResolvedChannels,
 };
 use crate::{router::RoutingServer, status::StatusServer};
@@ -108,7 +112,6 @@ impl Kernel {
             tx,
         })
     }
-
     #[instrument(skip_all)]
     #[allow(unused_variables)]
     pub fn run(
@@ -116,6 +119,7 @@ impl Kernel {
         cmd: RunCmd,
         log: Option<PathBuf>,
     ) -> Result<Vec<ProtocolHandle>, KernelError> {
+        const RESOURCE_UPDATE_INTERVAL: u64 = 100;
         let delta = self.time_delta();
         let Self {
             root,
@@ -127,15 +131,35 @@ impl Kernel {
             tx,
             rx,
         } = self;
+        let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
+        queue_event(
+            &mut event_queue,
+            RESOURCE_UPDATE_INTERVAL,
+            Event::UpdateResources,
+        );
 
         'outer: for timestep in 0..self.timestep.count.into() {
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
+                if let Some(events) = dequeue(&mut event_queue, timestep) {
+                    for event in events {
+                        match event {
+                            Event::UpdateResources => {
+                                status_server.update_resources()?;
+                                queue_event(
+                                    &mut event_queue,
+                                    timestep + RESOURCE_UPDATE_INTERVAL,
+                                    Event::UpdateResources,
+                                );
+                            }
+                        }
+                    }
+                }
                 // send all commands
                 match status_server.check_health()? {
                     status::messages::StatusMessage::Ok => {}
@@ -143,7 +167,6 @@ impl Kernel {
                         break 'outer;
                     }
                 }
-                status_server.update_resources()?;
                 routing_server.poll(timestep)?;
             }
             if start.elapsed().is_err() {
@@ -189,5 +212,18 @@ impl Kernel {
             ast::TimeUnit::Nanoseconds => Duration::from_nanos(length),
             _ => unreachable!(),
         }
+    }
+}
+
+fn queue_event(queue: &mut BTreeMap<u64, Vec<Event>>, at: u64, event: Event) {
+    let list = queue.entry(at).or_default();
+    list.push(event);
+}
+
+fn dequeue(queue: &mut BTreeMap<u64, Vec<Event>>, now: u64) -> Option<Vec<Event>> {
+    if queue.iter().next().is_some_and(|(&time, _)| time <= now) {
+        queue.pop_first().map(|(_, events)| events)
+    } else {
+        None
     }
 }
