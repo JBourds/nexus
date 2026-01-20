@@ -9,6 +9,7 @@ use std::{
 use config::ast::{self, NodeProtocol, Resources};
 
 use crate::{
+    ProtocolSummary,
     assignment::{Bandwidth, Relative},
     run_protocol,
 };
@@ -62,6 +63,21 @@ pub struct ProtocolHandle {
     pub protocol: ast::ProtocolHandle,
     /// Handle for the executing process.
     pub process: Child,
+}
+
+impl ProtocolHandle {
+    pub fn finish(mut self) -> ProtocolSummary {
+        self.process.kill().expect("Couldn't kill process.");
+        let output = self
+            .process
+            .wait_with_output()
+            .expect("Expected process to be completed.");
+        ProtocolSummary {
+            node: self.node,
+            protocol: self.protocol,
+            output,
+        }
+    }
 }
 
 #[derive(Debug)]

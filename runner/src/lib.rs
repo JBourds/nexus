@@ -1,10 +1,11 @@
+use clap::Subcommand;
 use config::ast::{self, Cmd, NodeProtocol};
 use cpuutils::{cpufreq::get_cpu_info, cpuset::CpuSet};
 use std::{
     fmt::Display,
     io,
-    path::Path,
-    process::{Child, Command, Stdio},
+    path::{Path, PathBuf},
+    process::{Child, Command, Output, Stdio},
     str::FromStr,
 };
 pub mod assignment;
@@ -18,6 +19,30 @@ pub use crate::cgroups::*;
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
 
+#[derive(Subcommand, Debug, Default, Clone, PartialEq)]
+pub enum RunCmd {
+    #[default]
+    Simulate,
+    Replay {
+        logs: PathBuf,
+    },
+    Logs {
+        logs: PathBuf,
+    },
+    Fuzz,
+}
+
+impl Display for RunCmd {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunCmd::Simulate => write!(f, "simulate"),
+            RunCmd::Replay { .. } => write!(f, "replay"),
+            RunCmd::Logs { .. } => write!(f, "logs"),
+            RunCmd::Fuzz => write!(f, "fuzz"),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub struct RunController {
     pub cgroups: CgroupController,
@@ -27,39 +52,12 @@ pub struct RunController {
     pub handles: Vec<ProtocolHandle>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum RunCmd {
-    Simulate,
-    Replay,
-    Logs,
-    Fuzz,
+#[derive(Debug)]
+pub struct ProtocolSummary {
+    pub node: ast::NodeHandle,
+    pub protocol: ast::ProtocolHandle,
+    pub output: Output,
 }
-
-impl FromStr for RunCmd {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_lowercase().as_str() {
-            "simulate" => Ok(RunCmd::Simulate),
-            "replay" => Ok(RunCmd::Replay),
-            "logs" => Ok(RunCmd::Logs),
-            "fuzz" => Ok(RunCmd::Fuzz),
-            _ => Err(format!("Invalid mode: {}", s)),
-        }
-    }
-}
-
-impl Display for RunCmd {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RunCmd::Simulate => write!(f, "simulate"),
-            RunCmd::Replay => write!(f, "replay"),
-            RunCmd::Logs => write!(f, "logs"),
-            RunCmd::Fuzz => write!(f, "fuzz"),
-        }
-    }
-}
-
 /// Ensures two things:
 ///     1. Wrapper shell command gets process ID into the correct cgroup before
 ///     starting to execute the actual program.

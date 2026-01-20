@@ -114,11 +114,7 @@ impl Kernel {
     }
     #[instrument(skip_all)]
     #[allow(unused_variables)]
-    pub fn run(
-        self,
-        cmd: RunCmd,
-        log: Option<PathBuf>,
-    ) -> Result<Vec<ProtocolHandle>, KernelError> {
+    pub fn run(self, cmd: RunCmd) -> Result<Vec<ProtocolHandle>, KernelError> {
         const RESOURCE_UPDATE_INTERVAL: u64 = 100;
         let delta = self.time_delta();
         let Self {
@@ -133,7 +129,7 @@ impl Kernel {
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
-            let source = Self::get_write_source(rx, cmd, log).map_err(KernelError::SourceError)?;
+            let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
@@ -182,17 +178,10 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
-    fn get_write_source(
-        rx: Receiver<fuse::FsMessage>,
-        cmd: RunCmd,
-        logs: Option<PathBuf>,
-    ) -> Result<Source, SourceError> {
+    fn get_write_source(rx: Receiver<fuse::FsMessage>, cmd: RunCmd) -> Result<Source, SourceError> {
         match cmd {
             RunCmd::Simulate => Source::simulated(rx),
-            RunCmd::Replay => {
-                let Some(logs) = logs else {
-                    return Err(SourceError::NoReplayLog);
-                };
+            RunCmd::Replay { logs } => {
                 let logfile = logs.join(TX);
                 if !logfile.exists() {
                     return Err(SourceError::NonexistentReplayLog(logfile));

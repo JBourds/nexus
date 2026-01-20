@@ -16,3 +16,4 @@ libc = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 chrono = { workspace = true }
+csv = "1.4.0"

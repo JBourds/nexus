@@ -2,27 +2,36 @@ use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
-use runner::ProtocolHandle;
-use std::collections::HashSet;
+use runner::{ProtocolHandle, ProtocolSummary};
 use std::fs::File;
+use std::io::stdout;
 use std::path::Path;
 use std::time::SystemTime;
+use std::{collections::HashSet, fmt::Display};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
 use config::ast::{self, ChannelType};
 use fuse::{PID, fs::*};
 
-use clap::Parser;
+use clap::{Command, Parser, Subcommand};
 
 use runner::RunCmd;
 use std::path::PathBuf;
+
+use crate::output::to_csv;
+
+mod output;
 
 const CONFIG: &str = "nexus.toml";
 
 #[derive(Parser, Debug)]
 #[command(version, about, long_about = None)]
-pub struct Args {
+pub struct Cli {
+    /// Command to run
+    #[command(subcommand)]
+    pub cmd: RunCmd,
+
     /// Configuration toml file for the simulation
     #[arg(short, long)]
     pub config: String,
@@ -30,37 +39,35 @@ pub struct Args {
     /// Location where the NexusFS should be mounted during simulation
     #[arg(short, long)]
     pub nexus_root: Option<PathBuf>,
-
-    /// Command to run
-    #[arg(long, default_value_t = RunCmd::Simulate)]
-    pub cmd: RunCmd,
-
-    /// Directory where logs to be parsed are. Required in the commands which
-    /// use it but has no effect in others.
-    #[arg(short, long)]
-    pub logs: Option<PathBuf>,
 }
 
-fn simulate(args: Args) -> Result<()> {
+#[derive(Debug, Clone)]
+pub enum OutputFmt {
+    Csv,
+}
+
+fn simulate(args: Cli) -> Result<()> {
     let sim = config::parse((&args.config).into())?;
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join(CONFIG))?;
     run(args, sim, root)
 }
 
-fn replay(args: Args) -> Result<()> {
-    let logs = args.logs.as_ref().expect("could not find log directory");
+fn replay(args: Cli) -> Result<()> {
+    let RunCmd::Replay { logs } = &args.cmd else {
+        unreachable!()
+    };
     let sim = config::deserialize_config(&logs.join(CONFIG))?;
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join(CONFIG))?;
     run(args, sim, root)
 }
 
-fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
-    let (write_log, read_log) = setup_logging(root.as_path(), args.cmd)?;
+fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
+    let (write_log, read_log) = setup_logging(root.as_path(), &args.cmd)?;
     runner::build(&sim)?;
     let runc = runner::run(&sim)?;
-    let protocol_channels = make_fs_channels(&sim, &runc.handles, args.cmd)?;
+    let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
 
     let fs = args.nexus_root.map(NexusFs::new).unwrap_or_default();
     #[allow(unused_variables)]
@@ -71,61 +78,39 @@ fn run(args: Args, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     // Need to join fs thread so the other processes don't get stuck
     // in an uninterruptible sleep state.
     let file_handles = make_file_handles(&sim, &runc.handles);
-    let protocol_handles =
-        Kernel::new(sim, runc, file_handles, rx, tx)?.run(args.cmd, args.logs)?;
+    let protocol_handles = Kernel::new(sim, runc, file_handles, rx, tx)?.run(args.cmd)?;
+    let summaries = get_output(protocol_handles);
 
-    println!("Simulation Summary:\n\n{}", summarize(protocol_handles));
+    to_csv(stdout(), &summaries);
     println!("Write Log: {write_log:?}");
     println!("Read Log: {read_log:?}");
     Ok(())
 }
 
-fn logs(args: Args) -> Result<()> {
-    Source::print_logs(args.logs.unwrap())?;
+fn print_logs(args: Cli) -> Result<()> {
+    let RunCmd::Logs { logs } = &args.cmd else {
+        unreachable!()
+    };
+    Source::print_logs(logs)?;
     Ok(())
 }
 
-fn fuzz(args: Args) -> Result<()> {
+fn fuzz(_args: Cli) -> Result<()> {
     todo!()
 }
 
 fn main() -> Result<()> {
-    let args = Args::parse();
-    ensure!(
-        !matches!(args.cmd, RunCmd::Replay | RunCmd::Logs) || args.logs.is_some(),
-        format!(
-            "Must provide a directory for `logs` argument when running command `{}`",
-            args.cmd
-        )
-    );
+    let args = Cli::parse();
     match args.cmd {
         RunCmd::Simulate => simulate(args),
-        RunCmd::Replay => replay(args),
-        RunCmd::Logs => logs(args),
-        RunCmd::Fuzz => fuzz(args),
+        RunCmd::Replay { .. } => replay(args),
+        RunCmd::Logs { .. } => print_logs(args),
+        _ => todo!(),
     }
 }
 
-fn summarize(mut handles: Vec<ProtocolHandle>) -> String {
-    let mut summaries = Vec::with_capacity(handles.len());
-    for handle in handles.iter_mut() {
-        handle.process.kill().expect("Couldn't kill process.");
-    }
-    for mut handle in handles {
-        handle.process.kill().expect("Couldn't kill process.");
-        let output = handle
-            .process
-            .wait_with_output()
-            .expect("Expected process to be completed.");
-        summaries.push(format!(
-            "{}.{}:\nstdout: {:?}\nstderr: {:?}\n",
-            handle.node,
-            handle.protocol,
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        ));
-    }
-    summaries.join("\n")
+fn get_output(handles: Vec<ProtocolHandle>) -> Vec<ProtocolSummary> {
+    handles.into_iter().map(ProtocolHandle::finish).collect()
 }
 
 fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
@@ -138,10 +123,10 @@ fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn setup_logging(root: &Path, cmd: RunCmd) -> Result<(PathBuf, PathBuf)> {
+fn setup_logging(root: &Path, cmd: &RunCmd) -> Result<(PathBuf, PathBuf)> {
     let tx = root.join("tx");
     let rx = root.join("rx");
-    let (tx_logfile, rx_logfile) = if cmd == RunCmd::Simulate {
+    let (tx_logfile, rx_logfile) = if matches!(cmd, RunCmd::Simulate) {
         (Some(make_logfile(&tx)?), Some(make_logfile(&rx)?))
     } else {
         (None, Some(make_logfile(&rx)?))
@@ -202,7 +187,7 @@ fn make_file_handles(
 fn make_fs_channels(
     sim: &ast::Simulation,
     handles: &[runner::ProtocolHandle],
-    run_cmd: RunCmd,
+    run_cmd: &RunCmd,
 ) -> Result<Vec<NexusChannel>, fuse::errors::ChannelError> {
     let mut channels = vec![];
     for runner::ProtocolHandle {
@@ -236,7 +221,7 @@ fn make_fs_channels(
                     };
                     ChannelMode::try_from(file_cmd)?
                 }
-                RunCmd::Replay => ChannelMode::ReplayWrites,
+                RunCmd::Replay { .. } => ChannelMode::ReplayWrites,
                 RunCmd::Fuzz => ChannelMode::FuzzWrites,
                 _ => unreachable!(),
             };
