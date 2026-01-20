@@ -17,6 +17,10 @@ pub struct Cli {
     #[arg(short, long, default_value_t)]
     pub dest: OutputDestination,
 
+    /// Number of times to run unique simulations
+    #[arg(short, long)]
+    pub n: Option<usize>,
+
     /// Configuration toml file for the simulation
     #[arg(short, long)]
     pub config: String,
