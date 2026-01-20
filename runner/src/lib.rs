@@ -32,9 +32,15 @@ pub struct ProtocolSummary {
     pub protocol: ast::ProtocolHandle,
     pub output: Output,
 }
-/// Ensures two things:
-///     1. Wrapper shell command gets process ID into the correct cgroup before
-///     starting to execute the actual program.
+
+struct BuildCtx<'a> {
+    node: &'a str,
+    protocol: &'a str,
+    cmd: &'a Cmd,
+    root: &'a Path,
+    handle: Child,
+}
+
 fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
@@ -49,48 +55,32 @@ fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     cmd.spawn()
 }
 
-pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
-    struct Ctx<'a> {
-        node: &'a str,
-        protocol: &'a str,
-        cmd: &'a Cmd,
-        root: &'a Path,
-        handle: Child,
-    }
-    println!("Building programs");
-    let handles = sim
-        .nodes
-        .iter()
-        .flat_map(|(node_name, node)| {
-            node.protocols
-                .iter()
-                .filter(|(_, p)| !p.build.cmd.is_empty())
-                .map(|(protocol_name, p)| {
-                    let cmd = p.build.cmd.as_str();
-                    let args = p.build.args.as_slice();
-                    let root = p.root.as_path();
-                    Command::new(cmd)
-                        .current_dir(root)
-                        .args(args)
-                        .stdout(Stdio::null())
-                        .spawn()
-                        .map(|handle| Ctx {
-                            node: node_name,
-                            protocol: protocol_name,
-                            cmd: &p.build,
-                            root,
-                            handle,
-                        })
-                })
+fn build_protocol<'a>(
+    node_name: &'a ast::NodeHandle,
+    protocol_name: &'a ast::ProtocolHandle,
+    p: &'a NodeProtocol,
+) -> io::Result<BuildCtx<'a>> {
+    let cmd = p.build.cmd.as_str();
+    let args = p.build.args.as_slice();
+    let root = p.root.as_path();
+    Command::new(cmd)
+        .current_dir(root)
+        .args(args)
+        .stdout(Stdio::null())
+        .spawn()
+        .map(|handle| BuildCtx {
+            node: node_name,
+            protocol: protocol_name,
+            cmd: &p.build,
+            root,
+            handle,
         })
-        .collect::<io::Result<Vec<_>>>()
-        .map_err(errors::ProtocolError::UnableToRun)?;
+}
+
+fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::Error> {
     let mut errors = vec![];
-    for mut ctx in handles {
-        let exit_code = ctx
-            .handle
-            .wait()
-            .map_err(errors::ProtocolError::UnableToRun)?;
+    for mut ctx in contexts {
+        let exit_code = ctx.handle.wait().expect("cannot wait for process");
         if !exit_code.success() {
             // First fialure
             if errors.is_empty() {
@@ -104,6 +94,24 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
             ));
         }
     }
+    errors
+}
+
+/// Walk the simulation AST and build each program.
+pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
+    println!("Building programs");
+    let contexts = sim
+        .nodes
+        .iter()
+        .flat_map(|(node_name, node)| {
+            node.protocols
+                .iter()
+                .filter(|(_, p)| !p.build.cmd.is_empty())
+                .map(|(protocol_name, p)| build_protocol(node_name, protocol_name, p))
+        })
+        .collect::<io::Result<Vec<_>>>()
+        .map_err(errors::ProtocolError::UnableToRun)?;
+    let errors = check_builds(contexts);
     if errors.is_empty() {
         Ok(())
     } else {
