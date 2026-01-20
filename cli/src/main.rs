@@ -2,8 +2,10 @@ use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
+use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
-use std::fs::File;
+use std::fmt::Write;
+use std::fs::{File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
 use std::time::SystemTime;
@@ -11,12 +13,11 @@ use std::{collections::HashSet, fmt::Display};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::{Result, ensure};
+use clap::Parser;
 use config::ast::{self, ChannelType};
 use fuse::{PID, fs::*};
 
-use clap::{Command, Parser, Subcommand};
-
-use runner::RunCmd;
+use runner::{cli::Cli, cli::RunCmd};
 use std::path::PathBuf;
 
 use crate::output::to_csv;
@@ -25,25 +26,14 @@ mod output;
 
 const CONFIG: &str = "nexus.toml";
 
-#[derive(Parser, Debug)]
-#[command(version, about, long_about = None)]
-pub struct Cli {
-    /// Command to run
-    #[command(subcommand)]
-    pub cmd: RunCmd,
-
-    /// Configuration toml file for the simulation
-    #[arg(short, long)]
-    pub config: String,
-
-    /// Location where the NexusFS should be mounted during simulation
-    #[arg(short, long)]
-    pub nexus_root: Option<PathBuf>,
-}
-
-#[derive(Debug, Clone)]
-pub enum OutputFmt {
-    Csv,
+fn main() -> Result<()> {
+    let args = Cli::parse();
+    match args.cmd {
+        RunCmd::Simulate => simulate(args),
+        RunCmd::Replay { .. } => replay(args),
+        RunCmd::Logs { .. } => print_logs(args),
+        _ => todo!(),
+    }
 }
 
 fn simulate(args: Cli) -> Result<()> {
@@ -61,6 +51,14 @@ fn replay(args: Cli) -> Result<()> {
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join(CONFIG))?;
     run(args, sim, root)
+}
+
+fn print_logs(args: Cli) -> Result<()> {
+    let RunCmd::Logs { logs } = &args.cmd else {
+        unreachable!()
+    };
+    Source::print_logs(logs)?;
+    Ok(())
 }
 
 fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
@@ -81,32 +79,23 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     let protocol_handles = Kernel::new(sim, runc, file_handles, rx, tx)?.run(args.cmd)?;
     let summaries = get_output(protocol_handles);
 
-    to_csv(stdout(), &summaries);
+    match args.dest {
+        OutputDestination::Stdout => {
+            to_csv(stdout(), &summaries);
+        }
+        OutputDestination::File => {
+            let path = root.join(format!("output.{}", args.fmt.extension()));
+            let f = OpenOptions::new().write(true).create_new(true).open(path)?;
+            to_csv(f, &summaries);
+        }
+    }
     println!("Write Log: {write_log:?}");
     println!("Read Log: {read_log:?}");
     Ok(())
 }
 
-fn print_logs(args: Cli) -> Result<()> {
-    let RunCmd::Logs { logs } = &args.cmd else {
-        unreachable!()
-    };
-    Source::print_logs(logs)?;
-    Ok(())
-}
-
 fn fuzz(_args: Cli) -> Result<()> {
     todo!()
-}
-
-fn main() -> Result<()> {
-    let args = Cli::parse();
-    match args.cmd {
-        RunCmd::Simulate => simulate(args),
-        RunCmd::Replay { .. } => replay(args),
-        RunCmd::Logs { .. } => print_logs(args),
-        _ => todo!(),
-    }
 }
 
 fn get_output(handles: Vec<ProtocolHandle>) -> Vec<ProtocolSummary> {

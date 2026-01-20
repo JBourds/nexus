@@ -20,7 +20,7 @@ use std::{
 };
 
 use config::ast::{self, TimestepConfig};
-use runner::{CgroupController, ProtocolHandle, RunCmd, RunController};
+use runner::{ProtocolHandle, RunController, cli::RunCmd};
 use tracing::{instrument, warn};
 use types::*;
 

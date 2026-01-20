@@ -10,6 +10,7 @@ use std::{
 };
 pub mod assignment;
 pub mod cgroups;
+pub mod cli;
 pub mod errors;
 use errors::*;
 
@@ -18,30 +19,6 @@ pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
 const ECHO: &str = "echo";
-
-#[derive(Subcommand, Debug, Default, Clone, PartialEq)]
-pub enum RunCmd {
-    #[default]
-    Simulate,
-    Replay {
-        logs: PathBuf,
-    },
-    Logs {
-        logs: PathBuf,
-    },
-    Fuzz,
-}
-
-impl Display for RunCmd {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            RunCmd::Simulate => write!(f, "simulate"),
-            RunCmd::Replay { .. } => write!(f, "replay"),
-            RunCmd::Logs { .. } => write!(f, "logs"),
-            RunCmd::Fuzz => write!(f, "fuzz"),
-        }
-    }
-}
 
 #[derive(Debug)]
 pub struct RunController {
