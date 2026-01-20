@@ -14,7 +14,7 @@ use std::{
     thread::{self, JoinHandle},
 };
 
-use cpuutils::cpufreq;
+use cpuutils::cpufreq::{self, CpuInfo};
 use runner::{ProtocolHandle, RunController};
 
 use crate::{KernelServer, errors::KernelError, status::errors::StatusError};
@@ -57,9 +57,66 @@ pub struct StatusServer {
     time_dilation: f64,
     /// Controller for different aspects of the running simulation.
     runc: RunController,
+    /// Struct containing information about each core's frequency
+    cpuinfo: CpuInfo,
+    /// Receiving channel to get messages from the kernel.
+    kernel_rx: mpsc::Receiver<KernelMessage>,
+    /// Outgoing channel to deliver responses to the kernel.
+    status_tx: mpsc::Sender<StatusMessage>,
 }
 
 impl StatusServer {
+    fn update_resources(&mut self) {
+        self.cpuinfo.refresh();
+        self.runc
+            .bandwidth
+            .refresh(&self.runc.affinity, &self.cpuinfo);
+        self.runc
+            .cgroups
+            .assign_cpu_bandwidths(&self.runc.bandwidth);
+    }
+
+    fn check_health(&mut self) -> Result<(), StatusError> {
+        let premature_exits = health::check(&mut self.runc.handles);
+        if premature_exits.is_empty() {
+            self.status_tx
+                .send(StatusMessage::Ok)
+                .map_err(StatusError::StatusSendError)
+        } else {
+            self.status_tx
+                .send(StatusMessage::PrematureExit)
+                .map_err(StatusError::StatusSendError)?;
+            health::kill(&mut self.runc.handles).expect("unable to kill processes");
+            self.runc.cgroups.freeze_nodes();
+            Ok(())
+        }
+    }
+
+    pub fn run(mut self) -> Result<Vec<ProtocolHandle>, KernelError> {
+        loop {
+            match self.kernel_rx.recv() {
+                Ok(KernelMessage::UpdateResources) => {
+                    self.update_resources();
+                }
+                Ok(KernelMessage::HealthCheck) => {
+                    self.check_health().map_err(KernelError::StatusError)?;
+                }
+                Ok(KernelMessage::Shutdown) => {
+                    return Ok(self.runc.handles);
+                }
+                Ok(KernelMessage::Freeze) => {
+                    self.runc.cgroups.freeze_nodes();
+                }
+                Ok(KernelMessage::Unfreeze) => {
+                    self.runc.cgroups.unfreeze_nodes();
+                }
+                Err(e) => {
+                    break Err(KernelError::StatusError(StatusError::RecvError(e)));
+                }
+            };
+        }
+    }
+
     pub fn serve(
         time_dilation: f64,
         mut runc: RunController,
@@ -71,54 +128,15 @@ impl StatusServer {
         thread::Builder::new()
             .name("nexus_status_server".to_string())
             .spawn(move || {
-                let mut server = Self {
+                let cpuinfo = cpufreq::get_cpu_info(&runc.affinity.cpuset);
+                let server = Self {
                     time_dilation,
                     runc,
+                    cpuinfo,
+                    kernel_rx,
+                    status_tx,
                 };
-                let mut cpuinfo = cpufreq::get_cpu_info(&server.runc.affinity.cpuset);
-                loop {
-                    match kernel_rx.recv() {
-                        Ok(KernelMessage::UpdateResources) => {
-                            cpuinfo.refresh();
-                            server
-                                .runc
-                                .bandwidth
-                                .refresh(&server.runc.affinity, &cpuinfo);
-                            server
-                                .runc
-                                .cgroups
-                                .assign_cpu_bandwidths(&server.runc.bandwidth);
-                        }
-                        Ok(KernelMessage::HealthCheck) => {
-                            let premature_exits = health::check(&mut server.runc.handles);
-                            if premature_exits.is_empty() {
-                                status_tx.send(StatusMessage::Ok).map_err(|e| {
-                                    KernelError::StatusError(StatusError::StatusSendError(e))
-                                })?;
-                                continue;
-                            }
-
-                            status_tx.send(StatusMessage::PrematureExit).map_err(|e| {
-                                KernelError::StatusError(StatusError::StatusSendError(e))
-                            })?;
-                            health::kill(&mut server.runc.handles)
-                                .expect("unable to kill processes");
-                            server.runc.cgroups.freeze_nodes();
-                        }
-                        Ok(KernelMessage::Shutdown) => {
-                            return Ok(server.runc.handles);
-                        }
-                        Ok(KernelMessage::Freeze) => {
-                            server.runc.cgroups.freeze_nodes();
-                        }
-                        Ok(KernelMessage::Unfreeze) => {
-                            server.runc.cgroups.unfreeze_nodes();
-                        }
-                        Err(e) => {
-                            break Err(KernelError::StatusError(StatusError::RecvError(e)));
-                        }
-                    };
-                }
+                server.run()
             })
             .map_err(|e| KernelError::StatusError(StatusError::ThreadCreation(e)))
             .map(|handle| KernelServer::new(handle, kernel_tx, status_rx))
