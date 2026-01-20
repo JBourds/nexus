@@ -137,7 +137,7 @@ impl CgroupController {
         move_process(&kernel_cgroup_path, pid);
         enable_subtree_control(&root);
 
-        let nodes_unlimited = NodeBucket::new(root.join(NODES_LIMITED));
+        let nodes_unlimited = NodeBucket::new(root.join(NODES_UNLIMITED));
         let nodes_limited = NodeBucket::new(root.join(NODES_LIMITED));
 
         let mut obj = Self {
