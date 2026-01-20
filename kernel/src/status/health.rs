@@ -6,7 +6,7 @@ use tracing::error;
 /// issue kill commands to all processes in set of handles
 pub fn kill(handles: &mut [ProtocolHandle]) -> io::Result<()> {
     for handle in handles {
-        handle.process.kill()?;
+        handle.kill()?;
     }
     Ok(())
 }
@@ -15,7 +15,7 @@ pub fn kill(handles: &mut [ProtocolHandle]) -> io::Result<()> {
 pub fn check(handles: &mut [ProtocolHandle]) -> Vec<usize> {
     let mut errors = vec![];
     for (index, handle) in handles.iter_mut().enumerate() {
-        if let Ok(Some(_)) = handle.process.try_wait() {
+        if !handle.running() {
             error!("Process prematurely exited");
             errors.push(index);
         }

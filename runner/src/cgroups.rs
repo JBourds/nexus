@@ -1,7 +1,7 @@
 use std::{
     collections::HashMap,
     fs::{self, File, OpenOptions},
-    io::{Read, Write},
+    io::{self, Read, Write},
     path::{Path, PathBuf},
     process::Child,
 };
@@ -61,25 +61,73 @@ pub struct ProtocolHandle {
     /// Uniquely identify this protocol in cgroup hierarchy
     #[allow(dead_code)]
     index: usize,
+    /// Original AST node to preserve information about how to build/run
+    ast: NodeProtocol,
     /// Name of the node. Unique identifer within the simulation.
     pub node: ast::NodeHandle,
     /// Name of the protocol. Unique identifier for a process within a node.
     pub protocol: ast::ProtocolHandle,
     /// Handle for the executing process.
-    pub process: Child,
+    pub process: Option<Child>,
 }
 
 impl ProtocolHandle {
-    pub fn finish(mut self) -> ProtocolSummary {
-        self.process.kill().expect("Couldn't kill process.");
-        let output = self
-            .process
-            .wait_with_output()
-            .expect("Expected process to be completed.");
-        ProtocolSummary {
-            node: self.node,
-            protocol: self.protocol,
-            output,
+    pub fn new(
+        node_handle: NodeHandle,
+        index: usize,
+        ast: NodeProtocol,
+        node: ast::NodeHandle,
+        protocol: ast::ProtocolHandle,
+    ) -> Self {
+        ProtocolHandle {
+            node_handle,
+            index,
+            ast,
+            node,
+            protocol,
+            process: None,
+        }
+    }
+
+    pub fn running(&mut self) -> bool {
+        if let Some(p) = self.process.as_mut() {
+            !matches!(p.try_wait(), Ok(Some(_)))
+        } else {
+            false
+        }
+    }
+
+    pub fn kill(&mut self) -> io::Result<()> {
+        if let Some(p) = self.process.as_mut() {
+            p.kill()
+        } else {
+            Ok(())
+        }
+    }
+
+    pub fn finish(mut self) -> Option<ProtocolSummary> {
+        self.process.take().map(|mut p| {
+            p.kill().expect("Couldn't kill process.");
+            let output = p
+                .wait_with_output()
+                .expect("Expected process to be completed.");
+            ProtocolSummary {
+                node: self.node,
+                protocol: self.protocol,
+                output,
+            }
+        })
+    }
+
+    pub fn run(&mut self, cgroup: impl AsRef<Path>) -> bool {
+        if self.process.is_none() {
+            let process =
+                run_protocol(&self.ast, cgroup.as_ref()).expect("couldn't execute process");
+            move_process(cgroup.as_ref(), process.id());
+            self.process = Some(process);
+            true
+        } else {
+            false
         }
     }
 }
@@ -205,20 +253,19 @@ impl CgroupController {
         let node = self
             .get_node(handle)
             .expect("couldn't find node from handle.");
-        let path = node.path.join(name);
-        fs::create_dir(&path).expect("couldn't create cgroup path when adding protocol");
-        let process = run_protocol(protocol, &path).expect("couldn't execute process");
-
-        move_process(&path, process.id());
-        let handle = ProtocolHandle {
-            node_handle: handle.clone(),
-            index: node.protocols.len(),
-            node: handle.key.clone(),
-            protocol: name.to_string(),
-            process,
-        };
-        node.add(path);
-
+        let cgroup = node.path.join(name);
+        fs::create_dir(&cgroup).expect("couldn't create cgroup path when adding protocol");
+        let mut handle = ProtocolHandle::new(
+            handle.clone(),
+            node.protocols.len(),
+            protocol.clone(),
+            handle.key.clone(),
+            name.to_string(),
+        );
+        if !handle.run(&cgroup) {
+            panic!("error running protocol");
+        }
+        node.add(cgroup);
         handle
     }
 

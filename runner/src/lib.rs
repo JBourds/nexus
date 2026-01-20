@@ -132,7 +132,14 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         let handle = cgroup_controller.add_node(node_name, node.resources.clone());
         for (protocol_name, protocol) in &node.protocols {
             let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
-            affinity_builder.add_protocol(node_name, protocol_handle.process.id());
+            affinity_builder.add_protocol(
+                node_name,
+                protocol_handle
+                    .process
+                    .as_ref()
+                    .expect("there should always be a process here")
+                    .id(),
+            );
             handles.push(protocol_handle);
         }
     }

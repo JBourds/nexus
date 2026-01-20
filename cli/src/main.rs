@@ -99,7 +99,10 @@ fn fuzz(_args: Cli) -> Result<()> {
 }
 
 fn get_output(handles: Vec<ProtocolHandle>) -> Vec<ProtocolSummary> {
-    handles.into_iter().map(ProtocolHandle::finish).collect()
+    handles
+        .into_iter()
+        .filter_map(ProtocolHandle::finish)
+        .collect()
 }
 
 fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
@@ -158,7 +161,7 @@ fn make_file_handles(
     {
         let node = &sim.nodes.get(node_handle).unwrap();
         let protocol = node.protocols.get(protocol_handle).unwrap();
-        let pid = process.id();
+        let pid = process.as_ref().unwrap().id();
 
         for channel in protocol
             .subscribers
@@ -188,7 +191,7 @@ fn make_fs_channels(
     {
         let node = &sim.nodes.get(node_handle).unwrap();
         let protocol = node.protocols.get(protocol_handle).unwrap();
-        let pid = process.id();
+        let pid = process.as_ref().unwrap().id();
 
         for channel in protocol
             .subscribers
