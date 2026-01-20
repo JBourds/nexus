@@ -25,6 +25,6 @@ int main() {
     while (CONTINUE) {
         COUNTER += 1;
     }
-    printf("%ld\n", COUNTER);
+    printf("%ld", COUNTER);
     return 0;
 }
