@@ -1,12 +1,9 @@
-use clap::Subcommand;
 use config::ast::{self, Cmd, NodeProtocol};
-use cpuutils::{cpufreq::get_cpu_info, cpuset::CpuSet};
+use cpuutils::cpufreq::get_cpu_info;
 use std::{
-    fmt::Display,
     io,
-    path::{Path, PathBuf},
+    path::Path,
     process::{Child, Command, Output, Stdio},
-    str::FromStr,
 };
 pub mod assignment;
 pub mod cgroups;

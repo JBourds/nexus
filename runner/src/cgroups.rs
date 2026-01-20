@@ -33,6 +33,8 @@ pub const CPU_PERIOD_MAX: u64 = 1_000_000;
 pub const CPU_WEIGHT: &str = "cpu.weight";
 pub const CPU_WEIGHT_MIN: u64 = 1;
 pub const CPU_WEIGHT_MAX: u64 = 10_000;
+const MIN_UCLAMP: f64 = 0.0;
+const MAX_UCLAMP: f64 = 100.0;
 const SUBTREE_SUBSYSTEMS: &str = "+cpu +memory";
 
 #[derive(Debug)]
@@ -54,8 +56,10 @@ pub struct NodeHandle {
 #[derive(Debug)]
 pub struct ProtocolHandle {
     /// Uniquely identify node within cgroup hierarchy
+    #[allow(dead_code)]
     node_handle: NodeHandle,
     /// Uniquely identify this protocol in cgroup hierarchy
+    #[allow(dead_code)]
     index: usize,
     /// Name of the node. Unique identifer within the simulation.
     pub node: ast::NodeHandle,
@@ -82,16 +86,17 @@ impl ProtocolHandle {
 
 #[derive(Debug)]
 pub struct ProtocolCgroup {
+    #[allow(dead_code)]
     path: PathBuf,
 }
 
 #[derive(Debug)]
 pub struct NodeCgroup {
     path: PathBuf,
+    #[allow(dead_code)]
     resources: Resources,
     protocols: Vec<ProtocolCgroup>,
     uclamp_min: f64,
-    uclamp_max: f64,
     bandwidth: u64,
     period: u64,
     // cached result of `bandwidth / period += epsilon * bandwidth / period`
@@ -112,7 +117,7 @@ impl NodeCgroup {
 
 impl NodeBucket {
     fn new(root: PathBuf) -> Self {
-        fs::create_dir(&root);
+        fs::create_dir(&root).expect("unable to create parent cgroup for nodes.");
         enable_subtree_control(&root);
         Self {
             root,
@@ -182,8 +187,7 @@ impl CgroupController {
                 path,
                 resources,
                 protocols: Vec::new(),
-                uclamp_min: 1000.0,
-                uclamp_max: 100.0,
+                uclamp_min: MAX_UCLAMP,
                 bandwidth: CPU_BANDWIDTH_MIN,
                 period: CPU_PERIOD_MIN,
                 adjustment_threshold: (0.0, 0.0),
@@ -255,7 +259,7 @@ impl CgroupController {
                 // increase uclamp minimum to hint to scheduler current policy is
                 // not keeping up
                 if bandwidth > period {
-                    cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(0.0, 100.0);
+                    cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(MIN_UCLAMP, MAX_UCLAMP);
                     let s = format!("{:.2}", cgroup.uclamp_min);
                     uclamp_min(&cgroup.path, s.as_bytes());
                 }

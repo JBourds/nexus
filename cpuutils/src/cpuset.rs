@@ -2,6 +2,8 @@ use std::fmt::Display;
 
 use libc::{_SC_NPROCESSORS_ONLN, cpu_set_t, pid_t, sched_getaffinity, sched_setaffinity, sysconf};
 
+use crate::errors::{CpusetError, LibcError};
+
 const BITS_IN_BYTE: usize = 8;
 
 #[derive(Debug)]
@@ -9,11 +11,11 @@ pub struct CpuSet {
     set: Vec<u8>,
 }
 
-fn get_nprocs() -> Result<usize, ()> {
+fn get_nprocs() -> Result<usize, CpusetError> {
     let nprocs = unsafe {
         let rc = sysconf(_SC_NPROCESSORS_ONLN);
         if rc == -1 {
-            return Err(());
+            return Err(LibcError::Sysconf.into());
         }
         rc as usize
     };
@@ -52,44 +54,44 @@ impl CpuSet {
         self
     }
 
-    pub fn enable_cpu(&mut self, cpu: usize) -> Result<&mut Self, ()> {
-        if self.set_bit(cpu, true) {
-            Ok(self)
-        } else {
-            Err(())
-        }
+    pub fn enable_cpu(&mut self, cpu: usize) -> Result<&mut Self, CpusetError> {
+        self.set_bit(cpu, true).map(|_| self)
     }
 
-    pub fn disable_cpu(&mut self, cpu: usize) -> Result<&mut Self, ()> {
-        if self.set_bit(cpu, false) {
-            Ok(self)
-        } else {
-            Err(())
-        }
+    pub fn disable_cpu(&mut self, cpu: usize) -> Result<&mut Self, CpusetError> {
+        self.set_bit(cpu, false).map(|_| self)
     }
 
     /// Get the PID for the currently running process
-    pub fn get_current_affinity(&mut self) -> Result<&mut Self, ()> {
+    pub fn get_current_affinity(&mut self) -> Result<&mut Self, CpusetError> {
         self.get_affinity(0)
     }
 
     /// Apply the CPU set to a given pid's affinity.
-    pub fn set_affinity(&self, pid: u32) -> Result<(), ()> {
+    pub fn set_affinity(&self, pid: u32) -> Result<(), CpusetError> {
         let mask = self.set.as_ptr() as *const cpu_set_t;
         let nbytes = self.cpuset_size();
         let rc = unsafe { sched_setaffinity(pid as pid_t, nbytes, mask) };
-        if rc == -1 { Err(()) } else { Ok(()) }
+        if rc == -1 {
+            Err(LibcError::SchedSetAffinity.into())
+        } else {
+            Ok(())
+        }
     }
 
-    pub fn get_affinity(&mut self, pid: u32) -> Result<&mut Self, ()> {
+    pub fn get_affinity(&mut self, pid: u32) -> Result<&mut Self, CpusetError> {
         let mask = self.set.as_mut_ptr() as *mut cpu_set_t;
         let nbytes = self.cpuset_size();
         let rc = unsafe { sched_getaffinity(pid as pid_t, nbytes, mask) };
-        if rc == -1 { Err(()) } else { Ok(self) }
+        if rc == -1 {
+            Err(LibcError::SchedGetAffinity.into())
+        } else {
+            Ok(self)
+        }
     }
 
     /// Get the CPU affinity of the process and return it.
-    pub fn with_nprocs() -> Result<Self, ()> {
+    pub fn with_nprocs() -> Result<Self, CpusetError> {
         let nprocs = get_nprocs()?;
         let mut set = vec![0; bytes_needed(nprocs)];
         set.truncate(nprocs.div_ceil(BITS_IN_BYTE));
@@ -115,10 +117,13 @@ impl CpuSet {
         std::cmp::max(self.set.len(), core::mem::size_of::<cpu_set_t>())
     }
 
-    fn set_bit(&mut self, index: usize, value: bool) -> bool {
+    fn set_bit(&mut self, index: usize, value: bool) -> Result<(), CpusetError> {
         let byte_index = index / BITS_IN_BYTE;
         if byte_index >= self.set.len() {
-            return false;
+            return Err(CpusetError::ByteIndexRange {
+                index: byte_index,
+                length: self.set.len(),
+            });
         }
         let byte = self.set.get_mut(byte_index).expect("index out of bounds");
         let bit_index = index % BITS_IN_BYTE;
@@ -128,7 +133,7 @@ impl CpuSet {
         } else {
             *byte &= !mask;
         }
-        true
+        Ok(())
     }
 }
 

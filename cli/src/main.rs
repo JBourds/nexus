@@ -4,15 +4,14 @@ use kernel::{self, Kernel, sources::Source};
 use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
-use std::fmt::Write;
+use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
 use std::time::SystemTime;
-use std::{collections::HashSet, fmt::Display};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
-use anyhow::{Result, ensure};
+use anyhow::Result;
 use clap::Parser;
 use config::ast::{self, ChannelType};
 use fuse::{PID, fs::*};
@@ -94,6 +93,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn fuzz(_args: Cli) -> Result<()> {
     todo!()
 }

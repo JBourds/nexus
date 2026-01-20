@@ -54,6 +54,7 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
 
 pub struct StatusServer {
     /// Scalar value to try and speed up or slow down requested cycles with.
+    #[allow(dead_code)]
     time_dilation: f64,
     /// Controller for different aspects of the running simulation.
     runc: RunController,
