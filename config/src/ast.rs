@@ -704,7 +704,6 @@ mod tests {
             (100.0, 0, Bit, Kilometers, 50000000000),
         ];
         for (distance, amount, data_unit, distance_unit, expected) in tests {
-            dbg!((distance, amount, data_unit, distance_unit, expected));
             assert_eq!(
                 calculator.timestep_delay(distance, amount, data_unit, distance_unit),
                 expected

@@ -227,7 +227,6 @@ impl CgroupController {
                 if ratio >= low && ratio <= high {
                     return;
                 }
-                dbg!(&bandwidth, &period, bandwidth as f64 / period as f64);
                 cgroup.bandwidth = bandwidth;
                 cgroup.period = period;
                 cgroup.adjustment_threshold = (ratio - EPSILON, ratio + EPSILON);
