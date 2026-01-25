@@ -347,6 +347,7 @@ dependencies = [
  "fuser",
  "home",
  "libc",
+ "runner",
  "thiserror",
  "tracing",
 ]
