@@ -175,7 +175,7 @@ impl RoutingServer {
         match mailbox.len().cmp(&1) {
             std::cmp::Ordering::Less => Ok(false),
             std::cmp::Ordering::Equal => {
-                let msg = mailbox.front().unwrap();
+                let msg = mailbox.pop_front().unwrap();
                 let Route { distance, unit, .. } =
                     self.routes.entries[channel_handle].nodes[&msg.src][node_handle];
 
