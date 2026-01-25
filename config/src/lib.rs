@@ -13,7 +13,7 @@ pub mod ast;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 
-const CONTROL_FILES: [&str; 2] = ["energy", "position"];
+const CONTROL_FILES: [&str; 4] = ["time", "energy_state", "energy_left", "position"];
 const RESERVED_LINKS: [&str; 1] = ["ideal"];
 
 pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
