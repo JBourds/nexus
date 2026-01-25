@@ -163,10 +163,10 @@ impl RoutingServer {
     }
 
     fn suffix_to_time(s: &str) -> Option<TimeUnit> {
-        match s {
+        match &s[s.len() - 2..s.len()] {
             "us" => Some(TimeUnit::Microseconds),
             "ms" => Some(TimeUnit::Milliseconds),
-            "s" => Some(TimeUnit::Seconds),
+            "_s" => Some(TimeUnit::Seconds),
             _ => None,
         }
     }
