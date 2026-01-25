@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
-use std::time::SystemTime;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
@@ -276,6 +276,29 @@ pub struct TimestepConfig {
     pub unit: TimeUnit,
     pub count: NonZeroU64,
     pub start: SystemTime,
+}
+
+impl TimestepConfig {
+    pub fn micros(&self, n: u64) -> u64 {
+        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
+        // get it into seconds
+        let base = n * 10u64.pow(self.unit.power() as u32);
+        start as u64 + base * 1_000_000
+    }
+
+    pub fn millis(&self, n: u64) -> u64 {
+        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
+        // get it into seconds
+        let base = n * 10u64.pow(self.unit.power() as u32);
+        start as u64 + base * 1_000
+    }
+
+    pub fn secs(&self, n: u64) -> u64 {
+        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
+        // get it into seconds
+        let base = n * 10u64.pow(self.unit.power() as u32);
+        start as u64 + base
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
