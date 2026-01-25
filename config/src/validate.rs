@@ -134,7 +134,7 @@ impl DataRate {
             .map(TimeUnit::validate)
             .unwrap_or(Ok(TimeUnit::default()))
             .context("Unable to validate rate's time unit")?;
-        let rate = val.rate.unwrap_or(u64::MAX);
+        let rate = val.rate.unwrap_or(i64::MAX as u64);
         Ok(Self { rate, data, time })
     }
 }

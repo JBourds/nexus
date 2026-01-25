@@ -533,7 +533,7 @@ impl Default for DataRate {
     fn default() -> Self {
         Self {
             // Needs to be < i64::MAX because of TOML limitation
-            rate: u64::MAX / 2,
+            rate: i64::MAX as u64,
             data: DataUnit::default(),
             time: TimeUnit::default(),
         }
