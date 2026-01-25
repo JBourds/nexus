@@ -5,10 +5,10 @@ use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::Result;
@@ -61,6 +61,8 @@ fn print_logs(args: Cli) -> Result<()> {
 }
 
 fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
+    println!("Simulation Root: {}", root.to_string_lossy());
+    #[allow(unused_variables)]
     let (write_log, read_log) = setup_logging(root.as_path(), &args.cmd)?;
     runner::build(&sim)?;
     let mut summaries = vec![];
@@ -96,8 +98,6 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             to_csv(f, &summaries);
         }
     }
-    println!("Write Log: {write_log:?}");
-    println!("Read Log: {read_log:?}");
     Ok(())
 }
 
