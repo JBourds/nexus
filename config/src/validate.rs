@@ -11,7 +11,9 @@ use crate::parse::Unit;
 use crate::units::*;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
+use chrono::Utc;
 use std::path::PathBuf;
+use std::time::SystemTime;
 use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
@@ -458,10 +460,15 @@ impl TimestepConfig {
             .map(NonZeroU64::new)
             .unwrap_or(Some(Self::DEFAULT_TIMESTEP_LEN))
             .context("Unable to validate time unit in timestep config")?;
+        let start = val
+            .start
+            .map(toml_datetime_to_system_time)
+            .unwrap_or(SystemTime::now());
         Ok(Self {
             length,
             count,
             unit,
+            start,
         })
     }
 }
@@ -961,4 +968,9 @@ impl NodeProtocol {
             subscribers,
         })
     }
+}
+fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> SystemTime {
+    let s = dt.to_string();
+    let chrono_dt: chrono::DateTime<Utc> = s.parse().expect("invalid date format in toml file");
+    SystemTime::from(chrono_dt)
 }

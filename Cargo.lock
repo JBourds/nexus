@@ -253,6 +253,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assert_cmd",
+ "chrono",
  "crc32fast",
  "home",
  "meval",

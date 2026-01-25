@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
+use std::time::SystemTime;
 
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
@@ -274,6 +275,7 @@ pub struct TimestepConfig {
     pub length: NonZeroU64,
     pub unit: TimeUnit,
     pub count: NonZeroU64,
+    pub start: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -505,6 +507,7 @@ impl Default for TimestepConfig {
             length: Self::DEFAULT_TIMESTEP_LEN,
             unit: TimeUnit::default(),
             count: Self::DEFAULT_TIMESTEP_COUNT,
+            start: SystemTime::now(),
         }
     }
 }
@@ -549,6 +552,7 @@ mod tests {
             length: NonZeroU64::new(1).unwrap(),
             unit: TimeUnit::Seconds,
             count: NonZeroU64::new(1000000).unwrap(),
+            ..Default::default()
         };
         let transmission = DataRate {
             rate: 200,

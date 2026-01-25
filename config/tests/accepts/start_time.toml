@@ -1,0 +1,24 @@
+[params]
+
+timestep.length = 1             
+timestep.unit = "seconds"
+timestep.count = 1000000
+timestep.start = 2026-01-01T12:00:00Z
+seed = 42
+root = "~/simulations" 
+
+[channels]
+
+[channels.ch_ideal]
+link = "ideal"
+
+[nodes]
+
+[nodes.default]
+
+deployments = [{ }]
+
+[[nodes.default.protocols]]
+name = "main"
+runner = "make"
+

@@ -3,6 +3,7 @@ use std::{
     collections::HashMap,
     num::{NonZeroU64, NonZeroUsize},
 };
+use toml::value::Datetime;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Simulation {
@@ -32,6 +33,7 @@ pub struct TimestepConfig {
     pub(super) length: Option<u64>,
     pub(super) unit: Option<Unit>,
     pub(super) count: Option<u64>,
+    pub(super) start: Option<Datetime>,
 }
 
 #[derive(Debug, Default, Deserialize)]
