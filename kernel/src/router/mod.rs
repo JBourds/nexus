@@ -172,7 +172,7 @@ impl RoutingServer {
     }
 
     pub fn send_time(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(&msg.id.1.as_str()).expect("invalid time unit");
+        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
         let s = self.ts_config.time(self.timestep, unit).to_string();
         msg.data = s.bytes().collect();
         self.tx
@@ -181,7 +181,7 @@ impl RoutingServer {
     }
 
     pub fn send_elapsed(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(&msg.id.1.as_str()).expect("invalid time unit");
+        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
         let s = self.ts_config.elapsed(self.timestep, unit).to_string();
         msg.data = s.bytes().collect();
         self.tx

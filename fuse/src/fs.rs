@@ -2,7 +2,7 @@ use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
 use crate::file::NexusFile;
 use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
-use config::ast::{self, ProtocolHandle};
+use config::ast::{self};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
 use std::process::Child;

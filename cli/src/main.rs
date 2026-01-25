@@ -5,10 +5,10 @@ use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
 use anyhow::Result;
