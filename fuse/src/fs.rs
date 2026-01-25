@@ -26,8 +26,13 @@ use std::{collections::HashMap, path::PathBuf};
 static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
-pub const CONTROL_FILES: [(&str, ChannelMode); 4] = [
-    ("time", ChannelMode::ReadOnly),
+pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
+    ("time_us", ChannelMode::ReadOnly),
+    ("time_ms", ChannelMode::ReadOnly),
+    ("time_s", ChannelMode::ReadOnly),
+    ("elapsed_us", ChannelMode::ReadOnly),
+    ("elapsed_ms", ChannelMode::ReadOnly),
+    ("elapsed_s", ChannelMode::ReadOnly),
     ("energy_state", ChannelMode::WriteOnly),
     ("energy_left", ChannelMode::ReadOnly),
     ("position", ChannelMode::ReadWrite),
@@ -124,6 +129,20 @@ impl NexusFs {
         Ok(self)
     }
 
+    fn get_elapsed(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
+        fs_side
+            .0
+            .send(FsMessage::Elapsed(Message {
+                id,
+                data: Vec::new(),
+            }))
+            .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
+        fs_side
+            .1
+            .recv()
+            .map_err(|e| FsError::KernelShutdown(Box::new(e)))
+    }
+
     fn get_time(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
         fs_side
             .0
@@ -178,6 +197,65 @@ impl NexusFs {
             })?;
         while !root.exists() {}
         Ok((sess, kernel_side))
+    }
+
+    fn read_time(&mut self, reply: ReplyData, key: ChannelId) {
+        if let Ok(msg) = Self::get_time(&mut self.fs_side, key) {
+            reply.data(msg.data());
+        } else {
+            reply.data(&[]);
+        };
+    }
+
+    fn read_elapsed(&mut self, reply: ReplyData, key: ChannelId) {
+        if let Ok(msg) = Self::get_elapsed(&mut self.fs_side, key) {
+            reply.data(msg.data());
+        } else {
+            reply.data(&[]);
+        };
+    }
+
+    fn read_message(&mut self, reply: ReplyData, size: usize, key: ChannelId) {
+        // Get the file containing all message buffers
+        let Some(file) = self.buffers.get_mut(&key) else {
+            reply.error(EACCES);
+            return;
+        };
+
+        // Serve unread parts of previous message first
+        if let Some((read_ptr, buf)) = &mut file.unread_msg {
+            // EOF
+            if *read_ptr == buf.len() {
+                file.unread_msg = None;
+                reply.data(&[]);
+                return;
+            }
+            let remaining = buf.len() - *read_ptr;
+            let read_size = min(remaining, size);
+            let end = *read_ptr + read_size;
+            reply.data(&buf.as_slice()[*read_ptr..end]);
+            file.unread_msg = Some((end, std::mem::take(buf)));
+            return;
+        }
+
+        // See if there is anything for client to read
+        if let Ok(msg) = Self::pull_message(&mut self.fs_side, key) {
+            let (allow_incremental_reads, msg) = match msg {
+                KernelMessage::Exclusive(msg) => (true, msg.data),
+                KernelMessage::Shared(msg) => (false, msg.data),
+                KernelMessage::Empty(_) => {
+                    reply.data(&[]);
+                    return;
+                }
+            };
+            let read_size = min(msg.len(), size);
+            reply.data(&msg[..read_size as usize]);
+            if allow_incremental_reads && read_size < msg.len() {
+                file.unread_msg = Some((read_size, msg));
+            }
+        } else {
+            reply.data(&[]);
+        }
     }
 }
 
@@ -290,59 +368,16 @@ impl Filesystem for NexusFs {
         };
 
         let key = (req.pid(), filename.clone());
-        // check for control files
-        match filename.as_str() {
-            "time" => {
-                if let Ok(msg) = Self::get_time(&mut self.fs_side, key.clone()) {
-                    reply.data(msg.data());
-                    return;
-                } else {
-                    reply.data(&[]);
-                    return;
-                };
+        match filename.as_str().split_terminator("_").next() {
+            Some("time") => {
+                self.read_time(reply, key);
             }
-            _ => {}
-        }
-
-        // Get the file containing all message buffers
-        let Some(file) = self.buffers.get_mut(&key) else {
-            reply.error(EACCES);
-            return;
-        };
-
-        // Serve unread parts of previous message first
-        if let Some((read_ptr, buf)) = &mut file.unread_msg {
-            // EOF
-            if *read_ptr == buf.len() {
-                file.unread_msg = None;
-                reply.data(&[]);
-                return;
+            Some("elapsed") => {
+                self.read_elapsed(reply, key);
             }
-            let remaining = buf.len() - *read_ptr;
-            let read_size = min(remaining, size as usize);
-            let end = *read_ptr + read_size;
-            reply.data(&buf.as_slice()[*read_ptr..end]);
-            file.unread_msg = Some((end, std::mem::take(buf)));
-            return;
-        }
-
-        // See if there is anything for client to read
-        if let Ok(msg) = Self::pull_message(&mut self.fs_side, key) {
-            let (allow_incremental_reads, msg) = match msg {
-                KernelMessage::Exclusive(msg) => (true, msg.data),
-                KernelMessage::Shared(msg) => (false, msg.data),
-                KernelMessage::Empty(_) => {
-                    reply.data(&[]);
-                    return;
-                }
-            };
-            let read_size = min(msg.len(), size as usize);
-            reply.data(&msg[..read_size as usize]);
-            if allow_incremental_reads && read_size < msg.len() {
-                file.unread_msg = Some((read_size, msg));
+            _ => {
+                self.read_message(reply, size as usize, key);
             }
-        } else {
-            reply.data(&[]);
         }
     }
 

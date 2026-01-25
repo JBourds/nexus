@@ -35,6 +35,7 @@ pub enum FsMessage {
     Write(Message),
     Read(Message),
     Time(Message),
+    Elapsed(Message),
 }
 
 #[derive(Clone, Debug)]

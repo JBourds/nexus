@@ -70,6 +70,9 @@ impl Source {
                 fuse::FsMessage::Time(msg) => {
                     router.send_time(msg).map_err(SourceError::RouterError)?;
                 }
+                fuse::FsMessage::Elapsed(msg) => {
+                    router.send_elapsed(msg).map_err(SourceError::RouterError)?;
+                }
                 fuse::FsMessage::Write(msg) => {
                     router
                         .receive_write(msg)

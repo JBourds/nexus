@@ -162,12 +162,27 @@ impl RoutingServer {
         self.queue_message(src_node, channel_handle, msg.data)
     }
 
-    pub fn current_time(&self) -> String {
-        self.ts_config.millis(self.timestep).to_string()
+    fn suffix_to_time(s: &str) -> Option<TimeUnit> {
+        match s {
+            "us" => Some(TimeUnit::Microseconds),
+            "ms" => Some(TimeUnit::Milliseconds),
+            "s" => Some(TimeUnit::Seconds),
+            _ => None,
+        }
     }
 
     pub fn send_time(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let s = self.current_time();
+        let unit = Self::suffix_to_time(&msg.id.1.as_str()).expect("invalid time unit");
+        let s = self.ts_config.time(self.timestep, unit).to_string();
+        msg.data = s.bytes().collect();
+        self.tx
+            .send(fuse::KernelMessage::Exclusive(msg))
+            .map_err(RouterError::FuseSendError)
+    }
+
+    pub fn send_elapsed(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
+        let unit = Self::suffix_to_time(&msg.id.1.as_str()).expect("invalid time unit");
+        let s = self.ts_config.elapsed(self.timestep, unit).to_string();
         msg.data = s.bytes().collect();
         self.tx
             .send(fuse::KernelMessage::Exclusive(msg))

@@ -279,25 +279,32 @@ pub struct TimestepConfig {
 }
 
 impl TimestepConfig {
-    pub fn micros(&self, n: u64) -> u64 {
+    /// Provide the time since UNIX epoch.
+    pub fn time(&self, n: u64, unit: TimeUnit) -> u64 {
         let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
         // get it into seconds
         let base = n * 10u64.pow(self.unit.power() as u32);
-        start as u64 + base * 1_000_000
+        let scalar = match unit {
+            TimeUnit::Seconds => 1,
+            TimeUnit::Milliseconds => 1_000,
+            TimeUnit::Microseconds => 1_000_000,
+            TimeUnit::Nanoseconds => 1_000_000_000,
+            _ => unreachable!(),
+        };
+        start as u64 + base * scalar
     }
 
-    pub fn millis(&self, n: u64) -> u64 {
-        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
-        // get it into seconds
+    /// Provide the time elapsed since simulation start.
+    pub fn elapsed(&self, n: u64, unit: TimeUnit) -> u64 {
         let base = n * 10u64.pow(self.unit.power() as u32);
-        start as u64 + base * 1_000
-    }
-
-    pub fn secs(&self, n: u64) -> u64 {
-        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
-        // get it into seconds
-        let base = n * 10u64.pow(self.unit.power() as u32);
-        start as u64 + base
+        let scalar = match unit {
+            TimeUnit::Seconds => 1,
+            TimeUnit::Milliseconds => 1_000,
+            TimeUnit::Microseconds => 1_000_000,
+            TimeUnit::Nanoseconds => 1_000_000_000,
+            _ => unreachable!(),
+        };
+        base * scalar
     }
 }
 
