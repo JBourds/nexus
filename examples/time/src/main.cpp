@@ -13,24 +13,28 @@
 
 int main() {
     const char* path = NEXUS_ROOT "/elapsed_ms";
+    char buf[64];
+
     setbuf(stdout, NULL);
     printf("Opening file at %s\n", path);
     int fd = open(path, O_RDONLY);
-    char buf[64];
     if (fd < 0) {
         fprintf(stderr, "Error opening time file.");
         return 1;
     }
     for (size_t i = 0; i < 5; ++i) {
-        if (read(fd, buf, sizeof(buf)) < 0) {
+        ssize_t nread = read(fd, buf, sizeof(buf));
+        if (nread < 0) {
             fprintf(stderr, "Error reading time file.");
             return 2;
         }
+        buf[nread] = '\0';
         char* nptr = NULL;
         uint64_t ms_since_epoch = strtoull(buf, &nptr, 10);
         printf("Milliseconds Elapsed: %llu\n",
                (unsigned long long)ms_since_epoch);
         sleep(1);
     }
-    exit(EXIT_SUCCESS);
+
+    return 0;
 }
