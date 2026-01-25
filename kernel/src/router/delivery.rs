@@ -171,6 +171,13 @@ impl RoutingServer {
         let timestep = self.timestep;
 
         let mailbox = &mut self.mailboxes[index];
+        // remove all expired messages
+        while mailbox
+            .front()
+            .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < timestep))
+        {
+            mailbox.pop_front();
+        }
 
         match mailbox.len().cmp(&1) {
             std::cmp::Ordering::Less => Ok(false),
