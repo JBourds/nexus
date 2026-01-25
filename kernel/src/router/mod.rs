@@ -122,6 +122,7 @@ impl RoutingServer {
                             return Ok(());
                         }
                         Ok(KernelMessage::Poll(timestep)) => {
+                            router.timestep = timestep;
                             if let Err(e) = source.poll(&mut router, timestep) {
                                 break Err(KernelError::SourceError(e));
                             }
@@ -159,6 +160,18 @@ impl RoutingServer {
 
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
         self.queue_message(src_node, channel_handle, msg.data)
+    }
+
+    pub fn current_time(&self) -> String {
+        self.ts_config.millis(self.timestep).to_string()
+    }
+
+    pub fn send_time(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
+        let s = self.current_time();
+        msg.data = s.bytes().collect();
+        self.tx
+            .send(fuse::KernelMessage::Exclusive(msg))
+            .map_err(RouterError::FuseSendError)
     }
 
     /// Wrapper function which will attempt to deliver any available messages

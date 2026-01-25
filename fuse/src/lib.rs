@@ -20,10 +20,21 @@ pub enum KernelMessage {
     Empty(Message),
 }
 
+impl KernelMessage {
+    pub(crate) fn data(&self) -> &[u8] {
+        match self {
+            KernelMessage::Exclusive(message) => &message.data,
+            KernelMessage::Shared(message) => &message.data,
+            KernelMessage::Empty(message) => &message.data,
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 pub enum FsMessage {
     Write(Message),
     Read(Message),
+    Time(Message),
 }
 
 #[derive(Clone, Debug)]

@@ -2,8 +2,10 @@ use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
 use crate::file::NexusFile;
 use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
-use config::ast;
+use config::ast::{self, ProtocolHandle};
 use fuser::ReplyWrite;
+use std::num::NonZeroUsize;
+use std::process::Child;
 use std::sync::mpsc;
 use tracing::instrument;
 
@@ -23,6 +25,13 @@ use std::{collections::HashMap, path::PathBuf};
 
 static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
+
+pub const CONTROL_FILES: [(&str, ChannelMode); 4] = [
+    ("time", ChannelMode::ReadOnly),
+    ("energy_state", ChannelMode::WriteOnly),
+    ("energy_left", ChannelMode::ReadOnly),
+    ("position", ChannelMode::ReadWrite),
+];
 
 #[derive(Debug)]
 pub struct NexusFs {
@@ -68,7 +77,32 @@ impl NexusFs {
         &self.root
     }
 
-    pub fn with_channels(mut self, channels: Vec<NexusChannel>) -> Result<Self, ChannelError> {
+    fn get_or_make_inode(&mut self, name: String) -> u64 {
+        if let Some(index) = self.files.iter().position(|file| **file == name) {
+            index_to_inode(index)
+        } else {
+            self.files.push(name);
+            next_inode()
+        }
+    }
+
+    pub fn add_processes(mut self, handles: &[runner::ProtocolHandle]) -> Self {
+        for (file, mode) in CONTROL_FILES.iter() {
+            let inode = self.get_or_make_inode(file.to_string());
+            for pid in handles
+                .iter()
+                .filter_map(|h| h.process.as_ref().map(Child::id))
+            {
+                self.buffers.insert(
+                    (pid, file.to_string()),
+                    NexusFile::new(NonZeroUsize::new(1000).unwrap(), *mode, inode),
+                );
+            }
+        }
+        self
+    }
+
+    pub fn add_channels(mut self, channels: Vec<NexusChannel>) -> Result<Self, ChannelError> {
         for NexusChannel {
             pid,
             node: _,
@@ -78,13 +112,7 @@ impl NexusFs {
         } in channels
         {
             let key = (pid, channel.clone());
-            let inode = if let Some(index) = self.files.iter().position(|file| **file == channel) {
-                index_to_inode(index)
-            } else {
-                self.files.push(channel);
-                next_inode()
-            };
-
+            let inode = self.get_or_make_inode(channel);
             if self
                 .buffers
                 .insert(key.clone(), NexusFile::new(max_msg_size, mode, inode))
@@ -94,6 +122,20 @@ impl NexusFs {
             }
         }
         Ok(self)
+    }
+
+    fn get_time(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
+        fs_side
+            .0
+            .send(FsMessage::Time(Message {
+                id,
+                data: Vec::new(),
+            }))
+            .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
+        fs_side
+            .1
+            .recv()
+            .map_err(|e| FsError::KernelShutdown(Box::new(e)))
     }
 
     /// Request a message from the kernel for the channel identified by `id`.
@@ -138,6 +180,7 @@ impl NexusFs {
         Ok((sess, kernel_side))
     }
 }
+
 impl Default for NexusFs {
     fn default() -> Self {
         let root = expand_home(&PathBuf::from("~/nexus"));
@@ -161,8 +204,8 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         }
-        let key = (req.pid(), name.to_str().unwrap().to_string());
-        if let Some(file) = self.buffers.get(&key) {
+        let file = name.to_str().unwrap().to_string();
+        if let Some(file) = self.buffers.get(&(req.pid(), file)) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
             reply.error(ENOENT);
@@ -179,12 +222,11 @@ impl Filesystem for NexusFs {
                     reply.error(ENOENT);
                     return;
                 };
-                let key = (req.pid(), name.clone());
-                let Some(file) = self.buffers.get(&key) else {
+                if let Some(file) = self.buffers.get(&(req.pid(), name.clone())) {
+                    reply.attr(&TTL, &file.attr);
+                } else {
                     reply.error(EACCES);
-                    return;
-                };
-                reply.attr(&TTL, &file.attr);
+                }
             }
         }
     }
@@ -247,8 +289,22 @@ impl Filesystem for NexusFs {
             return;
         };
 
-        // Get the file containing all message buffers
         let key = (req.pid(), filename.clone());
+        // check for control files
+        match filename.as_str() {
+            "time" => {
+                if let Ok(msg) = Self::get_time(&mut self.fs_side, key.clone()) {
+                    reply.data(msg.data());
+                    return;
+                } else {
+                    reply.data(&[]);
+                    return;
+                };
+            }
+            _ => {}
+        }
+
+        // Get the file containing all message buffers
         let Some(file) = self.buffers.get_mut(&key) else {
             reply.error(EACCES);
             return;
@@ -371,6 +427,7 @@ impl Filesystem for NexusFs {
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
+                eprintln!("break!");
                 break;
             }
         }

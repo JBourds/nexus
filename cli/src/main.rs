@@ -77,7 +77,8 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
 
         #[allow(unused_variables)]
         let (sess, (tx, rx)) = fs
-            .with_channels(protocol_channels)?
+            .add_processes(&runc.handles)
+            .add_channels(protocol_channels)?
             .mount()
             .expect("unable to mount file system");
 
