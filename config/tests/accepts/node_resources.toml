@@ -19,10 +19,10 @@ link = "ideal"
 [nodes.mayfly]
 
 deployments = [ 
-    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
-    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
-    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
-    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
+    { run_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
+    { run_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
+    { run_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
+    { run_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
 ]
 
 [nodes.mayfly.resources]
@@ -42,10 +42,10 @@ subscribers = ["ideal"]
 [nodes.aura]
 
 deployments = [ 
-    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
-    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
-    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
-    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
+    { run_args = ["1"], position = { point = [-1, 0, 0], unit = "m" }},
+    { run_args = ["2"], position = { point = [0, 1, 0], unit = "m" }},
+    { run_args = ["3"], position = { point = [1, 0, 0], unit = "m" }}, 
+    { run_args = ["4"], position = { point = [0, -1, 0], unit = "m" }}, 
 ]
 
 [nodes.aura.resources]

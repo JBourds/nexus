@@ -16,8 +16,8 @@ link = "ideal"
 
 [nodes.client]
 deployments = [ 
-    { extra_args = ["1"] }, 
-    { extra_args = ["2"] },
+    { run_args = ["1"] }, 
+    { run_args = ["2"] },
 ]
 
 

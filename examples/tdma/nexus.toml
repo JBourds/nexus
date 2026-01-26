@@ -30,13 +30,13 @@ subscribers = ["radio"]
 
 [nodes.peripheral]
 deployments = [ 
-    { extra_args = ["1"], position = { point = [-1, 0, 0], unit = "km" }},
-    { extra_args = ["2"], position = { point = [0, 1, 0], unit = "km" }},
-    { extra_args = ["3"], position = { point = [1, 0, 0], unit = "km" }}, 
-    { extra_args = ["4"], position = { point = [0, -1, 0], unit = "km" }}, 
-    { extra_args = ["5"], position = { point = [0, 1, 0], unit = "km" }},
-    { extra_args = ["6"], position = { point = [1, 0, 0], unit = "km" }}, 
-    { extra_args = ["7"], position = { point = [0, -1, 0], unit = "km" }}, 
+    { run_args = ["1"], position = { point = [-1, 0, 0], unit = "km" }},
+    { run_args = ["2"], position = { point = [0, 1, 0], unit = "km" }},
+    { run_args = ["3"], position = { point = [1, 0, 0], unit = "km" }}, 
+    { run_args = ["4"], position = { point = [0, -1, 0], unit = "km" }}, 
+    { run_args = ["5"], position = { point = [0, 1, 0], unit = "km" }},
+    { run_args = ["6"], position = { point = [1, 0, 0], unit = "km" }}, 
+    { run_args = ["7"], position = { point = [0, -1, 0], unit = "km" }}, 
 ]
 
 [[nodes.peripheral.protocols]]
