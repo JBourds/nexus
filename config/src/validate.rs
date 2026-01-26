@@ -824,23 +824,37 @@ impl Node {
         // Share immutable data across deployments when possible
         for Deployment {
             position,
-            extra_args,
+            run_args: deployment_run_args,
+            build_args: deployment_build_args,
             charge,
         } in deployments
         {
+            let deployment_run_args = deployment_run_args.unwrap_or_default();
+            let deployment_build_args = deployment_build_args.unwrap_or_default();
             let protocols = protocols
                 .clone()
                 .into_iter()
                 .map(|(name, protocol)| {
-                    let protocol = if let Some(extra_args) = extra_args.clone() {
-                        let Cmd { cmd, mut args } = protocol.runner;
-                        args.extend(extra_args);
-                        NodeProtocol {
-                            runner: Cmd { cmd, args },
-                            ..protocol
-                        }
-                    } else {
-                        protocol
+                    let Cmd {
+                        cmd: run_cmd,
+                        args: mut run_args,
+                    } = protocol.runner;
+                    run_args.extend(deployment_run_args.clone());
+                    let Cmd {
+                        cmd: build_cmd,
+                        args: mut build_args,
+                    } = protocol.build;
+                    build_args.extend(deployment_build_args.clone());
+                    let protocol = NodeProtocol {
+                        runner: Cmd {
+                            cmd: run_cmd,
+                            args: run_args,
+                        },
+                        build: Cmd {
+                            cmd: build_cmd,
+                            args: build_args,
+                        },
+                        ..protocol
                     };
                     (name, protocol)
                 })

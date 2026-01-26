@@ -165,7 +165,8 @@ pub struct ProtocolName(pub String);
 #[serde(default, deny_unknown_fields)]
 pub struct Deployment {
     pub(super) position: Option<Coordinate>,
-    pub(super) extra_args: Option<Vec<String>>,
+    pub(super) build_args: Option<Vec<String>>,
+    pub(super) run_args: Option<Vec<String>>,
     pub(super) charge: Option<Charge>,
 }
 
