@@ -279,24 +279,21 @@ pub struct TimestepConfig {
 }
 
 impl TimestepConfig {
-    /// Provide the time since UNIX epoch.
+    /// Provide the time since UNIX epoch in the requested unit.
     pub fn time(&self, n: u64, unit: TimeUnit) -> u64 {
-        let start = self.start.duration_since(UNIX_EPOCH).unwrap().as_millis();
-        // get it into seconds
-        let base = n * 10u64.pow(self.unit.power() as u32);
-        let scalar = match unit {
-            TimeUnit::Seconds => 1,
-            TimeUnit::Milliseconds => 1_000,
-            TimeUnit::Microseconds => 1_000_000,
-            TimeUnit::Nanoseconds => 1_000_000_000,
+        let duration = self.start.duration_since(UNIX_EPOCH).unwrap();
+        let start = match unit {
+            TimeUnit::Seconds => duration.as_secs(),
+            TimeUnit::Milliseconds => duration.as_millis() as u64,
+            TimeUnit::Microseconds => duration.as_micros() as u64,
             _ => unreachable!(),
         };
-        start as u64 + base * scalar
+        start + self.elapsed(n, unit)
     }
 
     /// Provide the time elapsed since simulation start.
     pub fn elapsed(&self, n: u64, unit: TimeUnit) -> u64 {
-        let base = n * 10u64.pow(self.unit.power() as u32);
+        let base = n / 10u64.pow(self.unit.power() as u32);
         let scalar = match unit {
             TimeUnit::Seconds => 1,
             TimeUnit::Milliseconds => 1_000,
