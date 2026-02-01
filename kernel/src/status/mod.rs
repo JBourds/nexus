@@ -103,6 +103,7 @@ impl StatusServer {
                     self.check_health().map_err(KernelError::StatusError)?;
                 }
                 Ok(KernelMessage::Shutdown) => {
+                    self.runc.cgroups.freeze_nodes();
                     return Ok(self.runc.handles);
                 }
                 Ok(KernelMessage::Freeze) => {
