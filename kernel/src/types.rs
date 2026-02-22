@@ -4,11 +4,12 @@
 use std::{
     collections::{HashMap, HashSet},
     path::PathBuf,
+    time::SystemTime,
 };
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
-use config::ast::{self, ChannelType, Cmd, Link};
+use config::ast::{self, ChannelType, Charge, Cmd, Link};
 use tracing::instrument;
 
 pub type ChannelHandle = usize;
@@ -71,10 +72,14 @@ impl Channel {
     }
 }
 
+/// The kernel-usable form of a node which includes its simulation state used
+/// by control files.
 #[derive(Clone, Debug)]
 #[allow(unused)]
 pub struct Node {
+    pub charge: Option<Charge>,
     pub position: ast::Position,
+    pub start: SystemTime,
     pub protocols: Vec<NodeProtocol>,
 }
 
@@ -124,8 +129,10 @@ impl Node {
             .collect::<Result<_, ConversionError>>()?;
         Ok((
             Self {
-                position: node.position,
                 protocols,
+                charge: node.charge,
+                start: node.start,
+                position: node.position,
             },
             new_handles,
         ))

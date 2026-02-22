@@ -9,6 +9,10 @@ use thiserror::Error;
 pub enum RouterError {
     #[error("Attempt to write to unknown file: {0}")]
     UnknownFile(String),
+    #[error("Invalid string from bytes: {0:#?}")]
+    InvalidString(Vec<u8>),
+    #[error("Invalid integer format: {0}")]
+    InvalidInteger(String),
     #[error("Error sending fuse message: {0:#?}")]
     FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]

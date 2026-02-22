@@ -22,12 +22,15 @@ use config::{
     },
 };
 use rand::rngs::StdRng;
-use std::rc::Rc;
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
+use std::{
+    rc::Rc,
+    time::{Duration, SystemTime},
+};
 use tracing::{Level, debug, event, info, instrument, warn};
 
 use crate::types::ChannelHandle;
@@ -147,9 +150,10 @@ impl RoutingServer {
 
     pub fn write_control_file(
         &mut self,
-        index: usize,
+        handle_index: usize,
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
+        let (_, node_index, _) = self.channels.handles[handle_index];
         let remaining = msg
             .id
             .1
@@ -157,12 +161,7 @@ impl RoutingServer {
             .expect("must be a control file.");
         let service: Vec<_> = remaining.split_terminator(".").collect();
         match service.as_slice() {
-            ["time", ..] => {
-                todo!()
-            }
-            ["elapsed", ..] => {
-                todo!()
-            }
+            ["time", ..] => self.update_time(node_index, msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -210,9 +209,41 @@ impl RoutingServer {
         }
     }
 
-    pub fn send_time(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
+    pub fn update_time(
+        &mut self,
+        node_index: usize,
+        msg: fuse::Message,
+    ) -> Result<(), RouterError> {
         let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
-        let s = self.ts_config.time(self.timestep, unit).to_string();
+        let s = String::from_utf8_lossy(&msg.data);
+        let val: u64 = s
+            .parse()
+            .map_err(|_| RouterError::InvalidString(msg.data))?;
+        let duration = match unit {
+            TimeUnit::Hours => todo!(),
+            TimeUnit::Minutes => todo!(),
+            TimeUnit::Seconds => Duration::from_secs(val),
+            TimeUnit::Milliseconds => Duration::from_millis(val),
+            TimeUnit::Microseconds => Duration::from_micros(val),
+            TimeUnit::Nanoseconds => Duration::from_nanos(val),
+        };
+        self.channels.nodes[node_index].start = SystemTime::UNIX_EPOCH
+            .checked_add(duration)
+            .expect("couldn't add duration");
+        Ok(())
+    }
+
+    pub fn send_time(
+        &mut self,
+        node_index: usize,
+        mut msg: fuse::Message,
+    ) -> Result<(), RouterError> {
+        let node_start = &self.channels.nodes[node_index].start;
+        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
+        let s = self
+            .ts_config
+            .time_from(self.timestep, unit, node_start)
+            .to_string();
         msg.data = s.bytes().collect();
         self.tx
             .send(fuse::KernelMessage::Exclusive(msg))
@@ -230,9 +261,10 @@ impl RoutingServer {
 
     pub fn read_control_file(
         &mut self,
-        index: usize,
+        handle_index: usize,
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
+        let (_, node_index, _) = self.channels.handles[handle_index];
         let remaining = msg
             .id
             .1
@@ -240,7 +272,7 @@ impl RoutingServer {
             .expect("must be a control file.");
         let service: Vec<_> = remaining.split_terminator(".").collect();
         match service.as_slice() {
-            ["time", ..] => self.send_time(msg),
+            ["time", ..] => self.send_time(node_index, msg),
             ["elapsed", ..] => self.send_elapsed(msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
