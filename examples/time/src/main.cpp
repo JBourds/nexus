@@ -9,32 +9,89 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
-int main() {
-    const char* path = NEXUS_ROOT "/elapsed_ms";
-    char buf[64];
+#define NFILES 3
+#define SECONDS 0
+#define MILLIS 1
+#define MICROS 2
 
+#define JAN_1_2026_S 1767225600
+#define JAN_1_2026_MS 1767225600000
+#define JAN_1_2026_US 1767225600000000
+
+int FDS[NFILES];
+const char* PATHS[NFILES] = {
+    NEXUS_ROOT "/ctl.time.s",
+    NEXUS_ROOT "/ctl.time.ms",
+    NEXUS_ROOT "/ctl.time.us",
+};
+
+void open_files();
+void read_files();
+void write_time(size_t index, uint64_t val);
+
+int main() {
     setbuf(stdout, NULL);
-    printf("Opening file at %s\n", path);
-    int fd = open(path, O_RDONLY);
-    if (fd < 0) {
-        fprintf(stderr, "Error opening time file.");
-        return 1;
+    open_files();
+    read_files();
+
+    write_time(SECONDS, JAN_1_2026_S);
+    sleep(1);
+    read_files();
+
+    write_time(MILLIS, JAN_1_2026_MS);
+    sleep(1);
+    read_files();
+
+    write_time(MICROS, JAN_1_2026_US);
+    sleep(1);
+    read_files();
+}
+
+void open_files() {
+    for (size_t i = 0; i < NFILES; ++i) {
+        printf("Opening file at %s\n", PATHS[i]);
+        int fd = open(PATHS[i], O_RDWR);
+        if (fd < 0) {
+            fprintf(stderr, "Error opening time file.");
+            exit(EXIT_FAILURE);
+        }
+        FDS[i] = fd;
     }
-    for (size_t i = 0; i < 5; ++i) {
-        ssize_t nread = read(fd, buf, sizeof(buf));
+}
+
+void read_files() {
+    char buf[64];
+    tm* time;
+    for (size_t i = 0; i < NFILES; ++i) {
+        ssize_t nread = read(FDS[i], buf, sizeof(buf));
         if (nread < 0) {
             fprintf(stderr, "Error reading time file.");
-            return 2;
+            exit(EXIT_FAILURE);
         }
         buf[nread] = '\0';
         char* nptr = NULL;
         uint64_t ms_since_epoch = strtoull(buf, &nptr, 10);
-        printf("Milliseconds Elapsed: %llu\n",
+        printf("%s Epoch: %llu\n", PATHS[i],
                (unsigned long long)ms_since_epoch);
-        sleep(1);
     }
-
-    return 0;
+}
+void write_time(size_t index, uint64_t val) {
+    char buf[64];
+    size_t n = snprintf(buf, sizeof(buf), "%llu", (unsigned long long)val);
+    if (sizeof(buf) < n) {
+        fprintf(stderr, "Buffer was too small to fit %llu bytes",
+                (unsigned long long)n);
+        exit(EXIT_FAILURE);
+    }
+    ssize_t rc = write(FDS[index], buf, n);
+    if (rc != n) {
+        fprintf(
+            stderr,
+            "Didn't write correct number of bytes (got %lld expected %lld)\n",
+            (long long)rc, (long long)n);
+        exit(EXIT_FAILURE);
+    }
 }
