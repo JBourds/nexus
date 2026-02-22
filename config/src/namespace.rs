@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum NamespaceError {
     #[error("Duplicate entity name in {name} namespace: {key}")]
     DuplicateName { name: String, key: String },
+    #[error("Banned prefix {p} in namespace {name}.")]
+    BannedPrefix { name: String, p: String },
     #[error("Cannot use keyword {kw} as name in {name} namespace")]
     Keyword { name: String, kw: String },
 }
@@ -14,7 +16,8 @@ pub enum NamespaceError {
 pub struct Namespace<T> {
     name: String,
     entities: HashMap<String, T>,
-    banned: HashSet<String>,
+    banned_names: HashSet<String>,
+    banned_patterns: HashSet<String>,
 }
 
 impl<T> Namespace<T> {
@@ -22,8 +25,23 @@ impl<T> Namespace<T> {
         Self {
             name,
             entities: HashMap::new(),
-            banned: HashSet::new(),
+            banned_names: HashSet::new(),
+            banned_patterns: HashSet::new(),
         }
+    }
+
+    pub fn ban_prefix(&mut self, p: &str) -> Result<&mut Self, NamespaceError> {
+        let p = p.to_lowercase();
+        for k in self.entities.keys() {
+            if *k == p {
+                return Err(NamespaceError::BannedPrefix {
+                    name: self.name.clone(),
+                    p,
+                });
+            }
+        }
+        self.banned_patterns.insert(p.to_string());
+        Ok(self)
     }
 
     pub fn ban_names(
@@ -31,10 +49,10 @@ impl<T> Namespace<T> {
         names: &HashSet<impl AsRef<str>>,
     ) -> Result<&mut Self, NamespaceError> {
         for name in names {
-            self.banned.insert(name.as_ref().into());
+            self.banned_names.insert(name.as_ref().to_lowercase());
         }
         for k in self.entities.keys() {
-            if self.banned.contains(k) {
+            if self.banned_names.contains(k) {
                 return Err(NamespaceError::DuplicateName {
                     name: self.name.clone(),
                     key: k.clone(),
@@ -58,10 +76,19 @@ impl<T> Namespace<T> {
                 name: self.name.clone(),
                 key: name,
             })
-        } else if self.banned.contains(&name) {
+        } else if self.banned_names.contains(&name) {
             Err(NamespaceError::Keyword {
                 name: self.name.clone(),
                 kw: name,
+            })
+        } else if let Some(p) = self
+            .banned_patterns
+            .iter()
+            .find(|prefix| name.starts_with(*prefix))
+        {
+            Err(NamespaceError::BannedPrefix {
+                name: self.name.clone(),
+                p: p.to_string(),
             })
         } else {
             self.entities.insert(name, v);
