@@ -67,12 +67,6 @@ impl Source {
         // Receive all write requests from FS then let router ingest them
         for msg in rx.try_iter() {
             match msg {
-                fuse::FsMessage::Time(msg) => {
-                    router.send_time(msg).map_err(SourceError::RouterError)?;
-                }
-                fuse::FsMessage::Elapsed(msg) => {
-                    router.send_elapsed(msg).map_err(SourceError::RouterError)?;
-                }
                 fuse::FsMessage::Write(msg) => {
                     router
                         .receive_write(msg)
