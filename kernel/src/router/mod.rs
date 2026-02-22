@@ -22,17 +22,15 @@ use config::{
     },
 };
 use rand::rngs::StdRng;
+use std::rc::Rc;
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
-use std::{
-    rc::Rc,
-    time::{Duration, SystemTime},
-};
 use tracing::{Level, debug, event, info, instrument, warn};
 
+mod timectl;
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
@@ -182,7 +180,6 @@ impl RoutingServer {
             ),
             format_u8_buf(&msg.data)
         );
-
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
         self.queue_message(src_node, channel_handle, msg.data)
     }
@@ -198,65 +195,6 @@ impl RoutingServer {
         } else {
             self.write_channel_file(channel_index, msg)
         }
-    }
-
-    fn suffix_to_time(s: &str) -> Option<TimeUnit> {
-        match &s[s.len() - 2..s.len()] {
-            "us" => Some(TimeUnit::Microseconds),
-            "ms" => Some(TimeUnit::Milliseconds),
-            ".s" => Some(TimeUnit::Seconds),
-            _ => None,
-        }
-    }
-
-    pub fn update_time(
-        &mut self,
-        node_index: usize,
-        msg: fuse::Message,
-    ) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
-        let s = String::from_utf8_lossy(&msg.data);
-        let val: u64 = s
-            .parse()
-            .map_err(|_| RouterError::InvalidString(msg.data))?;
-        let duration = match unit {
-            TimeUnit::Hours => todo!(),
-            TimeUnit::Minutes => todo!(),
-            TimeUnit::Seconds => Duration::from_secs(val),
-            TimeUnit::Milliseconds => Duration::from_millis(val),
-            TimeUnit::Microseconds => Duration::from_micros(val),
-            TimeUnit::Nanoseconds => Duration::from_nanos(val),
-        };
-        self.channels.nodes[node_index].start = SystemTime::UNIX_EPOCH
-            .checked_add(duration)
-            .expect("couldn't add duration");
-        Ok(())
-    }
-
-    pub fn send_time(
-        &mut self,
-        node_index: usize,
-        mut msg: fuse::Message,
-    ) -> Result<(), RouterError> {
-        let node_start = &self.channels.nodes[node_index].start;
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
-        let s = self
-            .ts_config
-            .time_from(self.timestep, unit, node_start)
-            .to_string();
-        msg.data = s.bytes().collect();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
-    }
-
-    pub fn send_elapsed(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
-        let s = self.ts_config.elapsed(self.timestep, unit).to_string();
-        msg.data = s.bytes().collect();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
     }
 
     pub fn read_control_file(
