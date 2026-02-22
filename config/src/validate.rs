@@ -1,6 +1,6 @@
 use super::namespace::Namespace;
 use super::parse;
-use crate::CONTROL_FILES;
+use crate::CONTROL_PREFIX;
 use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
@@ -249,7 +249,7 @@ fn channel_namespace(
     processed: &HashMap<LinkHandle, Link>,
 ) -> Result<Namespace<Channel>> {
     let mut ns = Namespace::<Channel>::new(String::from("Channel"));
-    ns.ban_names(&HashSet::from(CONTROL_FILES))?;
+    ns.ban_prefix(CONTROL_PREFIX)?;
     for (name, channel) in channels {
         ns.add(name, Channel::validate(channel, processed)?)?;
     }
