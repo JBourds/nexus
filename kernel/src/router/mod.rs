@@ -145,20 +145,25 @@ impl RoutingServer {
         self.fuse_mapping.get(id).copied()
     }
 
-    pub fn write_control_file(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        if let Some(remaining) = msg.id.1.strip_prefix(CONTROL_PREFIX) {
-            let service: Vec<_> = remaining.split_terminator(".").collect();
-            match service.as_slice() {
-                ["time", ..] => {
-                    todo!()
-                }
-                ["elapsed", ..] => {
-                    todo!()
-                }
-                _ => unimplemented!("Unimplemented control file: {remaining}"),
+    pub fn write_control_file(
+        &mut self,
+        index: usize,
+        msg: fuse::Message,
+    ) -> Result<(), RouterError> {
+        let remaining = msg
+            .id
+            .1
+            .strip_prefix(CONTROL_PREFIX)
+            .expect("must be a control file.");
+        let service: Vec<_> = remaining.split_terminator(".").collect();
+        match service.as_slice() {
+            ["time", ..] => {
+                todo!()
             }
-        } else {
-            return Err(RouterError::UnknownFile(msg.id.1));
+            ["elapsed", ..] => {
+                todo!()
+            }
+            _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
 
@@ -186,10 +191,13 @@ impl RoutingServer {
     /// Receive a message from the FS and post it to the mailboxes of any
     /// nodes listening on the channel.
     pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        if let Some(channel_index) = self.get_handle_index(&msg.id) {
-            self.write_channel_file(channel_index, msg)
+        let Some(channel_index) = self.get_handle_index(&msg.id) else {
+            return Err(RouterError::UnknownFile(msg.id.1));
+        };
+        if msg.id.1.starts_with(CONTROL_PREFIX) {
+            self.write_control_file(channel_index, msg)
         } else {
-            self.write_control_file(msg)
+            self.write_channel_file(channel_index, msg)
         }
     }
 
@@ -220,16 +228,21 @@ impl RoutingServer {
             .map_err(RouterError::FuseSendError)
     }
 
-    pub fn read_control_file(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        if let Some(remaining) = msg.id.1.strip_prefix(CONTROL_PREFIX) {
-            let service: Vec<_> = remaining.split_terminator(".").collect();
-            match service.as_slice() {
-                ["time", ..] => self.send_time(msg),
-                ["elapsed", ..] => self.send_elapsed(msg),
-                _ => unimplemented!("Unimplemented control file: {remaining}"),
-            }
-        } else {
-            return Err(RouterError::UnknownFile(msg.id.1));
+    pub fn read_control_file(
+        &mut self,
+        index: usize,
+        msg: fuse::Message,
+    ) -> Result<(), RouterError> {
+        let remaining = msg
+            .id
+            .1
+            .strip_prefix(CONTROL_PREFIX)
+            .expect("must be a control file.");
+        let service: Vec<_> = remaining.split_terminator(".").collect();
+        match service.as_slice() {
+            ["time", ..] => self.send_time(msg),
+            ["elapsed", ..] => self.send_elapsed(msg),
+            _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
 
@@ -252,10 +265,13 @@ impl RoutingServer {
     /// to the ID identified in the message, but will send an "Empty" message
     /// if none is found.
     pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        if let Some(channel_index) = self.get_handle_index(&msg.id) {
-            self.read_channel_file(channel_index, msg)
+        let Some(channel_index) = self.get_handle_index(&msg.id) else {
+            return Err(RouterError::UnknownFile(msg.id.1));
+        };
+        if msg.id.1.starts_with(CONTROL_PREFIX) {
+            self.read_control_file(channel_index, msg)
         } else {
-            self.read_control_file(msg)
+            self.read_channel_file(channel_index, msg)
         }
     }
 

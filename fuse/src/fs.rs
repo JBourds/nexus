@@ -38,6 +38,13 @@ pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
     ("ctl.position", ChannelMode::ReadWrite),
 ];
 
+pub fn control_files() -> Vec<String> {
+    CONTROL_FILES
+        .into_iter()
+        .map(|(name, _)| name.to_string())
+        .collect()
+}
+
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,

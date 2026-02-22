@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
 use config::ast;
-use fuse::PID;
+use fuse::{PID, fs::CONTROL_FILES};
 
 use crate::{
     errors::{ConversionError, KernelError},
@@ -32,6 +32,9 @@ impl ResolvedChannels {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ProtocolHandle)>,
     ) -> Result<Self, KernelError> {
         let (mut channel_names, channels) = unzip(channels);
+        // Inject control files here so that FUSE mappings get made for them too
+        let control_files = CONTROL_FILES.into_iter().map(|(name, _)| name.to_string());
+        channel_names.extend(control_files);
         let channel_handles = make_handles(channel_names.clone());
 
         // Validate nodes so they all use indices rather than strings
@@ -104,8 +107,7 @@ impl ResolvedChannels {
     /// ambiguity with internal node channels (and to speed up routine lookup
     /// operations by removing the need for a hash map). This function creates
     /// the mapping between the key used by the FUSE module and the handle
-    /// used by the kernel. This gets sent over as a message to the FUSE fs
-    /// during startup and is used to resolve all indices within the kernel.
+    /// used by the kernel.
     pub fn make_fuse_mapping(&self) -> HashMap<fuse::ChannelId, usize> {
         self.handles
             .iter()

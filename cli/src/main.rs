@@ -178,6 +178,8 @@ fn make_file_handles(
             .chain(protocol.publishers.iter())
             .collect::<HashSet<&ast::ChannelHandle>>()
             .into_iter()
+            // also add control files in here because it makes resolution easier
+            .chain(control_files().iter())
         {
             res.push((pid, node_handle.clone(), channel.clone()));
         }
