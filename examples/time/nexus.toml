@@ -2,6 +2,8 @@
 timestep.length = 1
 timestep.unit = "ms"
 timestep.count = 5000 
+# This could also be placed in the "deployments" array as the `start` argument
+timestep.start = 2026-01-01T12:00:00-00:00
 root = "~/simulations"  
 
 [channels]
