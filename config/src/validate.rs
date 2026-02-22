@@ -11,6 +11,7 @@ use crate::parse::Unit;
 use crate::units::*;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
+use chrono::DateTime;
 use chrono::Utc;
 use std::path::PathBuf;
 use std::time::SystemTime;
@@ -362,6 +363,7 @@ impl Simulation {
                 Node::validate(
                     config_root,
                     node,
+                    &params.start,
                     &channel_handles,
                     &sink_names,
                     &source_names,
@@ -482,11 +484,16 @@ impl Params {
             .unwrap_or(Ok(TimestepConfig::default()))
             .context("Unable to validate timestep configuration in simulation config.")?;
         let time_dilation = val.time_dilation.unwrap_or(1.0);
+        let start = val
+            .start
+            .map(toml_datetime_to_system_time)
+            .unwrap_or(SystemTime::now());
         Ok(Self {
             timestep,
             seed: val.seed.unwrap_or_default(),
             root,
             time_dilation,
+            start,
         })
     }
 }
@@ -737,6 +744,7 @@ impl Node {
     fn validate(
         config_root: &PathBuf,
         val: parse::Node,
+        default_start: &SystemTime,
         channel_handles: &HashSet<ChannelHandle>,
         sink_handles: &HashSet<SinkHandle>,
         source_handles: &HashSet<SourceHandle>,
@@ -827,8 +835,12 @@ impl Node {
             run_args: deployment_run_args,
             build_args: deployment_build_args,
             charge,
+            start,
         } in deployments
         {
+            let start = start
+                .map(toml_datetime_to_system_time)
+                .unwrap_or(*default_start);
             let deployment_run_args = deployment_run_args.unwrap_or_default();
             let deployment_build_args = deployment_build_args.unwrap_or_default();
             let protocols = protocols
@@ -879,6 +891,7 @@ impl Node {
                 protocols,
                 sinks: sink_names.clone(),
                 sources: source_names.clone(),
+                start,
             });
         }
         Ok(nodes)
@@ -983,8 +996,13 @@ impl NodeProtocol {
         })
     }
 }
-fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> SystemTime {
+
+fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> DateTime<Utc> {
     let s = dt.to_string();
     let chrono_dt: chrono::DateTime<Utc> = s.parse().expect("invalid date format in toml file");
-    SystemTime::from(chrono_dt)
+    chrono_dt
+}
+
+fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> SystemTime {
+    SystemTime::from(toml_datetime_to_chrono(dt))
 }

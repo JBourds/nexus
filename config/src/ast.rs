@@ -142,6 +142,7 @@ pub struct Node {
     pub resources: Resources,
     pub sinks: HashSet<SinkHandle>,
     pub sources: HashSet<SourceHandle>,
+    pub start: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -311,6 +312,7 @@ pub struct Params {
     pub seed: u64,
     pub root: PathBuf,
     pub time_dilation: f64,
+    pub start: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
