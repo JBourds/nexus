@@ -484,16 +484,11 @@ impl Params {
             .unwrap_or(Ok(TimestepConfig::default()))
             .context("Unable to validate timestep configuration in simulation config.")?;
         let time_dilation = val.time_dilation.unwrap_or(1.0);
-        let start = val
-            .start
-            .map(toml_datetime_to_system_time)
-            .unwrap_or(SystemTime::now());
         Ok(Self {
             timestep,
             seed: val.seed.unwrap_or_default(),
             root,
             time_dilation,
-            start,
         })
     }
 }
