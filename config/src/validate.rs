@@ -673,6 +673,7 @@ impl Link {
 impl Charge {
     fn validate(val: parse::Charge) -> Result<Self> {
         Ok(Self {
+            max: val.max.unwrap_or(u64::MAX),
             quantity: val.quantity,
             unit: PowerUnit::validate(val.unit)
                 .context("Failed to validate poer unit in charge.")?,

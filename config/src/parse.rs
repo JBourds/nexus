@@ -66,6 +66,7 @@ pub struct LinkName(pub String);
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Charge {
+    pub(super) max: Option<u64>,
     pub(super) quantity: u64,
     pub(super) unit: Unit,
 }

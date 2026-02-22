@@ -210,6 +210,7 @@ impl Mem {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Charge {
+    pub max: u64,
     pub quantity: u64,
     pub unit: PowerUnit,
 }
