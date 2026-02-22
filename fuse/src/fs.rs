@@ -27,14 +27,14 @@ static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
 pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
-    ("ctl.time.us", ChannelMode::ReadOnly),
-    ("ctl.time.ms", ChannelMode::ReadOnly),
-    ("ctl.time.s", ChannelMode::ReadOnly),
+    ("ctl.time.us", ChannelMode::ReadWrite),
+    ("ctl.time.ms", ChannelMode::ReadWrite),
+    ("ctl.time.s", ChannelMode::ReadWrite),
     ("ctl.elapsed.us", ChannelMode::ReadOnly),
     ("ctl.elapsed.ms", ChannelMode::ReadOnly),
     ("ctl.elapsed.s", ChannelMode::ReadOnly),
-    ("ctl.energy_state", ChannelMode::WriteOnly),
     ("ctl.energy_left", ChannelMode::ReadOnly),
+    ("ctl.energy_state", ChannelMode::ReadWrite),
     ("ctl.position", ChannelMode::ReadWrite),
 ];
 
