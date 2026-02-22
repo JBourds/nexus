@@ -363,7 +363,7 @@ impl Simulation {
                 Node::validate(
                     config_root,
                     node,
-                    &params.start,
+                    &params.timestep.start,
                     &channel_handles,
                     &sink_names,
                     &source_names,

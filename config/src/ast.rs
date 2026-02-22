@@ -312,7 +312,6 @@ pub struct Params {
     pub seed: u64,
     pub root: PathBuf,
     pub time_dilation: f64,
-    pub start: SystemTime,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

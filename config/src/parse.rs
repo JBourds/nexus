@@ -22,9 +22,6 @@ pub struct Params {
     pub(super) seed: Option<u64>,
     pub(super) root: String,
     pub(super) time_dilation: Option<f64>,
-    /// Start of the simulation (default for deployments that don't set it).
-    /// If not specified, uses current time from host.
-    pub(super) start: Option<Datetime>,
 }
 
 #[derive(Clone, Debug, Default, Deserialize)]
