@@ -27,15 +27,15 @@ static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
 pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
-    ("time_us", ChannelMode::ReadOnly),
-    ("time_ms", ChannelMode::ReadOnly),
-    ("time_s", ChannelMode::ReadOnly),
-    ("elapsed_us", ChannelMode::ReadOnly),
-    ("elapsed_ms", ChannelMode::ReadOnly),
-    ("elapsed_s", ChannelMode::ReadOnly),
-    ("energy_state", ChannelMode::WriteOnly),
-    ("energy_left", ChannelMode::ReadOnly),
-    ("position", ChannelMode::ReadWrite),
+    ("ctl.time.us", ChannelMode::ReadOnly),
+    ("ctl.time.ms", ChannelMode::ReadOnly),
+    ("ctl.time.s", ChannelMode::ReadOnly),
+    ("ctl.elapsed.us", ChannelMode::ReadOnly),
+    ("ctl.elapsed.ms", ChannelMode::ReadOnly),
+    ("ctl.elapsed.s", ChannelMode::ReadOnly),
+    ("ctl.energy_state", ChannelMode::WriteOnly),
+    ("ctl.energy_left", ChannelMode::ReadOnly),
+    ("ctl.position", ChannelMode::ReadWrite),
 ];
 
 #[derive(Debug)]
@@ -129,34 +129,6 @@ impl NexusFs {
         Ok(self)
     }
 
-    fn get_elapsed(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
-        fs_side
-            .0
-            .send(FsMessage::Elapsed(Message {
-                id,
-                data: Vec::new(),
-            }))
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
-        fs_side
-            .1
-            .recv()
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))
-    }
-
-    fn get_time(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
-        fs_side
-            .0
-            .send(FsMessage::Time(Message {
-                id,
-                data: Vec::new(),
-            }))
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
-        fs_side
-            .1
-            .recv()
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))
-    }
-
     /// Request a message from the kernel for the channel identified by `id`.
     /// Performs blocking I/O on the channel to send a request and receive the
     /// response from the kernel.
@@ -197,22 +169,6 @@ impl NexusFs {
             })?;
         while !root.exists() {}
         Ok((sess, kernel_side))
-    }
-
-    fn read_time(&mut self, reply: ReplyData, key: ChannelId) {
-        if let Ok(msg) = Self::get_time(&mut self.fs_side, key) {
-            reply.data(msg.data());
-        } else {
-            reply.data(&[]);
-        };
-    }
-
-    fn read_elapsed(&mut self, reply: ReplyData, key: ChannelId) {
-        if let Ok(msg) = Self::get_elapsed(&mut self.fs_side, key) {
-            reply.data(msg.data());
-        } else {
-            reply.data(&[]);
-        };
     }
 
     fn read_message(&mut self, reply: ReplyData, size: usize, key: ChannelId) {
@@ -368,17 +324,7 @@ impl Filesystem for NexusFs {
         };
 
         let key = (req.pid(), filename.clone());
-        match filename.as_str().split_terminator("_").next() {
-            Some("time") => {
-                self.read_time(reply, key);
-            }
-            Some("elapsed") => {
-                self.read_elapsed(reply, key);
-            }
-            _ => {
-                self.read_message(reply, size as usize, key);
-            }
-        }
+        self.read_message(reply, size as usize, key);
     }
 
     #[instrument(skip_all)]

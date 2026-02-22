@@ -15,8 +15,11 @@ use crate::{
     sources::Source,
     types::{Channel, NodeHandle},
 };
-use config::ast::{
-    ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position, TimeUnit, TimestepConfig,
+use config::{
+    CONTROL_PREFIX,
+    ast::{
+        ChannelType, DataUnit, DistanceProbVar, DistanceUnit, Position, TimeUnit, TimestepConfig,
+    },
 };
 use rand::rngs::StdRng;
 use std::rc::Rc;
@@ -138,14 +141,32 @@ impl RoutingServer {
     }
 
     /// Map the ID communicated by the FUSE FS to a handle index
-    fn get_handle_index(&self, id: &fuse::ChannelId) -> usize {
-        self.fuse_mapping[id]
+    fn get_handle_index(&self, id: &fuse::ChannelId) -> Option<usize> {
+        self.fuse_mapping.get(id).copied()
     }
 
-    /// Receive a message from the FS and post it to the mailboxes of any
-    /// nodes listening on the channel.
-    pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let index = self.get_handle_index(&msg.id);
+    pub fn write_control_file(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
+        if let Some(remaining) = msg.id.1.strip_prefix(CONTROL_PREFIX) {
+            let service: Vec<_> = remaining.split_terminator(".").collect();
+            match service.as_slice() {
+                ["time", ..] => {
+                    todo!()
+                }
+                ["elapsed", ..] => {
+                    todo!()
+                }
+                _ => unimplemented!("Unimplemented control file: {remaining}"),
+            }
+        } else {
+            return Err(RouterError::UnknownFile(msg.id.1));
+        }
+    }
+
+    pub fn write_channel_file(
+        &mut self,
+        index: usize,
+        msg: fuse::Message,
+    ) -> Result<(), RouterError> {
         let (pid, src_node, channel_handle) = self.channels.handles[index];
         let channel_name = &self.channels.channel_names[channel_handle];
         let timestep = self.timestep;
@@ -162,11 +183,21 @@ impl RoutingServer {
         self.queue_message(src_node, channel_handle, msg.data)
     }
 
+    /// Receive a message from the FS and post it to the mailboxes of any
+    /// nodes listening on the channel.
+    pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
+        if let Some(channel_index) = self.get_handle_index(&msg.id) {
+            self.write_channel_file(channel_index, msg)
+        } else {
+            self.write_control_file(msg)
+        }
+    }
+
     fn suffix_to_time(s: &str) -> Option<TimeUnit> {
         match &s[s.len() - 2..s.len()] {
             "us" => Some(TimeUnit::Microseconds),
             "ms" => Some(TimeUnit::Milliseconds),
-            "_s" => Some(TimeUnit::Seconds),
+            ".s" => Some(TimeUnit::Seconds),
             _ => None,
         }
     }
@@ -189,17 +220,42 @@ impl RoutingServer {
             .map_err(RouterError::FuseSendError)
     }
 
-    /// Wrapper function which will attempt to deliver any available messages
-    /// to the ID identified in the message, but will send an "Empty" message
-    /// if none is found.
-    pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        match self.deliver_msg(self.get_handle_index(&msg.id)) {
+    pub fn read_control_file(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
+        if let Some(remaining) = msg.id.1.strip_prefix(CONTROL_PREFIX) {
+            let service: Vec<_> = remaining.split_terminator(".").collect();
+            match service.as_slice() {
+                ["time", ..] => self.send_time(msg),
+                ["elapsed", ..] => self.send_elapsed(msg),
+                _ => unimplemented!("Unimplemented control file: {remaining}"),
+            }
+        } else {
+            return Err(RouterError::UnknownFile(msg.id.1));
+        }
+    }
+
+    pub fn read_channel_file(
+        &mut self,
+        index: usize,
+        msg: fuse::Message,
+    ) -> Result<(), RouterError> {
+        match self.deliver_msg(index) {
             Ok(true) => Ok(()),
             Ok(false) => self
                 .tx
                 .send(fuse::KernelMessage::Empty(msg))
                 .map_err(RouterError::FuseSendError),
             Err(e) => Err(e),
+        }
+    }
+
+    /// Wrapper function which will attempt to deliver any available messages
+    /// to the ID identified in the message, but will send an "Empty" message
+    /// if none is found.
+    pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
+        if let Some(channel_index) = self.get_handle_index(&msg.id) {
+            self.read_channel_file(channel_index, msg)
+        } else {
+            self.read_control_file(msg)
         }
     }
 

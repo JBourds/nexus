@@ -7,6 +7,8 @@ use thiserror::Error;
 
 #[derive(Error, Debug)]
 pub enum RouterError {
+    #[error("Attempt to write to unknown file: {0}")]
+    UnknownFile(String),
     #[error("Error sending fuse message: {0:#?}")]
     FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]
