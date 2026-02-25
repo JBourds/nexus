@@ -173,12 +173,6 @@ pub enum Medium {
     },
 }
 
-impl Default for Medium {
-    fn default() -> Self {
-        todo!()
-    }
-}
-
 #[derive(Debug, Default, Deserialize)]
 pub struct ProtocolName(pub String);
 
