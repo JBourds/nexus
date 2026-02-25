@@ -639,11 +639,11 @@ impl Link {
         let ancestor = processed
             .get(&val.inherit.expect("This should have been filled in"))
             .expect("Ancestory should have been resolved by now");
-        let signal = val
-            .signal
-            .map(Signal::validate)
-            .unwrap_or(Ok(ancestor.signal))
-            .context("Unable to validate link signal")?;
+        let medium = val
+            .medium
+            .map(Medium::validate)
+            .unwrap_or(Ok(ancestor.medium))
+            .context("Unable to validate link medium")?;
         let bit_error = val
             .bit_error
             .map(DistanceProbVar::validate)
@@ -662,11 +662,66 @@ impl Link {
             ancestor.delays.clone()
         };
         Ok(Self {
-            signal,
+            medium,
             bit_error,
             packet_loss,
             delays,
         })
+    }
+}
+
+impl Medium {
+    pub fn validate(medium: parse::Medium) -> Result<Self> {
+        match medium {
+            parse::Medium::Wireless {
+                shape,
+                wavelength_meters,
+                gain,
+                rx_min_dbm,
+                tx_dbm_low,
+                tx_dbm_high,
+            } => {
+                if tx_dbm_low > tx_dbm_high {
+                    bail!("cannot have tx_dbm_low > tx_dbm_high [{tx_dbm_low}, {tx_dbm_high}]");
+                }
+                let shape = shape
+                    .map(SignalShape::validate)
+                    .unwrap()
+                    .context("unable to validate signal shape in wireless link")?;
+                Ok(Self::Wireless {
+                    shape,
+                    wavelength_meters,
+                    gain,
+                    rx_min_dbm,
+                    tx_dbm_low,
+                    tx_dbm_high,
+                })
+            }
+            parse::Medium::Wired {
+                rx_min_dbm,
+                tx_dbm_low,
+                tx_dbm_high,
+                r,
+                l,
+                c,
+                g,
+                f,
+            } => {
+                if tx_dbm_low > tx_dbm_high {
+                    bail!("cannot have tx_dbm_low > tx_dbm_high [{tx_dbm_low}, {tx_dbm_high}]");
+                }
+                Ok(Self::Wired {
+                    rx_min_dbm,
+                    tx_dbm_low,
+                    tx_dbm_high,
+                    r,
+                    l,
+                    c,
+                    g,
+                    f,
+                })
+            }
+        }
     }
 }
 
@@ -894,32 +949,6 @@ impl Node {
     }
 }
 
-impl Signal {
-    fn validate(val: parse::Signal) -> Result<Self> {
-        let maximum = val
-            .max_range
-            .map(|maximum| {
-                verify_nonnegative(maximum).context("Maximum distance must be positive.")
-            })
-            .transpose()?;
-        let offset = val
-            .offset
-            .map(|maximum| verify_nonnegative(maximum).context("Distance offset must be positive."))
-            .transpose()?;
-        let range = ConnectionRange { maximum, offset };
-        let shape = val
-            .shape
-            .map(SignalShape::validate)
-            .unwrap_or(Ok(SignalShape::default()))
-            .context("Unable to validate signal shape.")?;
-        let unit = val
-            .unit
-            .map(DistanceUnit::validate)
-            .unwrap_or(Ok(DistanceUnit::default()))
-            .context("Unable to validate distance unit.")?;
-        Ok(Self { range, shape, unit })
-    }
-}
 impl SignalShape {
     const MATCHES: &[(&str, SignalShape)] = &[
         ("omni", Self::Omnidirectional),

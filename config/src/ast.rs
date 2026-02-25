@@ -24,7 +24,7 @@ pub struct Simulation {
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Link {
-    pub signal: Signal,
+    pub medium: Medium,
     pub bit_error: DistanceProbVar,
     pub packet_loss: DistanceProbVar,
     pub delays: DelayCalculator,
@@ -258,6 +258,59 @@ pub struct Signal {
     pub unit: DistanceUnit,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
+pub enum Medium {
+    /// Uses Friis transmission model:
+    /// P_r / P_t = G_t G_r (λ / (4 π d))^s
+    ///   - Converted into RSSI (dB form)
+    Wireless {
+        /// Shape of the wireless signal
+        shape: SignalShape,
+        wavelength_meters: f64,
+        gain: f64,
+        /// Minimum RSSI strength the receiver can pick up on.
+        rx_min_dbm: f64,
+        /// Range of transmission strength [low, high] in dBm
+        tx_dbm_low: f64,
+        tx_dbm_high: f64,
+    },
+    /// Uses a RLGC model
+    /// https://triblemany.github.io/archives/afb86e77/transmission-line
+    Wired {
+        /// Minimum RSSI strength the receiver can pick up on.
+        rx_min_dbm: f64,
+        /// Range of transmission strength [low, high] in dBm
+        tx_dbm_low: f64,
+        tx_dbm_high: f64,
+        /// Series resistance per unit length (Ω/m)
+        r: f64,
+        /// Series inductance per unit length (F/m)
+        l: f64,
+        /// Shunt capacitance per unit length (C/m)
+        c: f64,
+        /// Shunt conductance per unit length (S/m)
+        /// - represents dielectric loss
+        g: f64,
+        /// Frequency
+        f: f64,
+    },
+}
+
+impl Default for Medium {
+    fn default() -> Self {
+        Self::Wired {
+            rx_min_dbm: f64::MIN,
+            tx_dbm_low: f64::MIN,
+            tx_dbm_high: f64::MAX,
+            r: 0.0,
+            l: 0.0,
+            c: 0.0,
+            g: 0.0,
+            f: f64::MAX,
+        }
+    }
+}
+
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
 pub enum SignalShape {
     #[default]
@@ -281,7 +334,7 @@ pub struct TimestepConfig {
 }
 
 impl TimestepConfig {
-    /// Get the time elapsed from the UNIX epoch in the desired units.
+    /// Get the time elapsed from a specific point in the desired units
     pub fn time_from(&self, n: u64, unit: TimeUnit, start: &SystemTime) -> u64 {
         let duration = start.duration_since(UNIX_EPOCH).unwrap();
         let start = match unit {
@@ -293,7 +346,7 @@ impl TimestepConfig {
         start + self.elapsed(n, unit)
     }
 
-    /// Provide the time since this instance's start time (simulation start)
+    /// Provide the time since UNIX epoch in the requested unit.
     pub fn time(&self, n: u64, unit: TimeUnit) -> u64 {
         self.time_from(n, unit, &self.start)
     }

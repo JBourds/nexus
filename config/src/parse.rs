@@ -93,7 +93,7 @@ pub struct PowerSource {
 #[serde(default, deny_unknown_fields)]
 pub struct Link {
     pub(super) inherit: Option<String>,
-    pub(super) signal: Option<Signal>,
+    pub(super) medium: Option<Medium>,
     pub(super) packet_loss: Option<DistanceProbVar>,
     pub(super) bit_error: Option<DistanceProbVar>,
     pub(super) delays: Option<Delays>,
@@ -150,13 +150,33 @@ pub struct Delays {
 #[derive(Debug, Default, Deserialize)]
 pub struct SignalShape(pub String);
 
-#[derive(Debug, Default, Deserialize)]
-#[serde(default, deny_unknown_fields)]
-pub struct Signal {
-    pub(super) max_range: Option<f64>,
-    pub(super) offset: Option<f64>,
-    pub(super) shape: Option<SignalShape>,
-    pub(super) unit: Option<Unit>,
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, rename_all = "snake_case", tag = "type")]
+pub enum Medium {
+    Wireless {
+        shape: Option<SignalShape>,
+        wavelength_meters: f64,
+        gain: f64,
+        rx_min_dbm: f64,
+        tx_dbm_low: f64,
+        tx_dbm_high: f64,
+    },
+    Wired {
+        rx_min_dbm: f64,
+        tx_dbm_low: f64,
+        tx_dbm_high: f64,
+        r: f64,
+        l: f64,
+        c: f64,
+        g: f64,
+        f: f64,
+    },
+}
+
+impl Default for Medium {
+    fn default() -> Self {
+        todo!()
+    }
 }
 
 #[derive(Debug, Default, Deserialize)]

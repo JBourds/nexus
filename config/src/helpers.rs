@@ -11,6 +11,7 @@ pub(crate) fn expand_home(path: &PathBuf) -> PathBuf {
     PathBuf::from(path)
 }
 
+#[allow(dead_code)]
 pub(crate) fn verify_nonnegative(val: f64) -> Result<f64> {
     if val.is_sign_negative() {
         bail!("Value must be positive")

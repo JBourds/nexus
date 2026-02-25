@@ -57,23 +57,14 @@ root = "~/simulations"
 [links.ideal]
 
 # Network Parameters
-
-# Control how far the signal can reach.
-#   - "max": Maximum distance packets can possible be delivered to.
-#   - "offset": Offset to use when performing distance degradation
-#   calculations (effective distance is equal to Max {0, Distance - Offset}).
-signal.max_range = inf
-signal.offset = inf
-
-# Signal shape can be any of the following:
-#   - "omni": Circle around node location
-#   - "cone": TODO
-#   - "direct": Link can only communicate via a direct link to another node.
-signal.shape = "omni"
-
-# Uses the same units as in `Error Rates` and `Network Delays` section
-# Unit for distance
-signal.unit = "meters"
+# Define wireless link
+medium.type = "wireless" 
+medium.shape = "omni"
+medium.wavelength_meters = 1
+medium.gain = 1
+medium.rx_min_dbm = -inf
+medium.tx_dbm_low = -inf
+medium.tx_dbm_high = inf
 
 # Node transmission rate (defaults to maximum value able to be hold by u64)
 delays.transmission.data = "bit"
