@@ -921,17 +921,24 @@ impl Signal {
     }
 }
 impl SignalShape {
+    const MATCHES: &[(&str, SignalShape)] = &[
+        ("omni", Self::Omnidirectional),
+        ("omnidirectional", Self::Omnidirectional),
+        ("cone", Self::Cone),
+        ("direct", Self::Direct),
+    ];
     fn validate(mut val: parse::SignalShape) -> Result<Self> {
         val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "omni" => Self::Omnidirectional,
-            "cone" => Self::Cone,
-            "direct" => Self::Direct,
-            s => {
-                bail!("Expected to find (\"omni\" | \"cone\" | \"direct\") but found {s}");
-            }
-        };
-        Ok(variant)
+        if let Some((_, res)) = Self::MATCHES.iter().find(|(name, _)| *name == val.0) {
+            Ok(*res)
+        } else {
+            let options = Self::MATCHES
+                .iter()
+                .map(|(name, _)| format!("\"{name}\""))
+                .collect::<Vec<_>>()
+                .join(" | ");
+            bail!("Expected to find ({options}) but found {s}", s = val.0);
+        }
     }
 }
 
