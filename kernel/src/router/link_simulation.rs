@@ -1,3 +1,5 @@
+use config::ast::Link;
+
 use super::*;
 
 impl RoutingServer {
@@ -51,28 +53,25 @@ impl RoutingServer {
         channel: &Channel,
         mut buf: Cow<'a, [u8]>,
         distance: f64,
-        distance_unit: DistanceUnit,
+        unit: DistanceUnit,
         rng: &mut StdRng,
     ) -> Option<Cow<'a, [u8]>> {
-        let sz: u64 = buf
-            .len()
-            .try_into()
-            .expect("usize should be able to become a u64");
-        let mut sample =
-            |var: &DistanceProbVar| var.sample(distance, distance_unit, sz, DataUnit::Byte, rng);
-        if sample(&channel.link.packet_loss) {
+        let Link {
+            medium,
+            packet_loss,
+            bit_error,
+            ..
+        } = &channel.link;
+        if packet_loss.sample_oneshot(distance, unit, medium, rng) {
             warn!("Packet dropped");
             return None;
         }
 
-        let bit_error_prob =
-            channel
-                .link
-                .bit_error
-                .probability(distance, distance_unit, sz, DataUnit::Byte);
-        if bit_error_prob != 0.0 {
+        let rssi = bit_error.rssi(distance, unit, medium);
+        let ber = bit_error.probability(rssi);
+        if ber != 0.0 {
             let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())
-                .map(|_| unsafe { channel.link.bit_error.sample_unchecked(bit_error_prob, rng) });
+                .map(|_| unsafe { bit_error.sample_unchecked(ber, rng) });
             let _ = flip_bits(buf.to_mut(), flips);
         }
         Some(buf)

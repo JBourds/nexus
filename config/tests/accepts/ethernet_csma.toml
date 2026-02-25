@@ -33,9 +33,11 @@ rate = "3e8 * x"
 time = "s"
 distance = "m"
 
-[links.ethernet.bit_error]
-rate = "1e-9 * x"
-distance = "m"
+
+[links.ethernet]
+# super simplified model which assumes a perfect signal has SNR >= 30
+# saturates at a rate of 0 for anything larger than that
+bit_error = "1e-9 / (30 - snr)"
 
 [nodes]
 

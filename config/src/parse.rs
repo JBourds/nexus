@@ -46,11 +46,7 @@ pub struct DistanceTimeVar {
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct DistanceProbVar {
-    pub(super) rate: Option<String>,
-    pub(super) distance: Option<Unit>,
-    pub(super) size: Option<Unit>,
-}
+pub struct RssiProbExpr(pub Option<String>);
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
@@ -94,8 +90,8 @@ pub struct PowerSource {
 pub struct Link {
     pub(super) inherit: Option<String>,
     pub(super) medium: Option<Medium>,
-    pub(super) packet_loss: Option<DistanceProbVar>,
-    pub(super) bit_error: Option<DistanceProbVar>,
+    pub(super) packet_loss: Option<RssiProbExpr>,
+    pub(super) bit_error: Option<RssiProbExpr>,
     pub(super) delays: Option<Delays>,
 }
 

@@ -25,8 +25,8 @@ pub struct Simulation {
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
 pub struct Link {
     pub medium: Medium,
-    pub bit_error: DistanceProbVar,
-    pub packet_loss: DistanceProbVar,
+    pub bit_error: RssiProbExpr,
+    pub packet_loss: RssiProbExpr,
     pub delays: DelayCalculator,
 }
 
@@ -296,6 +296,30 @@ pub enum Medium {
     },
 }
 
+impl Medium {
+    pub fn noise_floor_dbm(&self) -> f64 {
+        match self {
+            Medium::Wireless { rx_min_dbm, .. } => *rx_min_dbm,
+            Medium::Wired { rx_min_dbm, .. } => *rx_min_dbm,
+        }
+    }
+
+    pub fn rssi(&self, distance_meters: f64) -> f64 {
+        match self {
+            Medium::Wireless { .. } => self.rssi_wireless(distance_meters),
+            Medium::Wired { .. } => self.rssi_wired(distance_meters),
+        }
+    }
+
+    fn rssi_wireless(&self, distance_meters: f64) -> f64 {
+        todo!()
+    }
+
+    fn rssi_wired(&self, distance_meters: f64) -> f64 {
+        todo!()
+    }
+}
+
 impl Default for Medium {
     fn default() -> Self {
         Self::Wired {
@@ -397,28 +421,39 @@ pub struct DistanceTimeVar {
     pub distance: DistanceUnit,
 }
 
-/// Expression of `x` in `distance` units and `y` in `size` units which equals
-/// the probability of an event happening given a distance and payload size.
+/// Calculates probability using `x` as the RSSI variable
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
-pub struct DistanceProbVar {
-    pub rate: String,
-    pub distance: DistanceUnit,
-    pub size: DataUnit,
+pub struct RssiProbExpr {
+    pub(crate) expr: String,
+    pub(crate) noise_floor_dbm: f64,
 }
 
-impl DistanceProbVar {
-    /// Simulates a single sampling of a probability variable using distance
-    /// and data amounts ("x" and "y").
-    /// Returns `true` if the event happens, and `false` otherwise
-    pub fn sample(
+impl RssiProbExpr {
+    pub fn rssi(&self, distance: f64, unit: DistanceUnit, medium: &Medium) -> f64 {
+        let (scale_down, scale) = DistanceUnit::ratio(unit, DistanceUnit::Meters);
+        let distance_meters = if scale_down {
+            distance / (1 << scale) as f64
+        } else {
+            distance * (1 << scale) as f64
+        };
+        medium.rssi(distance_meters)
+    }
+
+    /// Sample as `sample_rssi` but calculates rssi (for one shot)
+    pub fn sample_oneshot(
         &self,
         distance: f64,
-        distance_unit: DistanceUnit,
-        data: u64,
-        data_unit: DataUnit,
+        unit: DistanceUnit,
+        medium: &Medium,
         rng: &mut rand::rngs::StdRng,
     ) -> bool {
-        self.probability(distance, distance_unit, data, data_unit) > rng.random_range(0.0..=1.0)
+        let rssi = self.rssi(distance, unit, medium);
+        self.probability(rssi) > rng.random_range(0.0..=1.0)
+    }
+
+    /// Returns `true` if the event happens, and `false` otherwise
+    pub fn sample_rssi(&self, rssi: f64, rng: &mut rand::rngs::StdRng) -> bool {
+        self.probability(rssi) > rng.random_range(0.0..=1.0)
     }
 
     /// # Safety
@@ -429,38 +464,16 @@ impl DistanceProbVar {
         prob > rng.random_range(0.0..=1.0)
     }
 
-    pub fn probability(
-        &self,
-        distance: f64,
-        distance_unit: DistanceUnit,
-        data: u64,
-        data_unit: DataUnit,
-    ) -> f64 {
-        let func = self
-            .rate
+    pub fn probability(&self, rssi: f64) -> f64 {
+        let mut ctx = meval::Context::new();
+        ctx.var("rssi", rssi);
+        ctx.var("snr", rssi - self.noise_floor_dbm);
+        self.expr
             .parse::<meval::Expr>()
-            .expect("unable to parse meval Expression")
-            .bind2("x", "y")
-            .unwrap();
-        let (should_scale_down, ratio) = DistanceUnit::ratio(self.distance, distance_unit);
-        let scalar = 10u64
-            .checked_pow(ratio.try_into().unwrap())
-            .expect("Exponentiation overflow.") as f64;
-        let distance = if should_scale_down {
-            distance / scalar
-        } else {
-            distance * scalar
-        };
-        let (should_scale_down, lshifts) = DataUnit::ratio(self.size, data_unit);
-        let scalar = 1u64
-            .checked_shl(lshifts.try_into().unwrap())
-            .expect("Exponentiation overflow.") as f64;
-        let data = if should_scale_down {
-            data as f64 / scalar
-        } else {
-            data as f64 * scalar
-        };
-        func(distance, data).clamp(0.0, 1.0)
+            .expect("this gets checked in validation")
+            .eval_with_context(ctx)
+            .expect("couldn't evaluate expression")
+            .clamp(0.0, 1.0)
     }
 }
 
@@ -609,12 +622,11 @@ impl Default for DistanceTimeVar {
     }
 }
 
-impl Default for DistanceProbVar {
+impl Default for RssiProbExpr {
     fn default() -> Self {
         Self {
-            rate: "0".parse().unwrap(),
-            distance: DistanceUnit::default(),
-            size: DataUnit::default(),
+            expr: "0".parse().unwrap(),
+            noise_floor_dbm: f64::MIN,
         }
     }
 }

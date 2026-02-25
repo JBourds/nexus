@@ -599,29 +599,16 @@ impl DistanceTimeVar {
     }
 }
 
-impl DistanceProbVar {
-    fn validate(val: parse::DistanceProbVar) -> Result<Self> {
+impl RssiProbExpr {
+    fn validate(val: parse::RssiProbExpr, noise_floor_dbm: f64) -> Result<Self> {
         let def = Self::default();
-        let rate = val.rate.unwrap_or(def.rate);
-        if rate.parse::<meval::Expr>()?.bind2("x", "y").is_err() {
-            bail!(
-                "Distance probability variable must be a function of \"x\" (distance) and \"y\" (data)"
-            );
+        let expr = val.0.unwrap_or(def.expr);
+        if expr.parse::<meval::Expr>()?.bind2("snr", "rssi").is_err() {
+            bail!("Distance probability variable must be a function of \"x\" (rssi)");
         }
-        let distance = if let Some(distance) = val.distance {
-            DistanceUnit::validate(distance).context("Unable to validate distance unit.")?
-        } else {
-            def.distance
-        };
-        let size = if let Some(size) = val.size {
-            DataUnit::validate(size).context("Unable to validate size unit.")?
-        } else {
-            def.size
-        };
         Ok(Self {
-            rate,
-            distance,
-            size,
+            expr,
+            noise_floor_dbm,
         })
     }
 }
@@ -644,14 +631,15 @@ impl Link {
             .map(Medium::validate)
             .unwrap_or(Ok(ancestor.medium))
             .context("Unable to validate link medium")?;
+        let noise_floor_dbm = medium.noise_floor_dbm();
         let bit_error = val
             .bit_error
-            .map(DistanceProbVar::validate)
+            .map(|e| RssiProbExpr::validate(e, noise_floor_dbm))
             .unwrap_or(Ok(ancestor.bit_error.clone()))
             .context("Unable to validate link bit error variable.")?;
         let packet_loss = val
             .packet_loss
-            .map(DistanceProbVar::validate)
+            .map(|e| RssiProbExpr::validate(e, noise_floor_dbm))
             .unwrap_or(Ok(ancestor.packet_loss.clone()))
             .context("Unable to validate link packet loss variable.")?;
         let delays = if let Some(delays) = val.delays {
