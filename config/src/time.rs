@@ -90,13 +90,7 @@ impl DelayCalculator {
     }
 
     pub fn propagation_timesteps_f64(&self, distance: f64, unit: DistanceUnit) -> f64 {
-        let func = self
-            .propagation
-            .rate
-            .parse::<meval::Expr>()
-            .expect("unable to parse meval Expression")
-            .bind("x")
-            .unwrap();
+        // Get the distance into the desired units
         // Number of `distance_unit` / `time_unit` for value of `distance`
         let (should_scale_down, ratio) = DistanceUnit::ratio(self.propagation.distance, unit);
         // Scale distance units
@@ -108,7 +102,18 @@ impl DelayCalculator {
         } else {
             distance * scalar
         };
-        let time_units = func(distance);
+
+        // Create the context for the expression to be evaluated in
+        let mut ctx = meval::Context::new();
+        ctx.var("distance", distance);
+        ctx.var("d", distance);
+        let time_units = self
+            .propagation
+            .rate
+            .parse::<meval::Expr>()
+            .expect("unable to parse meval expression")
+            .eval_with_context(ctx)
+            .expect("could not evaluate distance time var");
 
         // Scale time units
         let (should_scale_down, time_ratio) =
@@ -165,7 +170,7 @@ mod tests {
             time: TimeUnit::Seconds,
         };
         let propagation = DistanceTimeVar {
-            rate: "5 * x".parse().unwrap(),
+            rate: "5 * d".parse().unwrap(),
             time: TimeUnit::Seconds,
             distance: DistanceUnit::Kilometers,
         };
@@ -283,7 +288,7 @@ mod tests {
 
         // Test nonlinear expressions
         calculator.propagation = DistanceTimeVar {
-            rate: "5 * x^2".parse().unwrap(),
+            rate: "5 * d^2".parse().unwrap(),
             time: TimeUnit::Seconds,
             distance: DistanceUnit::Meters,
         };

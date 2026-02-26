@@ -29,7 +29,7 @@ data = "bit"
 time = "s"
 
 [links.ethernet.delays.propagation]
-rate = "3e8 * x"
+rate = "3e8 * distance"
 time = "s"
 distance = "m"
 

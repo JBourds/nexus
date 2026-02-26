@@ -523,7 +523,7 @@ impl DelayCalculator {
             .propagation
             .rate
             .parse::<meval::Expr>()?
-            .bind("x")
+            .bind2("d", "distance")
             .is_err()
         {
             bail!("Link rates must be a one variable function of distance \"x\"");
