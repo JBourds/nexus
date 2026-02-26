@@ -1,7 +1,7 @@
 """
 client.py
 
-Initiate a multi-hope communication chain.
+Initiate a multi-hop communication chain.
 """
 
 import os
