@@ -1,72 +1,4 @@
-use serde::{Deserialize, Serialize};
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct DataRate {
-    pub rate: u64,
-    pub data: DataUnit,
-    pub time: TimeUnit,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub struct PowerRate {
-    pub rate: i64,
-    pub unit: PowerUnit,
-    pub time: TimeUnit,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-pub enum ClockUnit {
-    #[default]
-    Hertz,
-    Kilohertz,
-    Megahertz,
-    Gigahertz,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-pub enum DataUnit {
-    Bit,
-    Kilobit,
-    Megabit,
-    Gigabit,
-    #[default]
-    Byte,
-    Kilobyte,
-    Megabyte,
-    Gigabyte,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-pub enum PowerUnit {
-    NanoWatt,
-    MicroWatt,
-    MilliWatt,
-    #[default]
-    Watt,
-    KiloWatt,
-    MegaWatt,
-    GigaWatt,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-pub enum TimeUnit {
-    Hours,
-    Minutes,
-    #[default]
-    Seconds,
-    Milliseconds,
-    Microseconds,
-    Nanoseconds,
-}
-
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
-pub enum DistanceUnit {
-    Millimeters,
-    Centimeters,
-    Meters,
-    #[default]
-    Kilometers,
-}
+use crate::ast::{ClockUnit, DataRate, DataUnit, DistanceUnit, PowerUnit, TimeUnit};
 
 impl DataUnit {
     /// Return the left shift ratio of left / right with a boolean
@@ -171,6 +103,17 @@ impl DistanceUnit {
             Self::Centimeters => 2,
             Self::Meters => 4,
             Self::Kilometers => 7,
+        }
+    }
+}
+
+impl Default for DataRate {
+    fn default() -> Self {
+        Self {
+            // Needs to be < i64::MAX because of TOML limitation
+            rate: i64::MAX as u64,
+            data: DataUnit::default(),
+            time: TimeUnit::default(),
         }
     }
 }

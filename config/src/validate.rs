@@ -8,7 +8,6 @@ use crate::parse::Deployment;
 use crate::parse::PowerSink;
 use crate::parse::PowerSource;
 use crate::parse::Unit;
-use crate::units::*;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
@@ -666,11 +665,11 @@ impl Medium {
                 wavelength_meters,
                 gain,
                 rx_min_dbm,
-                tx_dbm_low,
-                tx_dbm_high,
+                tx_min_dbm,
+                tx_max_dbm,
             } => {
-                if tx_dbm_low > tx_dbm_high {
-                    bail!("cannot have tx_dbm_low > tx_dbm_high [{tx_dbm_low}, {tx_dbm_high}]");
+                if tx_min_dbm > tx_max_dbm {
+                    bail!("cannot have tx_min_dbm > tx_max_dbm [{tx_min_dbm}, {tx_max_dbm}]");
                 }
                 let shape = shape
                     .map(SignalShape::validate)
@@ -681,27 +680,27 @@ impl Medium {
                     wavelength_meters,
                     gain,
                     rx_min_dbm,
-                    tx_dbm_low,
-                    tx_dbm_high,
+                    tx_min_dbm,
+                    tx_max_dbm,
                 })
             }
             parse::Medium::Wired {
                 rx_min_dbm,
-                tx_dbm_low,
-                tx_dbm_high,
+                tx_min_dbm,
+                tx_max_dbm,
                 r,
                 l,
                 c,
                 g,
                 f,
             } => {
-                if tx_dbm_low > tx_dbm_high {
-                    bail!("cannot have tx_dbm_low > tx_dbm_high [{tx_dbm_low}, {tx_dbm_high}]");
+                if tx_min_dbm > tx_max_dbm {
+                    bail!("cannot have tx_min_dbm > tx_max_dbm [{tx_min_dbm}, {tx_max_dbm}]");
                 }
                 Ok(Self::Wired {
                     rx_min_dbm,
-                    tx_dbm_low,
-                    tx_dbm_high,
+                    tx_min_dbm,
+                    tx_max_dbm,
                     r,
                     l,
                     c,

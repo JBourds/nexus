@@ -63,8 +63,8 @@ medium.shape = "omni"
 medium.wavelength_meters = 1
 medium.gain = 1
 medium.rx_min_dbm = -inf
-medium.tx_dbm_low = -inf
-medium.tx_dbm_high = inf
+medium.tx_min_dbm = -inf
+medium.tx_max_dbm = inf
 
 # Node transmission rate (defaults to maximum value able to be hold by u64)
 delays.transmission.data = "bit"

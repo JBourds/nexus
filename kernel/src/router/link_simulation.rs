@@ -62,12 +62,14 @@ impl RoutingServer {
             bit_error,
             ..
         } = &channel.link;
-        if packet_loss.sample_oneshot(distance, unit, medium, rng) {
+        // TODO: Allow this to be configured via control file for the link
+        let tx_dbm = medium.tx_max_dbm();
+        if packet_loss.sample_oneshot(tx_dbm, distance, unit, medium, rng) {
             warn!("Packet dropped");
             return None;
         }
 
-        let rssi = bit_error.rssi(distance, unit, medium);
+        let rssi = bit_error.rssi(tx_dbm, distance, unit, medium);
         let ber = bit_error.probability(rssi);
         if ber != 0.0 {
             let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())

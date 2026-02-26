@@ -3,9 +3,14 @@ use crc32fast::Hasher;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 
+mod channel;
 mod helpers;
+mod medium;
 mod namespace;
 pub(crate) mod parse;
+mod position;
+mod resources;
+mod time;
 mod units;
 mod validate;
 
