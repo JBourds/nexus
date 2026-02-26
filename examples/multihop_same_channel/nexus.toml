@@ -1,0 +1,59 @@
+# Simulate multiple nodes from a class communicating to the same channel
+
+[params]
+timestep.length = 20 
+timestep.unit = "ms"
+timestep.count = 5000000000 
+seed = 42                       
+root = "~/simulations"  
+
+[links.main]
+medium.type = "wireless"
+medium.wavelength_meters = 0.125
+medium.gain = 1.0
+medium.rx_min_dbm = -100.0
+medium.tx_min_dbm = -10.0
+medium.tx_max_dbm = 10.0
+
+[channels]
+
+[channels.main]
+link = "main"
+
+[nodes]
+
+[[nodes.client.deployments]]
+position = { point = { x = 3.0 }, unit = "km" }
+
+
+[[nodes.client.protocols]]
+
+name = "client"
+runner = "python3"
+runner_args = ["client.py"]
+subscribers = ["main"]
+publishers = ["main"]
+
+[nodes.proxy]
+deployments = [{}]
+
+
+[[nodes.proxy.protocols]]
+
+name = "proxy"
+runner = "python3"
+runner_args = ["proxy.py"]
+subscribers = ["main"]
+publishers = ["main"]
+
+[[nodes.server.deployments]]
+position = { point = { x = -3.0 }, unit = "km" }
+
+[[nodes.server.protocols]]
+
+name = "server"
+runner = "python3"
+runner_args = ["server.py"]
+subscribers = ["main"]
+publishers = ["main"]
+
