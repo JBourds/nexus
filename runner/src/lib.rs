@@ -15,6 +15,7 @@ use crate::assignment::{Affinity, AffinityBuilder, Bandwidth, Relative, Relative
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
+const UNBUFFER: &str = "stdbuf -i0 -o0 -e0";
 const ECHO: &str = "echo";
 
 #[derive(Debug)]
@@ -44,7 +45,8 @@ struct BuildCtx<'a> {
 fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
-    let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
+
+    let mut script = format!("{ECHO} $$ > {UNBUFFER} {} && ", procs_file.display());
     script.push_str(&format!("{} {}", p.runner.cmd, p.runner.args.join(" ")));
     cmd.current_dir(&p.root)
         .stdout(Stdio::piped())
