@@ -46,8 +46,12 @@ fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
 
-    let mut script = format!("{ECHO} $$ > {UNBUFFER} {} && ", procs_file.display());
-    script.push_str(&format!("{} {}", p.runner.cmd, p.runner.args.join(" ")));
+    let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
+    script.push_str(&format!(
+        "{UNBUFFER} {} {}",
+        p.runner.cmd,
+        p.runner.args.join(" ")
+    ));
     cmd.current_dir(&p.root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
