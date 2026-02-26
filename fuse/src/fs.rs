@@ -56,6 +56,8 @@ pub struct NexusFs {
 }
 
 impl NexusFs {
+    const EMPTY: Vec<u8> = Vec::new();
+
     pub fn new(root: PathBuf) -> Self {
         Self {
             root,
@@ -214,7 +216,14 @@ impl NexusFs {
             let read_size = min(msg.len(), size);
             reply.data(&msg[..read_size as usize]);
             if allow_incremental_reads && read_size < msg.len() {
+                // need to buffer remaining parts of the message
                 file.unread_msg = Some((read_size, msg));
+            } else {
+                // TODO: Python requires this because of the read
+                // implementation- does this cause issues on other platforms?
+
+                // serve explicit EOF condition for next read
+                file.unread_msg = Some((0, Self::EMPTY));
             }
         } else {
             reply.data(&[]);
