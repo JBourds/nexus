@@ -320,11 +320,12 @@ impl RssiProbExpr {
         unit: DistanceUnit,
         medium: &Medium,
     ) -> f64 {
-        let (scale_down, scale) = DistanceUnit::ratio(unit, DistanceUnit::Meters);
-        let distance_meters = if scale_down {
-            distance / (1 << scale) as f64
+        let (scale_up, scale) = DistanceUnit::ratio(unit, DistanceUnit::Meters);
+        let scalar = 10u64.pow(scale as u32) as f64;
+        let distance_meters = if scale_up {
+            distance * scalar
         } else {
-            distance * (1 << scale) as f64
+            distance / scalar
         };
         medium.rssi(tx_power_dbm, distance_meters)
     }
