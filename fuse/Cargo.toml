@@ -4,8 +4,8 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-fuser = "0.16.0"
 config = { path = "../config" }
+fuser = { workspace = true }
 thiserror = { workspace = true }
 libc = { workspace = true }
 home = { workspace = true }

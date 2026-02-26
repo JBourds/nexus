@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
@@ -61,6 +62,17 @@ fn print_logs(args: Cli) -> Result<()> {
 }
 
 fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
+    let fs_handle: Arc<Mutex<Option<fuser::BackgroundSession>>> = Arc::default();
+    // This ensures that any premature exit (ex. Ctrl+c) still unmounts thread
+    let closure_handle = fs_handle.clone();
+    ctrlc::set_handler(move || {
+        let mut guard = closure_handle.lock().unwrap();
+        if let Some(closure_handle) = guard.take() {
+            closure_handle.join();
+        }
+    })
+    .expect("Error setting signal termination handler");
+
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
     let (write_log, read_log) = setup_logging(root.as_path(), &args.cmd)?;
@@ -81,6 +93,10 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             .add_channels(protocol_channels)?
             .mount()
             .expect("unable to mount file system");
+
+        // Make sure mutex always has active session
+        let mut guard = fs_handle.lock().unwrap();
+        guard.take().replace(sess);
 
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
