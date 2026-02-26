@@ -673,7 +673,7 @@ impl Medium {
                 }
                 let shape = shape
                     .map(SignalShape::validate)
-                    .unwrap()
+                    .unwrap_or(Ok(SignalShape::default()))
                     .context("unable to validate signal shape in wireless link")?;
                 Ok(Self::Wireless {
                     shape,
