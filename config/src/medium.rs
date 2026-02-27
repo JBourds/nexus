@@ -45,19 +45,15 @@ impl Medium {
             unreachable!();
         };
 
-        // Clamp TX power to allowed range
         let tx_power_dbm = tx_power_dbm.clamp(*tx_min_dbm, *tx_max_dbm);
 
-        // Avoid singularity at zero distance
         if distance_meters <= f64::EPSILON {
-            return tx_power_dbm;
+            return tx_power_dbm + *gain;
         }
 
-        // Friis free-space model in dB form
-        let gain_db = 20.0 * gain.log10();
         let path_loss_db = 20.0 * (4.0 * PI * distance_meters / wavelength_meters).log10();
 
-        tx_power_dbm + gain_db - path_loss_db
+        tx_power_dbm + *gain - path_loss_db
     }
 
     fn rssi_wired(&self, tx_power_dbm: f64, distance_meters: f64) -> f64 {
@@ -130,7 +126,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125, // 2.4 GHz
-            gain: 1.0,
+            gain: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -148,7 +144,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 1.0,
+            gain: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -170,7 +166,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 1.0,
+            gain: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -198,7 +194,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 1.0,
+            gain: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -10.0,
             tx_max_dbm: 10.0,
