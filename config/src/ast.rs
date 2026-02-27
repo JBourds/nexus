@@ -175,9 +175,9 @@ pub enum Medium {
         tx_max_dbm: f64,
         /// Series resistance per unit length (Ω/m)
         r: f64,
-        /// Series inductance per unit length (F/m)
+        /// Series inductance per unit length (H/m)
         l: f64,
-        /// Shunt capacitance per unit length (C/m)
+        /// Shunt capacitance per unit length (F/m)
         c: f64,
         /// Shunt conductance per unit length (S/m)
         /// - represents dielectric loss
