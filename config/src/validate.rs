@@ -663,7 +663,7 @@ impl Medium {
             parse::Medium::Wireless {
                 shape,
                 wavelength_meters,
-                gain,
+                gain_dbi,
                 rx_min_dbm,
                 tx_min_dbm,
                 tx_max_dbm,
@@ -678,7 +678,7 @@ impl Medium {
                 Ok(Self::Wireless {
                     shape,
                     wavelength_meters,
-                    gain,
+                    gain_dbi,
                     rx_min_dbm,
                     tx_min_dbm,
                     tx_max_dbm,

@@ -151,26 +151,27 @@ pub struct Signal {
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 pub enum Medium {
-    /// Uses Friis transmission model:
-    /// P_r / P_t = G_t G_r (λ / (4 π d))^s
-    ///   - Converted into RSSI (dB form)
+    /// Free-space Friis model (far-field).
+    /// Pr(dBm) = Pt + Gt + Gr − 20log10(4πd/λ)
     Wireless {
-        /// Shape of the wireless signal
+        /// Radiation pattern (e.g., omnidirectional)
         shape: SignalShape,
+        /// Carrier wavelength (meters)
         wavelength_meters: f64,
-        gain: f64,
-        /// Minimum RSSI strength the receiver can pick up on.
+        /// Total antenna gain (Gt + Gr) in dBi
+        gain_dbi: f64,
+        /// Minimum receivable power (receiver sensitivity) in dBm
         rx_min_dbm: f64,
-        /// Range of transmission strength [low, high] in dBm
+        /// Allowed transmit power range in dBm
         tx_min_dbm: f64,
         tx_max_dbm: f64,
     },
-    /// Uses a RLGC model
-    /// https://triblemany.github.io/archives/afb86e77/transmission-line
+    /// Distributed transmission line (RLGC) model.
+    /// γ = sqrt((R + jωL)(G + jωC))
     Wired {
-        /// Minimum RSSI strength the receiver can pick up on.
+        /// Minimum receivable power in dBm
         rx_min_dbm: f64,
-        /// Range of transmission strength [low, high] in dBm
+        /// Allowed transmit power range in dBm
         tx_min_dbm: f64,
         tx_max_dbm: f64,
         /// Series resistance per unit length (Ω/m)
@@ -179,10 +180,9 @@ pub enum Medium {
         l: f64,
         /// Shunt capacitance per unit length (F/m)
         c: f64,
-        /// Shunt conductance per unit length (S/m)
-        /// - represents dielectric loss
+        /// Shunt conductance per unit length (S/m), dielectric loss
         g: f64,
-        /// Frequency
+        /// Signal frequency (Hz)
         f: f64,
     },
 }

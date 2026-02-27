@@ -36,7 +36,7 @@ impl Medium {
     fn rssi_wireless(&self, tx_power_dbm: f64, distance_meters: f64) -> f64 {
         let Self::Wireless {
             wavelength_meters,
-            gain,
+            gain_dbi,
             tx_min_dbm,
             tx_max_dbm,
             ..
@@ -48,12 +48,12 @@ impl Medium {
         let tx_power_dbm = tx_power_dbm.clamp(*tx_min_dbm, *tx_max_dbm);
 
         if distance_meters <= f64::EPSILON {
-            return tx_power_dbm + *gain;
+            return tx_power_dbm + *gain_dbi;
         }
 
         let path_loss_db = 20.0 * (4.0 * PI * distance_meters / wavelength_meters).log10();
 
-        tx_power_dbm + *gain - path_loss_db
+        tx_power_dbm + *gain_dbi - path_loss_db
     }
 
     fn rssi_wired(&self, tx_power_dbm: f64, distance_meters: f64) -> f64 {
@@ -117,7 +117,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125, // 2.4 GHz
-            gain: 0.0,
+            gain_dbi: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -135,7 +135,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 0.0,
+            gain_dbi: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -157,7 +157,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 0.0,
+            gain_dbi: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -50.0,
             tx_max_dbm: 50.0,
@@ -185,7 +185,7 @@ mod tests {
         let medium = Medium::Wireless {
             shape: SignalShape::Omnidirectional,
             wavelength_meters: 0.125,
-            gain: 0.0,
+            gain_dbi: 0.0,
             rx_min_dbm: -100.0,
             tx_min_dbm: -10.0,
             tx_max_dbm: 10.0,

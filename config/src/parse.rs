@@ -152,7 +152,7 @@ pub enum Medium {
     Wireless {
         shape: Option<SignalShape>,
         wavelength_meters: f64,
-        gain: f64,
+        gain_dbi: f64,
         rx_min_dbm: f64,
         tx_min_dbm: f64,
         tx_max_dbm: f64,
