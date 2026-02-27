@@ -78,20 +78,11 @@ impl Medium {
         }
 
         let omega = 2.0 * PI * f;
+        let x = r * g - (omega * omega) * l * c;
+        let y = r * omega * c + g * omega * l;
 
-        // Complex magnitude approximation for attenuation constant
-        let r_term = r;
-        let l_term = omega * l;
-        let g_term = g;
-        let c_term = omega * c;
-
-        // Approximate alpha (Np/m)
-        let alpha = 0.5
-            * ((r_term * g_term + l_term * c_term)
-                + ((r_term * g_term - l_term * c_term).powi(2)
-                    + (r_term * c_term + l_term * g_term).powi(2))
-                .sqrt())
-            .sqrt();
+        let magnitude = (x * x + y * y).sqrt();
+        let alpha = ((magnitude + x) / 2.0).sqrt();
 
         // Convert Nepers → dB
         let loss_db = 8.686 * alpha * distance_meters;
