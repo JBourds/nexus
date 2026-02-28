@@ -20,7 +20,7 @@
 #define MILLIS 1
 #define MICROS 2
 
-#define EXPECTED_START_S 1767268800
+#define EXPECTED_START_S 1769947200
 
 #define JAN_1_2026_S 1767225600
 #define JAN_1_2026_MS 1767225600000
@@ -39,7 +39,6 @@ uint64_t read_file(int fd);
 void write_time(size_t index, uint64_t val);
 
 int main() {
-    setbuf(stdout, NULL);
     open_files();
     assert(read_file(FDS[SECONDS]) == EXPECTED_START_S);
     read_files();
