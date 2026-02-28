@@ -18,7 +18,7 @@ pub struct Cli {
     pub dest: OutputDestination,
 
     /// Number of times to run unique simulations
-    #[arg(short, long)]
+    #[arg(long)]
     pub n: Option<usize>,
 
     /// Configuration toml file for the simulation
@@ -27,7 +27,7 @@ pub struct Cli {
 
     /// Location where the NexusFS should be mounted during simulation
     #[arg(short, long)]
-    pub nexus_root: Option<PathBuf>,
+    pub root: Option<PathBuf>,
 }
 
 #[derive(ValueEnum, Debug, Default, Clone)]

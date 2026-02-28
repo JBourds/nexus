@@ -81,11 +81,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     for _ in 0..args.n.unwrap_or(1) {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
-        let fs = args
-            .nexus_root
-            .clone()
-            .map(NexusFs::new)
-            .unwrap_or_default();
+        let fs = args.root.clone().map(NexusFs::new).unwrap_or_default();
 
         #[allow(unused_variables)]
         let (sess, (tx, rx)) = fs
