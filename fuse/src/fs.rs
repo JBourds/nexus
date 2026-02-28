@@ -218,13 +218,14 @@ impl NexusFs {
             if allow_incremental_reads && read_size < msg.len() {
                 // need to buffer remaining parts of the message
                 file.unread_msg = Some((read_size, msg));
-            } else {
-                // TODO: Python requires this because of the read
-                // implementation- does this cause issues on other platforms?
-
-                // serve explicit EOF condition for next read
-                file.unread_msg = Some((0, Self::EMPTY));
             }
+            // else {
+            //     // TODO: Python requires this because of the read
+            //     // implementation- does this cause issues on other platforms?
+            //
+            //     // serve explicit EOF condition for next read
+            //     file.unread_msg = Some((0, Self::EMPTY));
+            // }
         } else {
             reply.data(&[]);
         }
