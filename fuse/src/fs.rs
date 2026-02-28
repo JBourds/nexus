@@ -158,7 +158,10 @@ impl NexusFs {
     /// Mount the filesystem without blocking, yield the background session it
     /// is mounted in, and return the kernel's end of
     pub fn mount(mut self) -> Result<(BackgroundSession, KernelChannels), FsError> {
-        let options = vec![MountOption::FSName("nexus".to_string())];
+        let options = vec![
+            MountOption::FSName("nexus".to_string()),
+            MountOption::AllowOther,
+        ];
         let root = self.root.clone();
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|err| FsError::CreateDirError {

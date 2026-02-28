@@ -62,16 +62,7 @@ fn print_logs(args: Cli) -> Result<()> {
 }
 
 fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
-    let fs_handle: Arc<Mutex<Option<fuser::BackgroundSession>>> = Arc::default();
-    // This ensures that any premature exit (ex. Ctrl+c) still unmounts thread
-    let closure_handle = fs_handle.clone();
-    ctrlc::set_handler(move || {
-        let mut guard = closure_handle.lock().unwrap();
-        if let Some(closure_handle) = guard.take() {
-            closure_handle.join();
-        }
-    })
-    .expect("Error setting signal termination handler");
+    ctrlc::set_handler(|| {}).expect("Error setting signal termination handler");
 
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
@@ -89,10 +80,6 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             .add_channels(protocol_channels)?
             .mount()
             .expect("unable to mount file system");
-
-        // Make sure mutex always has active session
-        let mut guard = fs_handle.lock().unwrap();
-        guard.take().replace(sess);
 
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
