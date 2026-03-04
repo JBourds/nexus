@@ -59,40 +59,41 @@ impl RoutingServer {
         let timestep = self.timestep;
         let ts_config = self.ts_config;
 
-        for Route {
-            handle_ptr,
-            distance,
-            unit: distance_unit,
-        } in self.routes.entries[channel_handle].nodes[&src_node].iter()
-        {
-            let dst_node = self.channels.handles[*handle_ptr].1;
-            if dst_node != src_node || channel.r#type.delivers_to_self() {
-                debug!(
-                    "Delivering from {} to {}",
-                    &self.channels.node_names[src_node], &self.channels.node_names[dst_node]
-                );
-
-                let (becomes_active_at, expiration) = Self::message_timesteps(
-                    channel,
-                    sz,
-                    ts_config,
-                    timestep,
-                    *distance,
-                    *distance_unit,
-                );
-
-                let msg = AddressedMsg {
-                    handle_ptr: *handle_ptr,
-                    msg: QueuedMessage {
-                        src: src_node,
-                        buf: Rc::clone(&buf),
-                        expiration,
-                    },
-                };
-
-                let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-                self.queued.push((Reverse(becomes_active_at), num, msg));
+        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
+            let handle_ptr = route.handle_ptr;
+            let dst_node = self.channels.handles[handle_ptr].1;
+            if dst_node == src_node && !channel.r#type.delivers_to_self() {
+                continue;
             }
+            debug!(
+                "Delivering from {} to {}",
+                &self.channels.node_names[src_node], &self.channels.node_names[dst_node]
+            );
+
+            let (distance, distance_unit) = Position::distance(
+                &self.channels.nodes[src_node].position,
+                &self.channels.nodes[dst_node].position,
+            );
+            let (becomes_active_at, expiration) = Self::message_timesteps(
+                channel,
+                sz,
+                ts_config,
+                timestep,
+                distance,
+                distance_unit,
+            );
+
+            let msg = AddressedMsg {
+                handle_ptr,
+                msg: QueuedMessage {
+                    src: src_node,
+                    buf: Rc::clone(&buf),
+                    expiration,
+                },
+            };
+
+            let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            self.queued.push((Reverse(becomes_active_at), num, msg));
         }
 
         Ok(())
@@ -111,21 +112,21 @@ impl RoutingServer {
         let timestep = self.timestep;
         let ts_config = self.ts_config;
 
-        for Route {
-            handle_ptr,
-            distance,
-            unit: distance_unit,
-        } in self.routes.entries[channel_handle].nodes[&src_node].iter()
-        {
-            let dst_node = self.channels.handles[*handle_ptr].1;
+        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
+            let handle_ptr = route.handle_ptr;
+            let dst_node = self.channels.handles[handle_ptr].1;
             if !(dst_node != src_node || channel.r#type.delivers_to_self()) {
                 continue;
             }
+            let (distance, distance_unit) = Position::distance(
+                &self.channels.nodes[src_node].position,
+                &self.channels.nodes[dst_node].position,
+            );
             if let Some(buf) = Self::send_through_channel(
                 channel,
                 Cow::from(&msg),
-                *distance,
-                *distance_unit,
+                distance,
+                distance_unit,
                 &mut self.rng,
             ) {
                 let (becomes_active_at, expiration) = Self::message_timesteps(
@@ -133,12 +134,12 @@ impl RoutingServer {
                     sz,
                     ts_config,
                     timestep,
-                    *distance,
-                    *distance_unit,
+                    distance,
+                    distance_unit,
                 );
 
                 let msg = AddressedMsg {
-                    handle_ptr: *handle_ptr,
+                    handle_ptr,
                     msg: QueuedMessage {
                         src: src_node,
                         buf: buf.into(),
@@ -183,8 +184,10 @@ impl RoutingServer {
             std::cmp::Ordering::Less => Ok(false),
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.pop_front().unwrap();
-                let Route { distance, unit, .. } =
-                    self.routes.entries[channel_handle].nodes[&msg.src][node_handle];
+                let (distance, unit) = Position::distance(
+                    &self.channels.nodes[msg.src].position,
+                    &self.channels.nodes[node_handle].position,
+                );
 
                 if let Some(buf) = Self::send_through_channel(
                     channel,
@@ -219,9 +222,10 @@ impl RoutingServer {
                 };
 
                 let filtered = mailbox.iter().filter_map(|msg| {
-                    let Route { distance, unit, .. } =
-                        self.routes.entries[channel_handle].nodes[&msg.src][node_handle];
-
+                    let (distance, unit) = Position::distance(
+                        &self.channels.nodes[msg.src].position,
+                        &self.channels.nodes[node_handle].position,
+                    );
                     Self::send_through_channel(
                         channel,
                         Cow::from(msg.buf.as_ref()),

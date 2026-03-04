@@ -15,9 +15,11 @@ use crate::{
     sources::Source,
     types::{Channel, NodeHandle},
 };
+#[allow(unused_imports)] // Position is used by delivery.rs via `use super::*`
+use config::ast::Position;
 use config::{
     CONTROL_PREFIX,
-    ast::{ChannelType, DataUnit, DistanceUnit, Position, TimeUnit, TimestepConfig},
+    ast::{ChannelType, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
 };
 use rand::rngs::StdRng;
 use std::rc::Rc;
@@ -28,6 +30,7 @@ use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
+mod posctl;
 mod timectl;
 use crate::types::ChannelHandle;
 
@@ -158,6 +161,9 @@ impl RoutingServer {
         let service: Vec<_> = remaining.split_terminator(".").collect();
         match service.as_slice() {
             ["time", ..] => self.update_time(node_index, msg),
+            ["pos", "dx" | "dy" | "dz"] => self.write_pos_delta(node_index, msg),
+            ["pos", "motion"] => self.write_pos_motion(node_index, msg),
+            ["pos", ..] => self.write_pos(node_index, msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -210,6 +216,8 @@ impl RoutingServer {
         match service.as_slice() {
             ["time", ..] => self.send_time(node_index, msg),
             ["elapsed", ..] => self.send_elapsed(msg),
+            ["pos", "motion"] => self.read_pos_motion(node_index, msg),
+            ["pos", ..] => self.read_pos(node_index, msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -248,6 +256,10 @@ impl RoutingServer {
     /// placing it in the mailbox.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
+
+        // Advance positions of any nodes with active motion patterns and emit
+        // "movement" log events for each node that moved.
+        self.apply_all_motions_and_log();
 
         // Clear all old messages
         for mailbox in self.mailboxes.iter_mut() {

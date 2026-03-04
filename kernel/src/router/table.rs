@@ -19,19 +19,13 @@ pub struct ChannelRoutes {
     pub nodes: HashMap<NodeHandle, Vec<Route>>,
 }
 
-/// Single route containing computed information about an endpoint relative to
-/// a single node and distance from it. Uses `handle_ptr` to lookup the channel
-/// information and compute appropriate delays/bit errors/dropped packets at
-/// runtime (nodes could move).
+/// Single route from a source node to one destination handle on a channel.
+/// Distance is computed dynamically from live node positions at queue/deliver
+/// time so that mobile nodes are handled correctly.
 #[derive(Clone, Debug)]
 pub(crate) struct Route {
-    /// Index pointer into the `handles` array for the specific channel the
-    /// route is connected to.
+    /// Index pointer into the `handles` array for the destination endpoint.
     pub handle_ptr: usize,
-    /// Euclidean distance between the nodes.
-    pub distance: f64,
-    /// Units for `distance` field
-    pub unit: DistanceUnit,
 }
 
 impl RoutingTable {
@@ -57,9 +51,9 @@ impl ChannelRoutes {
 }
 
 impl Route {
-    /// Function to determine the set of channels which should be reached by
-    /// `src_node` transmitting information to `src_ch` and compute route
-    /// information. Called once at setup.
+    /// Determine all destination handles reachable by `src_node` on `src_ch`.
+    /// Distance is intentionally not stored here; it is computed from live node
+    /// positions at queue/deliver time to support mobile nodes.
     fn outgoing(channels: &ResolvedChannels, src_ch: usize, src_node: usize) -> Vec<Self> {
         let ch = &channels.channels[src_ch];
         channels
@@ -71,14 +65,7 @@ impl Route {
                     && (ch.subscribers.contains(dst_node)
                         || src_node == *dst_node && ch.r#type.delivers_to_self())
                 {
-                    let src = &channels.nodes[src_node];
-                    let dst = &channels.nodes[*dst_node];
-                    let (distance, unit) = Position::distance(&src.position, &dst.position);
-                    Some(Route {
-                        handle_ptr,
-                        distance,
-                        unit,
-                    })
+                    Some(Route { handle_ptr })
                 } else {
                     None
                 }
