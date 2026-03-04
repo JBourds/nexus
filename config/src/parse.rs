@@ -11,8 +11,6 @@ pub struct Simulation {
     pub(super) links: HashMap<String, Link>,
     pub(super) nodes: HashMap<String, Node>,
     pub(super) channels: HashMap<String, Channel>,
-    pub(super) sources: Option<Vec<PowerSource>>,
-    pub(super) sinks: Option<Vec<PowerSink>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -67,22 +65,31 @@ pub struct Charge {
     pub(super) unit: Unit,
 }
 
+/// A power rate used for per-node power states and ambient rates.
+/// `rate` is always positive; semantics (consumption vs. generation) are
+/// determined by the field it appears in.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct PowerSink {
-    pub(super) name: String,
-    pub(super) quantity: u64,
+pub struct PowerRate {
+    pub(super) rate: u64,
     pub(super) unit: Unit,
     pub(super) time: Unit,
 }
 
+/// One-time energy cost (e.g. per TX or RX on a channel).
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub struct PowerSource {
-    pub(super) name: String,
+pub struct Energy {
     pub(super) quantity: u64,
     pub(super) unit: Unit,
-    pub(super) time: Unit,
+}
+
+/// Optional TX/RX energy costs for a single channel within a protocol.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ChannelEnergy {
+    pub(super) tx: Option<Energy>,
+    pub(super) rx: Option<Energy>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -179,6 +186,10 @@ pub struct Deployment {
     pub(super) build_args: Option<Vec<String>>,
     pub(super) run_args: Option<Vec<String>>,
     pub(super) charge: Option<Charge>,
+    /// Which power state to start in (references a key in `power_states`).
+    pub(super) initial_state: Option<String>,
+    /// Fraction of max charge [0, 1] at which a dead node restarts.
+    pub(super) restart_threshold: Option<f64>,
     /// Optionally let a deployment start with a different time than simulation
     pub(super) start: Option<Datetime>,
 }
@@ -224,8 +235,11 @@ pub struct Node {
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
     pub(super) protocols: Option<Vec<NodeProtocol>>,
-    pub(super) sources: Option<Vec<String>>,
-    pub(super) sinks: Option<Vec<String>>,
+    /// Named power consumption/generation states the process can switch
+    /// between via `ctl.energy_state`. Positive rate = consumption.
+    pub(super) power_states: Option<HashMap<String, PowerRate>>,
+    /// Always-on background power rate. Positive = generation (e.g. solar).
+    pub(super) ambient_rate: Option<PowerRate>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -239,4 +253,6 @@ pub struct NodeProtocol {
     pub(super) build_args: Option<Vec<String>>,
     pub(super) publishers: Option<Vec<ChannelName>>,
     pub(super) subscribers: Option<Vec<ChannelName>>,
+    /// Per-channel energy costs keyed by channel name.
+    pub(super) channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }

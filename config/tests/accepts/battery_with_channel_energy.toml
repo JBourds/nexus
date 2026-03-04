@@ -1,0 +1,39 @@
+# Node with battery, power states, channel energy costs, and restart threshold.
+
+[params]
+timestep.length = 1
+timestep.unit = "ms"
+timestep.count = 10000
+seed = 0
+root = "~/simulations"
+
+[channels.lora]
+
+[nodes]
+
+[nodes.sensor]
+deployments = [{ charge = { max = 3000, quantity = 2400, unit = "mwh" }, initial_state = "sleep", restart_threshold = 0.05 }]
+
+[nodes.sensor.power_states]
+sleep    = { rate = 10,  unit = "uw", time = "s" }
+transmit = { rate = 100, unit = "mw", time = "s" }
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["sensor.py"]
+publishers = ["lora"]
+subscribers = ["lora"]
+channel_energy.lora.tx = { quantity = 150, unit = "uj" }
+channel_energy.lora.rx = { quantity = 50,  unit = "uj" }
+
+[nodes.gateway]
+
+deployments = [{}]
+
+[[nodes.gateway.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["gateway.py"]
+publishers = ["lora"]
+subscribers = ["lora"]

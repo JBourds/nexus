@@ -44,6 +44,18 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
             .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
     }
 
+    pub fn freeze_node(&mut self, name: String) -> Result<(), KernelError> {
+        self.tx
+            .send(KernelMessage::FreezeNode(name))
+            .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
+    }
+
+    pub fn unfreeze_node(&mut self, name: String) -> Result<(), KernelError> {
+        self.tx
+            .send(KernelMessage::UnfreezeNode(name))
+            .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
+    }
+
     pub fn shutdown(self) -> HandleInner {
         self.tx
             .send(KernelMessage::Shutdown)
@@ -111,6 +123,12 @@ impl StatusServer {
                 }
                 Ok(KernelMessage::Unfreeze) => {
                     self.runc.cgroups.unfreeze_nodes();
+                }
+                Ok(KernelMessage::FreezeNode(name)) => {
+                    self.runc.cgroups.freeze_node(&name);
+                }
+                Ok(KernelMessage::UnfreezeNode(name)) => {
+                    self.runc.cgroups.unfreeze_node(&name);
                 }
                 Err(e) => {
                     break Err(KernelError::StatusError(StatusError::RecvError(e)));

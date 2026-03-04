@@ -214,6 +214,24 @@ impl CgroupController {
         freeze(&self.nodes_limited.root, false);
     }
 
+    /// Freeze a single node's cgroup by name.
+    pub fn freeze_node(&mut self, name: &str) {
+        if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
+            freeze(&cgroup.path, true);
+        } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
+            freeze(&cgroup.path, true);
+        }
+    }
+
+    /// Unfreeze a single node's cgroup by name.
+    pub fn unfreeze_node(&mut self, name: &str) {
+        if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
+            freeze(&cgroup.path, false);
+        } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
+            freeze(&cgroup.path, false);
+        }
+    }
+
     pub fn add_node(&mut self, name: &str, resources: Resources) -> NodeHandle {
         let has_limited_resources = resources.has_cpu_limit();
         let parent = if has_limited_resources {

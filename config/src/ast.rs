@@ -8,16 +8,12 @@ pub type LinkHandle = String;
 pub type ChannelHandle = String;
 pub type NodeHandle = String;
 pub type ProtocolHandle = String;
-pub type SinkHandle = String;
-pub type SourceHandle = String;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Node>,
-    pub sinks: HashMap<SinkHandle, PowerRate>,
-    pub sources: HashMap<SourceHandle, PowerRate>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -73,8 +69,16 @@ pub struct Node {
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
     pub internal_names: Vec<ChannelHandle>,
     pub resources: Resources,
-    pub sinks: HashSet<SinkHandle>,
-    pub sources: HashSet<SourceHandle>,
+    /// Named power consumption states the process can switch between
+    /// via `ctl.energy_state`. Rates are positive = consumption.
+    pub power_states: HashMap<String, PowerRate>,
+    /// Always-on background generation rate (e.g. solar panel).
+    /// Positive = generation, applied regardless of process state.
+    pub ambient_rate: Option<PowerRate>,
+    /// Which power state to start in (must be a key in `power_states`).
+    pub initial_state: Option<String>,
+    /// Fraction of max charge (0..=1) at which a dead node restarts.
+    pub restart_threshold: Option<f64>,
     pub start: SystemTime,
 }
 
@@ -103,7 +107,21 @@ pub struct Mem {
 pub struct Charge {
     pub max: u64,
     pub quantity: u64,
-    pub unit: PowerUnit,
+    pub unit: EnergyUnit,
+}
+
+/// One-time energy cost for a single send or receive on a channel.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Energy {
+    pub quantity: u64,
+    pub unit: EnergyUnit,
+}
+
+/// Per-channel TX/RX energy costs attached to a protocol.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ChannelEnergy {
+    pub tx: Option<Energy>,
+    pub rx: Option<Energy>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -113,6 +131,8 @@ pub struct NodeProtocol {
     pub runner: Cmd,
     pub publishers: HashSet<ChannelHandle>,
     pub subscribers: HashSet<ChannelHandle>,
+    /// Per-channel energy costs for this protocol.
+    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -294,6 +314,20 @@ pub enum PowerUnit {
     KiloWatt,
     MegaWatt,
     GigaWatt,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub enum EnergyUnit {
+    NanoJoule,
+    MicroJoule,
+    MilliJoule,
+    #[default]
+    Joule,
+    KiloJoule,
+    MicroWattHour,
+    MilliWattHour,
+    WattHour,
+    KiloWattHour,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]

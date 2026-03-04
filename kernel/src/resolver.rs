@@ -30,6 +30,7 @@ impl ResolvedChannels {
         nodes: Vec<config::ast::Node>,
         node_handles: &HashMap<String, usize>,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ProtocolHandle)>,
+        ts_config: &ast::TimestepConfig,
     ) -> Result<Self, KernelError> {
         let (mut channel_names, channels) = unzip(channels);
         // Inject control files here so that FUSE mappings get made for them too
@@ -48,7 +49,7 @@ impl ResolvedChannels {
             // Validate each node and convert to use indices rather than strings
             // Get all (name, object) pairs for internal channels
             let (new_node, new_internals) =
-                Node::from_ast(node, handle, &channel_handles, node_handles)
+                Node::from_ast(node, handle, &channel_handles, node_handles, ts_config)
                     .map_err(KernelError::KernelInit)?;
 
             // Extract vec of tuples to tuple of vecs

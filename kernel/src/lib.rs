@@ -100,6 +100,7 @@ impl Kernel {
             nodes,
             &node_handles,
             file_handles,
+            &sim.params.timestep,
         )?;
         Ok(Self {
             root: sim.params.root,
@@ -163,7 +164,14 @@ impl Kernel {
                         break 'outer;
                     }
                 }
-                routing_server.poll(timestep)?;
+                let router::RouterMessage::EnergyEvents { depleted, recovered } =
+                    routing_server.poll(timestep)?;
+                for name in depleted {
+                    status_server.freeze_node(name)?;
+                }
+                for name in recovered {
+                    status_server.unfreeze_node(name)?;
+                }
             }
             if start.elapsed().is_err() {
                 return Err(KernelError::TimestepError(timestep));

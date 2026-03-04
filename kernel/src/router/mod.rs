@@ -49,10 +49,14 @@ use table::*;
 type ServerHandle = JoinHandle<Result<(), KernelError>>;
 
 impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
-    pub fn poll(&mut self, timestep: u64) -> Result<(), KernelError> {
+    /// Poll the routing server for one timestep and return energy events.
+    pub fn poll(&mut self, timestep: u64) -> Result<RouterMessage, KernelError> {
         self.tx
             .send(router::KernelMessage::Poll(timestep))
-            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
+            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
+        self.rx
+            .recv()
+            .map_err(|e| KernelError::RouterError(RouterError::RecvError(e)))
     }
     pub fn shutdown(self) -> Result<(), KernelError> {
         self.tx
@@ -86,6 +90,10 @@ pub(crate) struct RoutingServer {
     rng: StdRng,
     /// Channel which router delivers messages to file system
     tx: mpsc::Sender<fuse::KernelMessage>,
+    /// Node indices that newly ran out of charge this timestep.
+    newly_depleted: Vec<usize>,
+    /// Node indices that recovered above their restart threshold this timestep.
+    newly_recovered: Vec<usize>,
 }
 
 impl RoutingServer {
@@ -99,7 +107,7 @@ impl RoutingServer {
         mut source: Source,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
-        let (_router_tx, router_rx) = mpsc::channel::<RouterMessage>();
+        let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
         thread::Builder::new()
             .name("nexus_router".to_string())
             .spawn(move || {
@@ -117,6 +125,8 @@ impl RoutingServer {
                     ts_config,
                     rng,
                     tx,
+                    newly_depleted: Vec::new(),
+                    newly_recovered: Vec::new(),
                 };
                 loop {
                     match kernel_rx.recv() {
@@ -127,6 +137,22 @@ impl RoutingServer {
                             router.timestep = timestep;
                             if let Err(e) = source.poll(&mut router, timestep) {
                                 break Err(KernelError::SourceError(e));
+                            }
+                            let depleted = router
+                                .newly_depleted
+                                .drain(..)
+                                .map(|i| router.channels.node_names[i].clone())
+                                .collect();
+                            let recovered = router
+                                .newly_recovered
+                                .drain(..)
+                                .map(|i| router.channels.node_names[i].clone())
+                                .collect();
+                            if router_tx
+                                .send(RouterMessage::EnergyEvents { depleted, recovered })
+                                .is_err()
+                            {
+                                break Err(KernelError::RouterError(RouterError::RouteError));
                             }
                         }
                         Err(e) => {
@@ -158,6 +184,15 @@ impl RoutingServer {
         let service: Vec<_> = remaining.split_terminator(".").collect();
         match service.as_slice() {
             ["time", ..] => self.update_time(node_index, msg),
+            ["energy_state"] => {
+                let state = String::from_utf8_lossy(&msg.data).trim().to_string();
+                if let Some(energy) = &mut self.channels.nodes[node_index].energy {
+                    if energy.power_states_nj.contains_key(&state) {
+                        energy.current_state = Some(state);
+                    }
+                }
+                Ok(())
+            }
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -179,6 +214,22 @@ impl RoutingServer {
             format_u8_buf(&msg.data)
         );
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
+
+        // Deduct TX channel energy cost before queuing
+        let tx_cost_nj: i64 = self.channels.nodes[src_node]
+            .protocols
+            .iter()
+            .filter(|p| p.publishers.contains(&channel_handle))
+            .filter_map(|p| p.channel_energy.get(&channel_handle))
+            .filter_map(|ce| ce.tx.as_ref())
+            .map(|e| e.unit.to_nj(e.quantity) as i64)
+            .sum();
+        if tx_cost_nj > 0 {
+            if let Some(energy) = &mut self.channels.nodes[src_node].energy {
+                energy.charge_nj -= tx_cost_nj;
+            }
+        }
+
         self.queue_message(src_node, channel_handle, msg.data)
     }
 
@@ -210,6 +261,29 @@ impl RoutingServer {
         match service.as_slice() {
             ["time", ..] => self.send_time(node_index, msg),
             ["elapsed", ..] => self.send_elapsed(msg),
+            ["energy_left"] => {
+                let charge_nj = self.channels.nodes[node_index]
+                    .energy
+                    .as_ref()
+                    .map_or(0, |e| e.charge_nj);
+                let mut msg = msg;
+                msg.data = charge_nj.to_string().into_bytes();
+                self.tx
+                    .send(fuse::KernelMessage::Exclusive(msg))
+                    .map_err(RouterError::FuseSendError)
+            }
+            ["energy_state"] => {
+                let state = self.channels.nodes[node_index]
+                    .energy
+                    .as_ref()
+                    .and_then(|e| e.current_state.clone())
+                    .unwrap_or_default();
+                let mut msg = msg;
+                msg.data = state.into_bytes();
+                self.tx
+                    .send(fuse::KernelMessage::Exclusive(msg))
+                    .map_err(RouterError::FuseSendError)
+            }
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -249,6 +323,42 @@ impl RoutingServer {
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
 
+        // Drain per-timestep energy for all nodes with batteries
+        for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
+            if let Some(energy) = &mut node.energy {
+                let was_dead = energy.is_dead;
+                // Always apply ambient generation (even when dead, e.g. solar charging)
+                energy.charge_nj += energy.ambient_nj_per_ts;
+                // Only drain power state if alive
+                if !was_dead {
+                    let drain = energy
+                        .current_state
+                        .as_deref()
+                        .and_then(|s| energy.power_states_nj.get(s).copied())
+                        .unwrap_or(0);
+                    energy.charge_nj -= drain;
+                }
+                energy.charge_nj = energy.charge_nj.min(energy.max_nj as i64);
+                // Detect transitions
+                if !was_dead && energy.charge_nj <= 0 {
+                    energy.is_dead = true;
+                    self.newly_depleted.push(node_idx);
+                } else if was_dead {
+                    let recovered = energy
+                        .restart_threshold_nj
+                        .is_some_and(|t| energy.charge_nj as u64 >= t);
+                    if recovered {
+                        energy.is_dead = false;
+                        self.newly_recovered.push(node_idx);
+                    }
+                }
+                // Log battery snapshot for replay
+                let timestep = self.timestep;
+                let charge_nj = energy.charge_nj;
+                event!(target: "tx", Level::INFO, timestep, node = node_idx, charge_nj);
+            }
+        }
+
         // Clear all old messages
         for mailbox in self.mailboxes.iter_mut() {
             while mailbox
@@ -268,6 +378,7 @@ impl RoutingServer {
             let Some((_, _, frame)) = self.queued.pop() else {
                 return Err(RouterError::StepError);
             };
+            let (_, dst_node, channel_handle) = self.channels.handles[frame.handle_ptr];
             let (_, _, channel_index) = self.channels.handles[frame.handle_ptr];
             let mailbox = &mut self.mailboxes[frame.handle_ptr];
 
@@ -280,6 +391,21 @@ impl RoutingServer {
                 .is_none_or(|n| n.get() > mailbox.len())
             {
                 mailbox.push_back(frame.msg);
+
+                // Deduct RX channel energy cost on delivery
+                let rx_cost_nj: i64 = self.channels.nodes[dst_node]
+                    .protocols
+                    .iter()
+                    .filter(|p| p.subscribers.contains(&channel_handle))
+                    .filter_map(|p| p.channel_energy.get(&channel_handle))
+                    .filter_map(|ce| ce.rx.as_ref())
+                    .map(|e| e.unit.to_nj(e.quantity) as i64)
+                    .sum();
+                if rx_cost_nj > 0 {
+                    if let Some(energy) = &mut self.channels.nodes[dst_node].energy {
+                        energy.charge_nj -= rx_cost_nj;
+                    }
+                }
             } else {
                 warn!("Message dropped due to full queue!");
             }

@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::{fs::File, io::BufReader};
 
-use crate::log::BinaryLogRecord;
+use crate::log::LogRecord;
 use crate::router::RoutingServer;
 use crate::{errors::SourceError, router::Timestep};
 
@@ -22,7 +22,7 @@ pub enum Source {
     /// Write events come from a log.
     Replay {
         src: BufReader<File>,
-        next_log: Option<BinaryLogRecord>,
+        next_log: Option<LogRecord>,
     },
     /// No write events happen
     Empty,
@@ -45,7 +45,7 @@ impl Source {
         let mut src = BufReader::new(File::open(log).map_err(SourceError::ReplayLogOpen)?);
         loop {
             let config = config::standard();
-            match bincode::decode_from_reader::<BinaryLogRecord, _, _>(&mut src, config) {
+            match bincode::decode_from_reader::<LogRecord, _, _>(&mut src, config) {
                 Ok(record) => {
                     println!("{record:?}");
                 }
@@ -85,38 +85,29 @@ impl Source {
         src: &mut BufReader<File>,
         ts: Timestep,
         router: &mut RoutingServer,
-        next_log: &mut Option<BinaryLogRecord>,
+        next_log: &mut Option<LogRecord>,
     ) -> Result<(), SourceError> {
         // Only do this I/O if we either don't know when the next log
         // is or if we know there are logs ready to be sent.
-        if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
-            if let Some(Err(e)) = next_log
-                .take()
-                .map(|rec| router.queue_message(rec.node, rec.channel, rec.data))
-            {
-                return Err(SourceError::RouterError(e));
+        if next_log.as_ref().is_none_or(|rec| rec.timestep() <= ts) {
+            // Queue the previously peeked record if it's due.
+            if let Some(rec) = next_log.take() {
+                if let Some(e) = Self::queue_record(router, rec).err() {
+                    return Err(e);
+                }
             }
 
             loop {
                 let config = config::standard();
-                match bincode::decode_from_reader::<BinaryLogRecord, _, _>(&mut *src, config) {
-                    Ok(BinaryLogRecord {
-                        is_publisher: false,
-                        ..
-                    }) => break Err(SourceError::InvalidLogType),
-                    // Record scheduled for the future
-                    Ok(rec) if rec.timestep > ts => {
+                match bincode::decode_from_reader::<LogRecord, _, _>(&mut *src, config) {
+                    // Record scheduled for the future — save it and stop.
+                    Ok(rec) if rec.timestep() > ts => {
                         *next_log = Some(rec);
                         break Ok(());
                     }
-                    Ok(BinaryLogRecord {
-                        node,
-                        channel,
-                        data,
-                        ..
-                    }) => {
-                        if let Err(e) = router.queue_message(node, channel, data) {
-                            break Err(SourceError::RouterError(e));
+                    Ok(rec) => {
+                        if let Err(e) = Self::queue_record(router, rec) {
+                            break Err(e);
                         }
                     }
                     Err(DecodeError::Io { inner, .. })
@@ -130,6 +121,27 @@ impl Source {
         }
         router.step().map_err(SourceError::RouterError)?;
         Ok(())
+    }
+
+    /// Queue a decoded log record on the router.  Battery records are skipped
+    /// during replay (they are informational snapshots, not re-playable events).
+    fn queue_record(router: &mut RoutingServer, rec: LogRecord) -> Result<(), SourceError> {
+        match rec {
+            LogRecord::Message {
+                is_publisher: false,
+                ..
+            } => Err(SourceError::InvalidLogType),
+            LogRecord::Message {
+                node,
+                channel,
+                data,
+                ..
+            } => router
+                .queue_message(node, channel, data)
+                .map_err(SourceError::RouterError),
+            // Battery snapshots are not replayed as events.
+            LogRecord::Battery { .. } => Ok(()),
+        }
     }
 
     pub(crate) fn poll(

@@ -2,6 +2,6 @@ Error {
     context: "Failed to validate simulation parameters from config file.",
     source: Error {
         context: "Failed to validate nodes",
-        source: "Found undefined source names in node: {\n    \"undefined_source\",\n}",
+        source: "initial_state \"nonexistent_state\" is not defined in power_states",
     },
 }
