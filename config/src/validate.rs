@@ -714,11 +714,19 @@ impl Medium {
 
 impl Charge {
     fn validate(val: parse::Charge) -> Result<Self> {
+        let max = val.max.unwrap_or(u64::MAX);
+        if val.quantity > max {
+            bail!(
+                "charge.quantity ({}) exceeds charge.max ({})",
+                val.quantity,
+                max
+            );
+        }
         Ok(Self {
-            max: val.max.unwrap_or(u64::MAX),
+            max,
             quantity: val.quantity,
             unit: PowerUnit::validate(val.unit)
-                .context("Failed to validate poer unit in charge.")?,
+                .context("Failed to validate power unit in charge.")?,
         })
     }
 }
