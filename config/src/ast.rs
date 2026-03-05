@@ -4,6 +4,39 @@ use std::num::{NonZeroU64, NonZeroUsize};
 use std::path::PathBuf;
 use std::time::SystemTime;
 
+/// Serde helper that stores `SystemTime` as epoch_secs + epoch_nanos (two flat
+/// integers) so that TOML round-trips correctly.
+mod system_time_serde {
+    use serde::{self, Deserialize, Deserializer, Serialize, Serializer};
+    use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+    #[derive(Serialize, Deserialize)]
+    struct Epoch {
+        epoch_secs: u64,
+        epoch_nanos: u32,
+    }
+
+    pub fn serialize<S>(time: &SystemTime, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        let dur = time.duration_since(UNIX_EPOCH).unwrap_or_default();
+        Epoch {
+            epoch_secs: dur.as_secs(),
+            epoch_nanos: dur.subsec_nanos(),
+        }
+        .serialize(serializer)
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<SystemTime, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let e = Epoch::deserialize(deserializer)?;
+        Ok(UNIX_EPOCH + Duration::new(e.epoch_secs, e.epoch_nanos))
+    }
+}
+
 pub type LinkHandle = String;
 pub type ChannelHandle = String;
 pub type NodeHandle = String;
@@ -75,6 +108,7 @@ pub struct Node {
     pub resources: Resources,
     pub sinks: HashSet<SinkHandle>,
     pub sources: HashSet<SourceHandle>,
+    #[serde(with = "system_time_serde")]
     pub start: SystemTime,
 }
 
@@ -206,6 +240,7 @@ pub struct TimestepConfig {
     pub length: NonZeroU64,
     pub unit: TimeUnit,
     pub count: NonZeroU64,
+    #[serde(with = "system_time_serde")]
     pub start: SystemTime,
 }
 
