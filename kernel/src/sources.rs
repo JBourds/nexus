@@ -7,7 +7,7 @@ use std::path::Path;
 use std::sync::mpsc;
 use std::{fs::File, io::BufReader};
 
-use crate::log::BinaryLogRecord;
+use crate::log::{LogRecord, MessageRecord};
 use crate::router::RoutingServer;
 use crate::{errors::SourceError, router::Timestep};
 
@@ -19,10 +19,11 @@ use crate::{errors::SourceError, router::Timestep};
 pub enum Source {
     /// Write events come from executing processes.
     Simulated { rx: mpsc::Receiver<fuse::FsMessage> },
-    /// Write events come from a log.
+    /// Write events come from a log. Only `Message { tx: true }` records are
+    /// replayed; RX and Movement records are skipped.
     Replay {
         src: BufReader<File>,
-        next_log: Option<BinaryLogRecord>,
+        next_log: Option<MessageRecord>,
     },
     /// No write events happen
     Empty,
@@ -45,7 +46,7 @@ impl Source {
         let mut src = BufReader::new(File::open(log).map_err(SourceError::ReplayLogOpen)?);
         loop {
             let config = config::standard();
-            match bincode::decode_from_reader::<BinaryLogRecord, _, _>(&mut src, config) {
+            match bincode::decode_from_reader::<LogRecord, _, _>(&mut src, config) {
                 Ok(record) => {
                     println!("{record:?}");
                 }
@@ -85,7 +86,7 @@ impl Source {
         src: &mut BufReader<File>,
         ts: Timestep,
         router: &mut RoutingServer,
-        next_log: &mut Option<BinaryLogRecord>,
+        next_log: &mut Option<MessageRecord>,
     ) -> Result<(), SourceError> {
         // Only do this I/O if we either don't know when the next log
         // is or if we know there are logs ready to be sent.
@@ -99,22 +100,23 @@ impl Source {
 
             loop {
                 let config = config::standard();
-                match bincode::decode_from_reader::<BinaryLogRecord, _, _>(&mut *src, config) {
-                    Ok(BinaryLogRecord {
-                        is_publisher: false,
-                        ..
-                    }) => break Err(SourceError::InvalidLogType),
-                    // Record scheduled for the future
-                    Ok(rec) if rec.timestep > ts => {
+                match bincode::decode_from_reader::<LogRecord, _, _>(&mut *src, config) {
+                    // Skip RX message records during replay
+                    Ok(LogRecord::Message(MessageRecord { tx: false, .. })) => continue,
+                    // Skip movement records during replay (positions are recomputed)
+                    Ok(LogRecord::Movement(_)) => continue,
+                    // TX record scheduled for the future: buffer it
+                    Ok(LogRecord::Message(rec)) if rec.timestep > ts => {
                         *next_log = Some(rec);
                         break Ok(());
                     }
-                    Ok(BinaryLogRecord {
+                    // TX record ready to deliver now
+                    Ok(LogRecord::Message(MessageRecord {
                         node,
                         channel,
                         data,
                         ..
-                    }) => {
+                    })) => {
                         if let Err(e) = router.queue_message(node, channel, data) {
                             break Err(SourceError::RouterError(e));
                         }

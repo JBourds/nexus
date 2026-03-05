@@ -3,10 +3,10 @@ mod events;
 mod helpers;
 pub mod log;
 mod resolver;
-mod router;
+pub(crate) mod router;
 pub mod sources;
 mod status;
-mod types;
+pub mod types;
 
 use fuse::PID;
 use helpers::{make_handles, unzip};

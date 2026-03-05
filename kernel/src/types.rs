@@ -9,7 +9,7 @@ use std::{
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
-use config::ast::{self, ChannelType, Charge, Cmd, Link};
+use config::ast::{self, ChannelType, Charge, Cmd, Link, Point};
 use tracing::instrument;
 
 pub type ChannelHandle = usize;
@@ -72,6 +72,121 @@ impl Channel {
     }
 }
 
+/// Describes how a node's position evolves over time.
+///
+/// All coordinates are in the node's configured `DistanceUnit`. Velocities and
+/// angular rates are per-microsecond (matching the simulator timestep unit).
+#[derive(Clone, Debug, Default)]
+pub enum MotionPattern {
+    /// Node remains stationary at its current `position.point`.
+    #[default]
+    Static,
+    /// Constant-velocity rectilinear motion starting from `initial` at
+    /// simulation timestep `start_ts`. `velocity` components are in
+    /// dist_unit per microsecond.
+    Velocity {
+        initial: Point,
+        velocity: Point,
+        start_ts: u64,
+    },
+    /// Linear interpolation from `start` to `end` over `duration_us`
+    /// microseconds. The node stops at `end` once the duration elapses.
+    Linear {
+        start: Point,
+        end: Point,
+        start_ts: u64,
+        duration_us: u64,
+    },
+    /// Circular orbit in the XY plane. `start_angle_deg` is the initial
+    /// azimuth (degrees) at `start_ts`; `angular_vel_deg_per_us` is the
+    /// rate of rotation (positive = counter-clockwise). The Z coordinate
+    /// stays fixed at `center.z`.
+    Circle {
+        center: Point,
+        radius: f64,
+        start_angle_deg: f64,
+        angular_vel_deg_per_us: f64,
+        start_ts: u64,
+    },
+}
+
+impl MotionPattern {
+    /// Compute the position point at `timestep` from this pattern.
+    /// Returns `None` for `Static` (no update needed).
+    pub fn current_point(&self, timestep: u64) -> Option<Point> {
+        match self {
+            Self::Static => None,
+            Self::Velocity {
+                initial,
+                velocity,
+                start_ts,
+            } => {
+                let dt = timestep.saturating_sub(*start_ts) as f64;
+                Some(Point {
+                    x: initial.x + velocity.x * dt,
+                    y: initial.y + velocity.y * dt,
+                    z: initial.z + velocity.z * dt,
+                })
+            }
+            Self::Linear {
+                start,
+                end,
+                start_ts,
+                duration_us,
+            } => {
+                let dt = timestep.saturating_sub(*start_ts) as f64;
+                let t = (dt / *duration_us as f64).min(1.0);
+                Some(Point {
+                    x: start.x + (end.x - start.x) * t,
+                    y: start.y + (end.y - start.y) * t,
+                    z: start.z + (end.z - start.z) * t,
+                })
+            }
+            Self::Circle {
+                center,
+                radius,
+                start_angle_deg,
+                angular_vel_deg_per_us,
+                start_ts,
+            } => {
+                let dt = timestep.saturating_sub(*start_ts) as f64;
+                let angle = (start_angle_deg + angular_vel_deg_per_us * dt).to_radians();
+                Some(Point {
+                    x: center.x + radius * angle.cos(),
+                    y: center.y + radius * angle.sin(),
+                    z: center.z,
+                })
+            }
+        }
+    }
+
+    /// Serialize this pattern to the text format used by `ctl.pos.motion`.
+    pub fn to_spec(&self) -> String {
+        match self {
+            Self::Static => "none".to_string(),
+            Self::Velocity { velocity, .. } => {
+                format!("velocity {} {} {}", velocity.x, velocity.y, velocity.z)
+            }
+            Self::Linear {
+                end, duration_us, ..
+            } => {
+                format!("linear {} {} {} {}", end.x, end.y, end.z, duration_us)
+            }
+            Self::Circle {
+                center,
+                radius,
+                angular_vel_deg_per_us,
+                ..
+            } => {
+                format!(
+                    "circle {} {} {} {} {}",
+                    center.x, center.y, center.z, radius, angular_vel_deg_per_us
+                )
+            }
+        }
+    }
+}
+
 /// The kernel-usable form of a node which includes its simulation state used
 /// by control files.
 #[derive(Clone, Debug)]
@@ -79,6 +194,7 @@ impl Channel {
 pub struct Node {
     pub charge: Option<Charge>,
     pub position: ast::Position,
+    pub motion: MotionPattern,
     pub start: SystemTime,
     pub protocols: Vec<NodeProtocol>,
 }
@@ -133,9 +249,227 @@ impl Node {
                 charge: node.charge,
                 start: node.start,
                 position: node.position,
+                motion: MotionPattern::Static,
             },
             new_handles,
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pt(x: f64, y: f64, z: f64) -> Point {
+        Point { x, y, z }
+    }
+
+    fn assert_point_near(actual: Point, expected: Point, eps: f64) {
+        assert!(
+            (actual.x - expected.x).abs() < eps
+                && (actual.y - expected.y).abs() < eps
+                && (actual.z - expected.z).abs() < eps,
+            "expected ({}, {}, {}), got ({}, {}, {})",
+            expected.x,
+            expected.y,
+            expected.z,
+            actual.x,
+            actual.y,
+            actual.z,
+        );
+    }
+
+    // Static
+
+    #[test]
+    fn static_returns_none() {
+        assert!(MotionPattern::Static.current_point(0).is_none());
+        assert!(MotionPattern::Static.current_point(1_000_000).is_none());
+    }
+
+    // Velocity
+
+    #[test]
+    fn velocity_at_start_returns_initial() {
+        let m = MotionPattern::Velocity {
+            initial: pt(1.0, 2.0, 3.0),
+            velocity: pt(0.5, -0.5, 0.0),
+            start_ts: 100,
+        };
+        let p = m.current_point(100).unwrap();
+        assert_point_near(p, pt(1.0, 2.0, 3.0), 1e-12);
+    }
+
+    #[test]
+    fn velocity_linear_displacement() {
+        let m = MotionPattern::Velocity {
+            initial: pt(0.0, 0.0, 0.0),
+            velocity: pt(1.0, 2.0, 3.0),
+            start_ts: 0,
+        };
+        let p = m.current_point(10).unwrap();
+        assert_point_near(p, pt(10.0, 20.0, 30.0), 1e-12);
+    }
+
+    #[test]
+    fn velocity_before_start_saturates_to_initial() {
+        let m = MotionPattern::Velocity {
+            initial: pt(5.0, 5.0, 5.0),
+            velocity: pt(1.0, 1.0, 1.0),
+            start_ts: 100,
+        };
+        // timestep 50 < start_ts 100 → saturating_sub gives 0
+        let p = m.current_point(50).unwrap();
+        assert_point_near(p, pt(5.0, 5.0, 5.0), 1e-12);
+    }
+
+    // Linear
+
+    #[test]
+    fn linear_at_start_returns_start_point() {
+        let m = MotionPattern::Linear {
+            start: pt(0.0, 0.0, 0.0),
+            end: pt(10.0, 0.0, 0.0),
+            start_ts: 0,
+            duration_us: 100,
+        };
+        let p = m.current_point(0).unwrap();
+        assert_point_near(p, pt(0.0, 0.0, 0.0), 1e-12);
+    }
+
+    #[test]
+    fn linear_midpoint() {
+        let m = MotionPattern::Linear {
+            start: pt(0.0, 0.0, 0.0),
+            end: pt(10.0, 20.0, 0.0),
+            start_ts: 0,
+            duration_us: 100,
+        };
+        let p = m.current_point(50).unwrap();
+        assert_point_near(p, pt(5.0, 10.0, 0.0), 1e-12);
+    }
+
+    #[test]
+    fn linear_clamps_at_end() {
+        let m = MotionPattern::Linear {
+            start: pt(0.0, 0.0, 0.0),
+            end: pt(10.0, 0.0, 0.0),
+            start_ts: 0,
+            duration_us: 100,
+        };
+        // Well past duration
+        let p = m.current_point(500).unwrap();
+        assert_point_near(p, pt(10.0, 0.0, 0.0), 1e-12);
+    }
+
+    #[test]
+    fn linear_3d_interpolation() {
+        let m = MotionPattern::Linear {
+            start: pt(1.0, 2.0, 3.0),
+            end: pt(5.0, 6.0, 7.0),
+            start_ts: 10,
+            duration_us: 40,
+        };
+        // t=30 → dt=20, frac=0.5
+        let p = m.current_point(30).unwrap();
+        assert_point_near(p, pt(3.0, 4.0, 5.0), 1e-12);
+    }
+
+    // Circle
+
+    #[test]
+    fn circle_at_start_returns_initial_point() {
+        // Node at (10, 0, 0) orbiting center (0, 0, 0) → start_angle = 0°
+        let m = MotionPattern::Circle {
+            center: pt(0.0, 0.0, 0.0),
+            radius: 10.0,
+            start_angle_deg: 0.0,
+            angular_vel_deg_per_us: 1.0,
+            start_ts: 0,
+        };
+        let p = m.current_point(0).unwrap();
+        assert_point_near(p, pt(10.0, 0.0, 0.0), 1e-9);
+    }
+
+    #[test]
+    fn circle_quarter_turn() {
+        // 90° at start → at (0, r, 0)
+        let m = MotionPattern::Circle {
+            center: pt(0.0, 0.0, 0.0),
+            radius: 5.0,
+            start_angle_deg: 0.0,
+            angular_vel_deg_per_us: 1.0,
+            start_ts: 0,
+        };
+        let p = m.current_point(90).unwrap();
+        assert_point_near(p, pt(0.0, 5.0, 0.0), 1e-9);
+    }
+
+    #[test]
+    fn circle_preserves_z() {
+        let m = MotionPattern::Circle {
+            center: pt(0.0, 0.0, 42.0),
+            radius: 1.0,
+            start_angle_deg: 0.0,
+            angular_vel_deg_per_us: 1.0,
+            start_ts: 0,
+        };
+        let p = m.current_point(180).unwrap();
+        assert!((p.z - 42.0).abs() < 1e-12);
+    }
+
+    #[test]
+    fn circle_full_revolution_returns_to_start() {
+        let m = MotionPattern::Circle {
+            center: pt(0.0, 0.0, 0.0),
+            radius: 7.0,
+            start_angle_deg: 45.0,
+            angular_vel_deg_per_us: 1.0,
+            start_ts: 0,
+        };
+        let start = m.current_point(0).unwrap();
+        let after_360 = m.current_point(360).unwrap();
+        assert_point_near(after_360, start, 1e-9);
+    }
+
+    // to_spec
+
+    #[test]
+    fn static_to_spec() {
+        assert_eq!(MotionPattern::Static.to_spec(), "none");
+    }
+
+    #[test]
+    fn velocity_to_spec() {
+        let m = MotionPattern::Velocity {
+            initial: pt(0.0, 0.0, 0.0),
+            velocity: pt(1.5, -2.0, 0.0),
+            start_ts: 0,
+        };
+        assert_eq!(m.to_spec(), "velocity 1.5 -2 0");
+    }
+
+    #[test]
+    fn linear_to_spec() {
+        let m = MotionPattern::Linear {
+            start: pt(0.0, 0.0, 0.0),
+            end: pt(10.0, 20.0, 30.0),
+            start_ts: 0,
+            duration_us: 1000,
+        };
+        assert_eq!(m.to_spec(), "linear 10 20 30 1000");
+    }
+
+    #[test]
+    fn circle_to_spec() {
+        let m = MotionPattern::Circle {
+            center: pt(1.0, 2.0, 3.0),
+            radius: 5.0,
+            start_angle_deg: 0.0,
+            angular_vel_deg_per_us: 0.5,
+            start_ts: 0,
+        };
+        assert_eq!(m.to_spec(), "circle 1 2 3 5 0.5");
     }
 }
 
