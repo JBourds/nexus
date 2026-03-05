@@ -244,8 +244,8 @@ pub struct DistanceTimeVar {
 /// Calculates probability using `x` as the RSSI variable
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RssiProbExpr {
-    pub(crate) expr: String,
-    pub(crate) noise_floor_dbm: f64,
+    pub expr: String,
+    pub noise_floor_dbm: f64,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
