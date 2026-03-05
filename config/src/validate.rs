@@ -941,7 +941,7 @@ impl Node {
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
                 power_states: power_states.clone(),
-                ambient_rate: ambient_rate,
+                ambient_rate,
                 initial_state,
                 restart_threshold,
                 start,

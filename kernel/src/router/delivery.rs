@@ -74,14 +74,8 @@ impl RoutingServer {
                 &self.channels.nodes[src_node].position,
                 &self.channels.nodes[dst_node].position,
             );
-            let (becomes_active_at, expiration) = Self::message_timesteps(
-                channel,
-                sz,
-                ts_config,
-                timestep,
-                distance,
-                distance_unit,
-            );
+            let (becomes_active_at, expiration) =
+                Self::message_timesteps(channel, sz, ts_config, timestep, distance, distance_unit);
 
             let msg = AddressedMsg {
                 handle_ptr,

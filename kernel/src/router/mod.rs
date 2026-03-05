@@ -234,9 +234,10 @@ impl RoutingServer {
             ["energy_state"] => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
                 if let Some(energy) = &mut self.channels.nodes[node_index].energy
-                    && energy.power_states_nj.contains_key(&state) {
-                        energy.current_state = Some(state);
-                    }
+                    && energy.power_states_nj.contains_key(&state)
+                {
+                    energy.current_state = Some(state);
+                }
                 Ok(())
             }
             ["pos", "dx" | "dy" | "dz"] => self.write_pos_delta(node_index, msg),
@@ -274,9 +275,10 @@ impl RoutingServer {
             .map(|e| e.unit.to_nj(e.quantity))
             .sum();
         if tx_cost_nj > 0
-            && let Some(energy) = &mut self.channels.nodes[src_node].energy {
-                energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
-            }
+            && let Some(energy) = &mut self.channels.nodes[src_node].energy
+        {
+            energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
+        }
 
         self.queue_message(src_node, channel_handle, msg.data)
     }
@@ -456,9 +458,10 @@ impl RoutingServer {
                     .map(|e| e.unit.to_nj(e.quantity))
                     .sum();
                 if rx_cost_nj > 0
-                    && let Some(energy) = &mut self.channels.nodes[dst_node].energy {
-                        energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
-                    }
+                    && let Some(energy) = &mut self.channels.nodes[dst_node].energy
+                {
+                    energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
+                }
             } else {
                 warn!("Message dropped due to full queue!");
             }

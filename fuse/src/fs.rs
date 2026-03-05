@@ -74,8 +74,6 @@ pub struct NexusFs {
 }
 
 impl NexusFs {
-    const EMPTY: Vec<u8> = Vec::new();
-
     pub fn new(root: PathBuf, pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>) -> Self {
         Self {
             root,

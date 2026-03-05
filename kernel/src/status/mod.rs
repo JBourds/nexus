@@ -50,6 +50,7 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
             .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
     }
 
+    #[allow(dead_code)]
     pub fn unfreeze_node(&mut self, name: String) -> Result<(), KernelError> {
         self.tx
             .send(KernelMessage::UnfreezeNode(name))
