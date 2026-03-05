@@ -235,14 +235,14 @@ entirely in nanojoules with integer arithmetic.
 
 ```rust
 pub struct EnergyState {
-    /// Current charge in nanojoules. Can go negative (node is dead when <= 0).
-    pub charge_nj: i64,
+    /// Current charge in nanojoules. Saturates at 0 (node dead when == 0).
+    pub charge_nj: u64,
     /// Maximum capacity in nanojoules.
     pub max_nj: u64,
-    /// Per-timestep ambient generation in nJ (positive = generates energy).
-    pub ambient_nj_per_ts: i64,
-    /// Per-timestep drain in nJ for each named power state (positive = drains).
-    pub power_states_nj: HashMap<String, i64>,
+    /// Per-timestep ambient generation in nJ.
+    pub ambient_nj_per_ts: u64,
+    /// Per-timestep drain in nJ for each named power state.
+    pub power_states_nj: HashMap<String, u64>,
     /// Currently active power state name.
     pub current_state: Option<String>,
     /// Charge level in nJ at which a dead node is restarted.
@@ -252,10 +252,8 @@ pub struct EnergyState {
 }
 ```
 
-`charge_nj` is a signed integer. When a node drains past zero, the value
-goes negative — there is no clamping at death. This allows the accounting to
-remain simple and avoids special-casing the exact timestep where depletion
-occurs.
+`charge_nj` is an unsigned integer. Drain uses `saturating_sub` so charge
+never goes below zero. Death fires when charge hits exactly 0.
 
 ### The `nj_per_timestep` Formula
 
@@ -305,13 +303,13 @@ for each node with an EnergyState:
 
   2. Apply power state drain (only if the node is alive)
          drain = power_states_nj[current_state]  (0 if no state is active)
-         charge_nj -= drain
+         charge_nj = saturating_sub(charge_nj, drain)
 
   3. Cap charge at maximum capacity
          charge_nj = min(charge_nj, max_nj)
 
   4. Detect death transition (alive → dead)
-         if !was_dead && charge_nj <= 0:
+         if !was_dead && charge_nj == 0:  (saturating_sub ensures no underflow)
              is_dead = true
              push node index to newly_depleted
 
@@ -334,12 +332,18 @@ After `step()`, the main event loop drains `newly_depleted` and
 corresponding cgroups:
 
 ```rust
-let RouterMessage::EnergyEvents { depleted, recovered } = routing_server.poll(timestep)?;
+let RouterMessage::EnergyEvents { depleted, recovered } = routing_server.poll(timestep)? else {
+    continue;
+};
 for name in depleted {
     status_server.freeze_node(name)?;
 }
 for name in recovered {
-    status_server.unfreeze_node(name)?;
+    if let StatusMessage::Respawned { pid_changes, .. } = status_server.respawn_node(name)? {
+        if !pid_changes.is_empty() {
+            routing_server.remap_pids(pid_changes)?;
+        }
+    }
 }
 ```
 
@@ -361,15 +365,15 @@ channel file, before the message is queued for delivery:
 
 ```rust
 // In write_channel_file():
-let tx_cost_nj: i64 = node.protocols.iter()
+let tx_cost_nj: u64 = node.protocols.iter()
     .filter(|p| p.publishers.contains(&channel_handle))
     .filter_map(|p| p.channel_energy.get(&channel_handle))
     .filter_map(|ce| ce.tx.as_ref())
-    .map(|e| e.unit.to_nj(e.quantity) as i64)
+    .map(|e| e.unit.to_nj(e.quantity))
     .sum();
 if tx_cost_nj > 0 {
     if let Some(energy) = &mut node.energy {
-        energy.charge_nj -= tx_cost_nj;
+        energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
     }
 }
 ```
@@ -389,15 +393,15 @@ placed into that node's mailbox during delivery:
 
 ```rust
 // In step(), during message delivery:
-let rx_cost_nj: i64 = dst_node.protocols.iter()
+let rx_cost_nj: u64 = dst_node.protocols.iter()
     .filter(|p| p.subscribers.contains(&channel_handle))
     .filter_map(|p| p.channel_energy.get(&channel_handle))
     .filter_map(|ce| ce.rx.as_ref())
-    .map(|e| e.unit.to_nj(e.quantity) as i64)
+    .map(|e| e.unit.to_nj(e.quantity))
     .sum();
 if rx_cost_nj > 0 {
     if let Some(energy) = &mut node.energy {
-        energy.charge_nj -= rx_cost_nj;
+        energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
     }
 }
 ```
@@ -425,9 +429,8 @@ with open("ctl.energy_left") as f:
     charge_nj = int(f.read())
 ```
 
-Because `charge_nj` is a signed integer internally, the value can be negative
-when the node is dead but has not yet been frozen (the freeze happens
-asynchronously at the start of the next main loop iteration).
+Because drain uses `saturating_sub`, the value will be exactly `0` when the
+node is dead.
 
 ### `ctl.energy_state`
 
@@ -464,7 +467,7 @@ config will not crash the simulation.
 
 ### Death
 
-When a node's `charge_nj` drops to zero or below, `is_dead` is set to `true`
+When a node's `charge_nj` reaches zero, `is_dead` is set to `true`
 and the node's index is added to `newly_depleted`. At the end of the poll,
 `newly_depleted` is drained and translated to node names, which are forwarded
 to the `StatusServer`. The status server calls `CgroupController::freeze_node`,
@@ -474,23 +477,30 @@ which writes `"1"` to the node's `cgroup.freeze` file:
 /sys/fs/cgroup/<nexus-root>/nodes_unlimited/<node-name>/cgroup.freeze
 ```
 
-The Linux kernel then freezes all processes in that cgroup- the protocol
+The Linux kernel then freezes all processes in that cgroup — the protocol
 processes stop executing at their next scheduling point. From the protocol's
 perspective, time simply stops: no reads return, no code runs, no timers fire.
 
-### Restart
+### Restart (Kill + Respawn)
 
 If `restart_threshold_nj` is set, the kernel checks on each timestep whether a
 dead node's charge has recovered to or above the threshold. When it has,
 `is_dead` is set to `false`, the node index goes into `newly_recovered`, and
-the status server calls `CgroupController::unfreeze_node`, writing `"0"` to
-`cgroup.freeze`.
+the main loop initiates a **kill and respawn** sequence:
 
-The protocol process resumes exactly where it left off. The simulated clock
-does not advance during the frozen period (from the process's perspective),
-but simulated timesteps do continue to pass. A protocol that reads
-`ctl.elapsed.ms` immediately after restart will see a jump corresponding to
-the dead period.
+1. The status server unfreezes the node's cgroup and kills all its protocol
+   processes, then spawns fresh instances. Each respawn produces a
+   `(old_pid, new_pid)` pair.
+2. The router receives the PID pairs via `RemapPids`, updates its handle
+   table and `fuse_mapping`, and clears the mailboxes for affected handles
+   (a real device losing power loses buffered radio frames).
+3. The PID pairs are pushed to a shared queue that the FUSE filesystem drains
+   lazily, migrating buffer entries from old PIDs to new PIDs.
+
+The respawned process starts from scratch — all RAM/register state is lost,
+just like a real embedded device losing power. This is more realistic than
+the previous freeze/unfreeze approach, which preserved process state and
+could mask bugs that would appear on real hardware.
 
 ### Permanent Death
 
@@ -504,9 +514,9 @@ and `is_dead` never clears.
 | Condition | `is_dead` | Process state | Ambient applied | Drain applied |
 |-----------|-----------|---------------|-----------------|---------------|
 | Normal operation | `false` | Running | Yes | Yes |
-| Charge <= 0, no threshold | `true` | Frozen | Yes | No |
-| Charge <= 0, threshold not yet reached | `true` | Frozen | Yes | No |
-| Charge >= restart_threshold | `false` | Unfrozen (recovering) | Yes | Yes |
+| Charge == 0, no threshold | `true` | Frozen | Yes | No |
+| Charge == 0, threshold not yet reached | `true` | Frozen | Yes | No |
+| Charge >= restart_threshold | `false` | Killed + respawned | Yes | Yes |
 
 ---
 
@@ -527,7 +537,7 @@ pub enum LogRecord {
     Battery {
         timestep: u64,
         node: NodeHandle,
-        charge_nj: i64,
+        charge_nj: u64,
     },
 }
 ```
@@ -566,7 +576,7 @@ happen when a protocol process makes a filesystem call.
   │  deliver queued messages:                             │  │
   │    for each message due this timestep:                │  │
   │      push to subscriber mailbox                       │  │
-  │      charge_nj -= rx_cost_nj         ← RX cost        │  │
+  │      charge_nj = saturating_sub(rx)   ← RX cost       │  │
   └───────────────────────────────────────────────────────┼──┘
                                                           │
   ┌───────────────────────────────────────────────────────┼──┐
@@ -576,7 +586,8 @@ happen when a protocol process makes a filesystem call.
   │    for each depleted node:                               │
   │      status_server.freeze_node()    ← cgroup.freeze=1    │
   │    for each recovered node:                              │
-  │      status_server.unfreeze_node()  ← cgroup.freeze=0    │
+  │      status_server.respawn_node()   ← kill + respawn     │
+  │      routing_server.remap_pids()    ← update PID maps    │
   └──────────────────────────────────────────────────────────┘
 
   ┌──────────────────────────────────────────────────────────┐
@@ -604,14 +615,15 @@ Key observations from the diagram:
 
 ## Test Coverage
 
-23 tests in `kernel/src/router/energy_tests.rs` cover the full energy
-accounting path. They operate by constructing a `RoutingServer` directly (no
-FUSE filesystem, no real processes) and calling `step()` or
-`write_channel_file()` directly.
+29 tests in `kernel/src/router/energy_tests.rs` and 4 tests in `fuse/src/fs.rs`
+cover the full energy accounting and PID remapping paths. Router tests operate
+by constructing a `RoutingServer` directly (no FUSE filesystem, no real
+processes) and calling `step()` or `write_channel_file()` directly. FUSE tests
+construct a `NexusFs` and exercise buffer migration via the shared remap queue.
 
 The tests are grouped by concern:
 
-**Core per-timestep accounting:**
+**Core per-timestep accounting (8):**
 
 - `test_ambient_generation` — ambient adds to charge each step
 - `test_power_state_drain` — active state drains the correct amount
@@ -622,32 +634,48 @@ The tests are grouped by concern:
 - `test_no_battery_node` — node with `energy: None` does not panic
 - `test_two_nodes_independent` — two nodes with different energy states do not interfere
 
-**Death and restart lifecycle:**
+**Death and restart lifecycle (6):**
 
-- `test_node_death` — charge <= 0 sets `is_dead` and populates `newly_depleted`
+- `test_node_death` — charge == 0 sets `is_dead` and populates `newly_depleted`
 - `test_newly_depleted_populated` — `newly_depleted` is not auto-drained by `step()`
 - `test_dead_node_ambient_only` — dead node receives ambient but no drain
 - `test_node_restart_at_threshold` — node revives when charge crosses threshold
 - `test_permanent_death_without_threshold` — no threshold means no restart
 - `test_full_lifecycle` — alive → dead → solar charging → restart → alive again
 
-**TX/RX cost deduction:**
+**TX/RX cost deduction (2):**
 
-- `test_tx_energy_deduction` — 100 µJ TX cost deducted (= 100,000 nJ)
+- `test_tx_energy_deduction` — 100 µJ TX cost deducted (= 100,000 nJ); saturates to 0 if cost exceeds charge
 - `test_rx_energy_deduction` — 50 µJ RX cost deducted on message delivery
 
-**Control file state transitions:**
+**Control file state transitions (2):**
 
 - `test_energy_state_transition` — writing `"active"` to `ctl.energy_state` changes drain rate
 - `test_unknown_energy_state_ignored` — writing an unknown name leaves state unchanged
 
-**Config conversion (`EnergyState::from_node`):**
+**PID remapping (6):**
+
+- `test_pid_remap_updates_handles` — `apply_pid_remaps` rewrites PID in handle table
+- `test_pid_remap_rebuilds_fuse_mapping` — `fuse_mapping` keys updated to new PIDs
+- `test_pid_remap_clears_mailboxes` — mailboxes for remapped handles are cleared (buffered frames lost on power loss)
+- `test_pid_remap_pushes_to_shared_queue` — remap pairs pushed to the shared `pending_remaps` queue for FUSE
+- `test_pid_remap_no_match` — remap with no matching PID is a no-op
+- `test_pid_remap_multiple_handles` — multiple handles for the same node all get remapped
+
+**Config conversion (`EnergyState::from_node`) (3):**
 
 - `test_from_node_basic` — µJ capacity, mW drain, mW ambient, 0.5 restart threshold
 - `test_from_node_no_charge_returns_none` — node without `charge` block produces `None`
 - `test_from_node_zero_charge_is_dead` — initial charge of 0 sets `is_dead = true`
 
-**Unit conversion (`nj_per_timestep`):**
+**Unit conversion (`nj_per_timestep`) (2):**
 
 - `test_nj_per_timestep_milliwatt_per_second` — 100 mW at 1 ms timestep = 100,000 nJ/ts
 - `test_nj_per_timestep_watt_per_millisecond` — 1 W at 1 ms / ms rate = 10⁹ nJ/ts
+
+**FUSE buffer migration (4, in `fuse/src/fs.rs`):**
+
+- `test_apply_pending_remaps_migrates_buffers` — buffer entries migrate from old PID to new PID
+- `test_apply_pending_remaps_empty_queue` — empty remap queue is a no-op
+- `test_apply_pending_remaps_no_matching_pid` — remap for non-existent PID leaves buffers untouched
+- `test_apply_pending_remaps_multiple_channels` — all channels for a PID are migrated together
