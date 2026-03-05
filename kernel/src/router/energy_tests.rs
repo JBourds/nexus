@@ -32,6 +32,7 @@ mod tests {
         types::Node {
             energy,
             position: Position::default(),
+            motion: types::MotionPattern::Static,
             start: SystemTime::UNIX_EPOCH,
             protocols: vec![],
         }
@@ -47,6 +48,7 @@ mod tests {
         types::Node {
             energy,
             position: Position::default(),
+            motion: types::MotionPattern::Static,
             start: SystemTime::UNIX_EPOCH,
             protocols: vec![types::NodeProtocol {
                 root: PathBuf::from("/tmp"),

@@ -27,16 +27,31 @@ use std::{collections::HashMap, path::PathBuf};
 static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
-pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
+pub const CONTROL_FILES: [(&str, ChannelMode); 18] = [
+    // Time control: read/write current virtual time per node
     ("ctl.time.us", ChannelMode::ReadWrite),
     ("ctl.time.ms", ChannelMode::ReadWrite),
     ("ctl.time.s", ChannelMode::ReadWrite),
+    // Elapsed time since simulation start (read-only)
     ("ctl.elapsed.us", ChannelMode::ReadOnly),
     ("ctl.elapsed.ms", ChannelMode::ReadOnly),
     ("ctl.elapsed.s", ChannelMode::ReadOnly),
+    // Energy (stubs, not yet implemented)
     ("ctl.energy_left", ChannelMode::ReadOnly),
     ("ctl.energy_state", ChannelMode::ReadWrite),
-    ("ctl.position", ChannelMode::ReadWrite),
+    // Absolute position and orientation (read/write in node's distance unit / degrees)
+    ("ctl.pos.x", ChannelMode::ReadWrite),
+    ("ctl.pos.y", ChannelMode::ReadWrite),
+    ("ctl.pos.z", ChannelMode::ReadWrite),
+    ("ctl.pos.az", ChannelMode::ReadWrite),
+    ("ctl.pos.el", ChannelMode::ReadWrite),
+    ("ctl.pos.roll", ChannelMode::ReadWrite),
+    // Relative position delta (write-only; adds to current position and clears motion pattern)
+    ("ctl.pos.dx", ChannelMode::WriteOnly),
+    ("ctl.pos.dy", ChannelMode::WriteOnly),
+    ("ctl.pos.dz", ChannelMode::WriteOnly),
+    // Motion pattern (read/write; formats: none | velocity | linear | circle)
+    ("ctl.pos.motion", ChannelMode::ReadWrite),
 ];
 
 pub fn control_files() -> Vec<String> {

@@ -13,6 +13,10 @@ pub enum RouterError {
     InvalidString(Vec<u8>),
     #[error("Invalid integer format: {0}")]
     InvalidInteger(String),
+    #[error("Invalid float from bytes: {0:#?}")]
+    InvalidFloat(Vec<u8>),
+    #[error("Invalid motion pattern: {0}")]
+    InvalidMotionPattern(String),
     #[error("Error sending fuse message: {0:#?}")]
     FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]

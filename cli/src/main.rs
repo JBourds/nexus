@@ -147,17 +147,19 @@ fn setup_logging(root: &Path, cmd: &RunCmd) -> Result<(PathBuf, PathBuf)> {
         .with(
             fmt::layer()
                 .with_filter(filter::filter_fn(|metadata| {
-                    !matches!(metadata.target(), "tx" | "rx")
+                    !matches!(metadata.target(), "tx" | "rx" | "movement")
                 }))
                 .with_filter(EnvFilter::from_default_env()),
         )
         .with(
-            kernel::log::BinaryLogLayer::new(tx_logfile)
-                .with_filter(filter::filter_fn(|metadata| metadata.target() == "tx")),
+            kernel::log::BinaryLogLayer::new(tx_logfile).with_filter(filter::filter_fn(
+                |metadata| matches!(metadata.target(), "tx" | "movement"),
+            )),
         )
         .with(
-            kernel::log::BinaryLogLayer::new(rx_logfile)
-                .with_filter(filter::filter_fn(|metadata| metadata.target() == "rx")),
+            kernel::log::BinaryLogLayer::new(rx_logfile).with_filter(filter::filter_fn(
+                |metadata| matches!(metadata.target(), "rx" | "movement"),
+            )),
         )
         .init();
     Ok((tx, rx))
