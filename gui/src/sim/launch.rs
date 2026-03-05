@@ -69,18 +69,21 @@ pub fn launch_simulation(
 
     let (gui_tx, gui_rx) = crossbeam_channel::unbounded();
     let abort = Arc::new(AtomicBool::new(false));
+    let pause = Arc::new(AtomicBool::new(false));
 
     let sinks = ensure_global_subscriber();
 
     let sim_clone = sim.clone();
     let root_clone = root.clone();
     let gui_tx_clone = gui_tx.clone();
+    let abort_clone = abort.clone();
+    let pause_clone = pause.clone();
 
     let handle = std::thread::Builder::new()
         .name("nexus-sim".into())
         .spawn(move || {
             if let Err(e) =
-                run_simulation(sim_clone, root_clone, fs_root, gui_tx_clone.clone(), sinks.clone())
+                run_simulation(sim_clone, root_clone, fs_root, gui_tx_clone.clone(), sinks.clone(), abort_clone, pause_clone)
             {
                 let _ = gui_tx_clone.send(GuiEvent::SimulationError(format!("{e:#}")));
             } else {
@@ -92,7 +95,7 @@ pub fn launch_simulation(
         })
         .context("failed to spawn simulation thread")?;
 
-    Ok((SimController::new(gui_rx, abort, handle), root))
+    Ok((SimController::new(gui_rx, abort, pause, handle), root))
 }
 
 fn run_simulation(
@@ -101,6 +104,8 @@ fn run_simulation(
     fs_root: Option<PathBuf>,
     gui_tx: Sender<GuiEvent>,
     sinks: SimSinks,
+    abort: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
 ) -> Result<()> {
     let trace_path = root.join("trace.nxs");
     let header = TraceHeader {
@@ -123,10 +128,10 @@ fn run_simulation(
     // Install sinks for this simulation run.
     sinks.install(gui_tx, writer);
 
-    run_inner(sim, fs_root)
+    run_inner(sim, fs_root, abort, pause)
 }
 
-fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>) -> Result<()> {
+fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBool>, pause: Arc<AtomicBool>) -> Result<()> {
     let _ = ctrlc::set_handler(|| {});
 
     runner::build(&sim)?;
@@ -143,7 +148,7 @@ fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>) -> Result<()> {
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new(sim, runc, file_handles, rx, tx)?;
+    let kernel = Kernel::new_with_flags(sim, runc, file_handles, rx, tx, Some(abort), Some(pause))?;
     let _protocol_handles = kernel.run(RunCmd::Simulate)?;
 
     drop(sess);

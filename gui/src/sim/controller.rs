@@ -11,14 +11,21 @@ use crate::sim::bridge::GuiEvent;
 pub struct SimController {
     pub rx: Receiver<GuiEvent>,
     abort: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
     handle: Option<JoinHandle<()>>,
 }
 
 impl SimController {
-    pub fn new(rx: Receiver<GuiEvent>, abort: Arc<AtomicBool>, handle: JoinHandle<()>) -> Self {
+    pub fn new(
+        rx: Receiver<GuiEvent>,
+        abort: Arc<AtomicBool>,
+        pause: Arc<AtomicBool>,
+        handle: JoinHandle<()>,
+    ) -> Self {
         Self {
             rx,
             abort,
+            pause,
             handle: Some(handle),
         }
     }
@@ -31,6 +38,11 @@ impl SimController {
     /// Signal the simulation to stop early.
     pub fn stop(&self) {
         self.abort.store(true, Ordering::Relaxed);
+    }
+
+    /// Pause or resume the simulation kernel.
+    pub fn set_paused(&self, paused: bool) {
+        self.pause.store(paused, Ordering::Relaxed);
     }
 
     /// Check if the simulation thread has finished.

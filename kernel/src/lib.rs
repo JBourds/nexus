@@ -15,7 +15,11 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+        mpsc::{self, Receiver},
+    },
     time::{Duration, SystemTime},
 };
 
@@ -69,6 +73,8 @@ pub struct Kernel {
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
+    abort: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
 }
 
 impl Kernel {
@@ -87,6 +93,19 @@ impl Kernel {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
+    ) -> Result<Self, KernelError> {
+        Self::new_with_flags(sim, runc, file_handles, rx, tx, None, None)
+    }
+
+    /// Create the kernel instance with optional abort and pause flags.
+    pub fn new_with_flags(
+        sim: ast::Simulation,
+        runc: RunController,
+        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+        rx: mpsc::Receiver<fuse::FsMessage>,
+        tx: mpsc::Sender<fuse::KernelMessage>,
+        abort: Option<Arc<AtomicBool>>,
+        pause: Option<Arc<AtomicBool>>,
     ) -> Result<Self, KernelError> {
         // CRUCIAL: Sort nodes by their name lexicographically since we are
         // not guaranteed a consistent ordering by hash maps
@@ -110,6 +129,8 @@ impl Kernel {
             runc,
             rx,
             tx,
+            abort,
+            pause,
         })
     }
     #[instrument(skip_all)]
@@ -126,6 +147,8 @@ impl Kernel {
             runc,
             tx,
             rx,
+            abort,
+            pause,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
@@ -140,6 +163,16 @@ impl Kernel {
         );
 
         'outer: for timestep in 0..self.timestep.count.into() {
+            if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
+                break;
+            }
+            // Spin-wait while paused, checking abort each iteration.
+            while pause.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {
+                if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
+                    break 'outer;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
                 if let Some(events) = dequeue(&mut event_queue, timestep) {
