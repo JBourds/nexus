@@ -29,6 +29,7 @@ use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
 mod timectl;
+mod energy_tests;
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
