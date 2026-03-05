@@ -17,6 +17,31 @@ impl Default for GridView {
 }
 
 impl GridView {
+    /// Adjust zoom and offset so all nodes are visible with some margin.
+    pub fn fit_to_nodes(&mut self, nodes: &[crate::state::NodeState], canvas_size: Vec2) {
+        if nodes.is_empty() {
+            return;
+        }
+        let mut min_x = f64::MAX;
+        let mut max_x = f64::MIN;
+        let mut min_y = f64::MAX;
+        let mut max_y = f64::MIN;
+        for n in nodes {
+            min_x = min_x.min(n.x);
+            max_x = max_x.max(n.x);
+            min_y = min_y.min(n.y);
+            max_y = max_y.max(n.y);
+        }
+        let world_w = (max_x - min_x).max(1.0);
+        let world_h = (max_y - min_y).max(1.0);
+        let padding = 1.2; // 20% margin
+        self.zoom = ((canvas_size.x as f64 / (world_w * padding))
+            .min(canvas_size.y as f64 / (world_h * padding))) as f32;
+        let cx = (min_x + max_x) / 2.0;
+        let cy = (min_y + max_y) / 2.0;
+        self.offset = Vec2::new(-(cx as f32) * self.zoom, (cy as f32) * self.zoom);
+    }
+
     pub fn world_to_screen(&self, world: Pos2, canvas_rect: Rect) -> Pos2 {
         let center = canvas_rect.center();
         Pos2::new(

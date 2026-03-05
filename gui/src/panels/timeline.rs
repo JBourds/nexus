@@ -22,22 +22,23 @@ pub fn show_timeline(
         step_backward: false,
     };
 
+    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
     ui.horizontal(|ui| {
         // Playback controls
-        if ui.button("|<").clicked() {
+        if ui.button("|<").on_hover_text("Jump to start").clicked() {
             action.seek_to = Some(0);
         }
-        if ui.button("<").clicked() {
+        if ui.button("<").on_hover_text("Step backward").clicked() {
             action.step_backward = true;
         }
         let play_label = if *playing { "||" } else { ">" };
-        if ui.button(play_label).clicked() {
+        if ui.button(play_label).on_hover_text(if *playing { "Pause" } else { "Play" }).clicked() {
             action.toggle_play = true;
         }
-        if ui.button(">").clicked() {
+        if ui.button(">").on_hover_text("Step forward").clicked() {
             action.step_forward = true;
         }
-        if ui.button(">|").clicked() {
+        if ui.button(">|").on_hover_text("Jump to end").clicked() {
             action.seek_to = Some(total_timesteps.saturating_sub(1));
         }
 
@@ -69,6 +70,7 @@ pub fn show_timeline(
             ui.label(format!("t={} / {}", current_timestep, total_timesteps));
         });
     });
+    }); // Frame
 
     action
 }

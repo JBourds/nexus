@@ -4,6 +4,7 @@ use crate::state::{MessageEntry, MessageKind};
 
 /// Show the message list panel.
 pub fn show_messages(ui: &mut Ui, messages: &[MessageEntry], max_display: usize) {
+    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
     ui.heading("Messages");
     ui.separator();
 
@@ -34,13 +35,23 @@ pub fn show_messages(ui: &mut Ui, messages: &[MessageEntry], max_display: usize)
                     ui.label(format!("-> {dst}"));
                 }
                 ui.label(&msg.channel);
+                if !msg.data_raw.is_empty() {
+                    if ui.small_button("\u{2398}").on_hover_text("Copy to clipboard").clicked() {
+                        ui.ctx().copy_text(msg.data_preview.clone());
+                    }
+                }
             });
 
             if !msg.data_preview.is_empty() {
                 ui.indent(msg.timestep, |ui| {
-                    ui.small(&msg.data_preview);
+                    ui.label(
+                        egui::RichText::new(&msg.data_preview)
+                            .monospace()
+                            .small(),
+                    );
                 });
             }
         }
     });
+    }); // Frame
 }

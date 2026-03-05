@@ -3,26 +3,31 @@ use egui::{Color32, Pos2, Rect, Stroke, Ui};
 use crate::render::grid::GridView;
 use crate::state::NodeState;
 
-const NODE_RADIUS: f32 = 12.0;
+const NODE_RADIUS: f32 = 4.0;
 
-/// Draw a single node on the canvas, returning true if it was clicked.
+/// Compute the display radius of a node at the given zoom level.
+pub fn node_radius(zoom: f32) -> f32 {
+    NODE_RADIUS * zoom.sqrt().clamp(0.3, 3.0)
+}
+
+/// Draw a single node on the canvas.
 pub fn draw_node(
     ui: &mut Ui,
     canvas_rect: Rect,
     grid: &GridView,
     node: &NodeState,
     selected: bool,
-) -> bool {
+) {
     let world_pos = Pos2::new(node.x as f32, node.y as f32);
     let screen_pos = grid.world_to_screen(world_pos, canvas_rect);
 
     if !canvas_rect.contains(screen_pos) {
-        return false;
+        return;
     }
 
     let painter = ui.painter_at(canvas_rect);
     let color = charge_color(node.charge_ratio);
-    let radius = NODE_RADIUS * (grid.zoom.sqrt().clamp(0.3, 3.0));
+    let radius = node_radius(grid.zoom);
 
     // Node circle
     painter.circle_filled(screen_pos, radius, color);
@@ -40,14 +45,6 @@ pub fn draw_node(
         egui::FontId::proportional(11.0),
         Color32::from_gray(220),
     );
-
-    // Click detection
-    let node_rect = Rect::from_center_size(screen_pos, egui::Vec2::splat(radius * 2.0));
-    ui.ctx().input(|i| {
-        i.pointer
-            .press_origin()
-            .is_some_and(|p| node_rect.contains(p))
-    }) && ui.ctx().input(|i| i.pointer.any_click())
 }
 
 /// Map charge ratio to a color: green (100%) → yellow (50%) → red (0%).

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use eframe::App;
 use egui::Context;
 
@@ -24,7 +26,16 @@ impl App for NexusApp {
     fn update(&mut self, ctx: &Context, _frame: &mut eframe::Frame) {
         // Toolbar
         egui::TopBottomPanel::top("toolbar").show(ctx, |ui| {
-            let action = toolbar::show_toolbar(ui, &self.mode);
+            let sim_finished = match &self.mode {
+                AppMode::LiveSimulation(state) => state.controller.is_finished(),
+                _ => false,
+            };
+            let panels = match &self.mode {
+                AppMode::LiveSimulation(state) => Some(&state.panels),
+                AppMode::Replay(state) => Some(&state.panels),
+                _ => None,
+            };
+            let action = toolbar::show_toolbar(ui, &self.mode, sim_finished, panels);
             match action {
                 toolbar::ToolbarAction::GoHome => {
                     self.mode = AppMode::Home;
@@ -41,6 +52,32 @@ impl App for NexusApp {
                 toolbar::ToolbarAction::RunSimulation => {
                     self.run_simulation();
                 }
+                toolbar::ToolbarAction::StopSimulation => {
+                    if let AppMode::LiveSimulation(state) = &self.mode {
+                        state.controller.stop();
+                    }
+                }
+                toolbar::ToolbarAction::RerunSimulation => {
+                    self.rerun_simulation();
+                }
+                toolbar::ToolbarAction::ToggleInspector => match &mut self.mode {
+                    AppMode::LiveSimulation(state) => {
+                        state.panels.inspector = !state.panels.inspector;
+                    }
+                    AppMode::Replay(state) => {
+                        state.panels.inspector = !state.panels.inspector;
+                    }
+                    _ => {}
+                },
+                toolbar::ToolbarAction::ToggleMessages => match &mut self.mode {
+                    AppMode::LiveSimulation(state) => {
+                        state.panels.messages = !state.panels.messages;
+                    }
+                    AppMode::Replay(state) => {
+                        state.panels.messages = !state.panels.messages;
+                    }
+                    _ => {}
+                },
                 toolbar::ToolbarAction::None => {}
             }
         });
@@ -91,9 +128,13 @@ impl NexusApp {
 
             // Remaining: grid view with nodes
             let nodes = nodes_from_sim(&state.sim);
-            if let Some(clicked) =
-                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node)
-            {
+            if state.needs_fit {
+                state.grid.fit_to_nodes(&nodes, ui.available_size());
+                state.needs_fit = false;
+            }
+            let (clicked, _hovered) =
+                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node);
+            if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
         });
@@ -104,45 +145,63 @@ impl NexusApp {
             return;
         };
 
-        // Process events from simulation
-        for event in state.controller.poll_events() {
-            process_gui_event(
-                event,
-                &mut state.current_timestep,
-                &mut state.messages,
-                &mut state.node_states,
-                &state.sim,
-            );
+        // Process events from simulation (only when not paused)
+        if !state.paused {
+            for event in state.controller.poll_events() {
+                process_gui_event(
+                    event,
+                    &mut state.current_timestep,
+                    &mut state.messages,
+                    &mut state.node_states,
+                    &state.sim,
+                );
+            }
         }
 
-        // Inspector panel
-        egui::SidePanel::left("inspector")
-            .default_width(200.0)
-            .show(ctx, |ui| {
-                inspector::show_inspector(ui, &state.sim, &state.node_states, &state.selected_node);
-            });
+        // Inspector panel (only rendered when visible — no panel at all when hidden)
+        if state.panels.inspector {
+            egui::SidePanel::left("inspector")
+                .default_width(200.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    inspector::show_inspector(
+                        ui,
+                        &state.sim,
+                        &state.node_states,
+                        &state.selected_node,
+                        &mut state.expanded_nodes,
+                    );
+                });
+        }
 
-        // Messages panel
-        egui::SidePanel::right("messages")
-            .default_width(250.0)
-            .show(ctx, |ui| {
-                messages::show_messages(ui, &state.messages, 200);
-            });
+        // Messages panel (only rendered when visible)
+        if state.panels.messages {
+            egui::SidePanel::right("messages")
+                .default_width(250.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    messages::show_messages(ui, &state.messages, 200);
+                });
+        }
 
         // Timeline at bottom
         let total = state.sim.params.timestep.count.get();
         let finished = state.controller.is_finished();
         let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
-            let mut playing = true;
+            let mut playing = !state.paused;
             let mut speed = 1.0;
-            timeline::show_timeline(
+            let action = timeline::show_timeline(
                 ui,
                 &mut state.current_timestep,
                 total,
                 &mut playing,
                 &mut speed,
             );
+            if action.toggle_play {
+                state.paused = !state.paused;
+                state.controller.set_paused(state.paused);
+            }
             if finished {
                 ui.horizontal(|ui| {
                     ui.label("Simulation complete.");
@@ -155,13 +214,41 @@ impl NexusApp {
 
         // Central grid
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(clicked) = grid::show_grid_panel(
+            if state.needs_fit {
+                state.grid.fit_to_nodes(&state.node_states, ui.available_size());
+                state.needs_fit = false;
+            }
+            let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
-            ) {
-                state.selected_node = Some(clicked);
+            );
+            if let Some(clicked) = clicked {
+                let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                state.expanded_nodes.clear();
+                if already_selected {
+                    state.selected_node = None;
+                } else {
+                    state.expanded_nodes.insert(clicked.clone());
+                    state.selected_node = Some(clicked);
+                }
+            }
+            state.hovered_node = hovered;
+            if let Some(ref name) = state.hovered_node {
+                if let Some(n) = state.node_states.iter().find(|n| &n.name == name) {
+                    egui::containers::popup::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                        ui.id().with("node_tip"),
+                        |ui| {
+                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                            if let Some(r) = n.charge_ratio {
+                                ui.label(format!("Charge: {:.0}%", r * 100.0));
+                            }
+                        },
+                    );
+                }
             }
         });
 
@@ -194,7 +281,12 @@ impl NexusApp {
                 playing: false,
                 playback_speed: 1.0,
                 messages: Vec::new(),
-                node_states: initial_states,
+                node_states: initial_states.clone(),
+                initial_states,
+                needs_fit: true,
+                expanded_nodes: HashSet::new(),
+                hovered_node: None,
+                panels: PanelVisibility::default(),
             });
         }
     }
@@ -204,15 +296,12 @@ impl NexusApp {
             return;
         };
 
-        // Advance timestep if playing
+        // Advance timestep if playing — append messages (don't replace)
         if state.playing && state.current_timestep < state.total_timesteps.saturating_sub(1) {
             state.current_timestep += 1;
-            // Reconstruct state at current timestep
-            let initial = nodes_from_sim(&state.sim);
             state.node_states = state
                 .controller
-                .reconstruct_states(state.current_timestep, &initial);
-            // Gather messages for current timestep
+                .reconstruct_states(state.current_timestep, &state.initial_states);
             gather_messages_at(
                 &state.controller,
                 state.current_timestep,
@@ -221,19 +310,31 @@ impl NexusApp {
             );
         }
 
-        // Inspector panel
-        egui::SidePanel::left("inspector")
-            .default_width(200.0)
-            .show(ctx, |ui| {
-                inspector::show_inspector(ui, &state.sim, &state.node_states, &state.selected_node);
-            });
+        // Inspector panel (only rendered when visible)
+        if state.panels.inspector {
+            egui::SidePanel::left("inspector")
+                .default_width(200.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    inspector::show_inspector(
+                        ui,
+                        &state.sim,
+                        &state.node_states,
+                        &state.selected_node,
+                        &mut state.expanded_nodes,
+                    );
+                });
+        }
 
-        // Messages panel
-        egui::SidePanel::right("messages")
-            .default_width(250.0)
-            .show(ctx, |ui| {
-                messages::show_messages(ui, &state.messages, 200);
-            });
+        // Messages panel (only rendered when visible)
+        if state.panels.messages {
+            egui::SidePanel::right("messages")
+                .default_width(250.0)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    messages::show_messages(ui, &state.messages, 200);
+                });
+        }
 
         // Timeline
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
@@ -251,9 +352,7 @@ impl NexusApp {
             if let Some(ts) = action.seek_to {
                 state.current_timestep = ts;
                 state.playing = false;
-                // Reconstruct state at seek target
-                let initial = nodes_from_sim(&state.sim);
-                state.node_states = state.controller.reconstruct_states(ts, &initial);
+                state.node_states = state.controller.reconstruct_states(ts, &state.initial_states);
                 state.messages.clear();
                 gather_messages_through(&state.controller, ts, &state.sim, &mut state.messages);
             }
@@ -261,10 +360,9 @@ impl NexusApp {
                 state.playing = false;
                 if state.current_timestep < state.total_timesteps.saturating_sub(1) {
                     state.current_timestep += 1;
-                    let initial = nodes_from_sim(&state.sim);
                     state.node_states = state
                         .controller
-                        .reconstruct_states(state.current_timestep, &initial);
+                        .reconstruct_states(state.current_timestep, &state.initial_states);
                     gather_messages_at(
                         &state.controller,
                         state.current_timestep,
@@ -276,10 +374,9 @@ impl NexusApp {
             if action.step_backward {
                 state.playing = false;
                 state.current_timestep = state.current_timestep.saturating_sub(1);
-                let initial = nodes_from_sim(&state.sim);
                 state.node_states = state
                     .controller
-                    .reconstruct_states(state.current_timestep, &initial);
+                    .reconstruct_states(state.current_timestep, &state.initial_states);
                 state.messages.clear();
                 gather_messages_through(
                     &state.controller,
@@ -292,13 +389,41 @@ impl NexusApp {
 
         // Central grid
         egui::CentralPanel::default().show(ctx, |ui| {
-            if let Some(clicked) = grid::show_grid_panel(
+            if state.needs_fit {
+                state.grid.fit_to_nodes(&state.node_states, ui.available_size());
+                state.needs_fit = false;
+            }
+            let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
-            ) {
-                state.selected_node = Some(clicked);
+            );
+            if let Some(clicked) = clicked {
+                let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                state.expanded_nodes.clear();
+                if already_selected {
+                    state.selected_node = None;
+                } else {
+                    state.expanded_nodes.insert(clicked.clone());
+                    state.selected_node = Some(clicked);
+                }
+            }
+            state.hovered_node = hovered;
+            if let Some(ref name) = state.hovered_node {
+                if let Some(n) = state.node_states.iter().find(|n| &n.name == name) {
+                    egui::containers::popup::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                        ui.id().with("node_tip"),
+                        |ui| {
+                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                            if let Some(r) = n.charge_ratio {
+                                ui.label(format!("Charge: {:.0}%", r * 100.0));
+                            }
+                        },
+                    );
+                }
             }
         });
 
@@ -324,10 +449,46 @@ impl NexusApp {
                     messages: Vec::new(),
                     node_states,
                     sim_dir,
+                    paused: false,
+                    needs_fit: true,
+                    expanded_nodes: HashSet::new(),
+                    hovered_node: None,
+                    panels: PanelVisibility::default(),
                 });
             }
             Err(e) => {
                 state.validation_error = Some(format!("Launch failed: {e:#}"));
+            }
+        }
+    }
+
+    fn rerun_simulation(&mut self) {
+        let AppMode::LiveSimulation(state) = &mut self.mode else {
+            return;
+        };
+        let sim = state.sim.clone();
+
+        match crate::sim::launch::launch_simulation(sim.clone(), None) {
+            Ok((controller, sim_dir)) => {
+                let node_states = nodes_from_sim(&sim);
+                self.mode = AppMode::LiveSimulation(LiveSimState {
+                    sim,
+                    controller,
+                    grid: GridView::default(),
+                    selected_node: None,
+                    current_timestep: 0,
+                    messages: Vec::new(),
+                    node_states,
+                    sim_dir,
+                    paused: false,
+                    needs_fit: true,
+                    expanded_nodes: HashSet::new(),
+                    hovered_node: None,
+                    panels: PanelVisibility::default(),
+                });
+            }
+            Err(e) => {
+                eprintln!("Rerun failed: {e:#}");
             }
         }
     }
@@ -350,6 +511,7 @@ impl NexusApp {
                         validation_error: None,
                         dirty: false,
                         add_item_buf: String::new(),
+                        needs_fit: true,
                     });
                 }
                 Err(e) => {
@@ -391,6 +553,7 @@ impl NexusApp {
             validation_error: None,
             dirty: true,
             add_item_buf: String::new(),
+            needs_fit: true,
         });
     }
 
@@ -427,7 +590,12 @@ impl NexusApp {
                         playing: false,
                         playback_speed: 1.0,
                         messages: Vec::new(),
-                        node_states: initial_states,
+                        node_states: initial_states.clone(),
+                        initial_states,
+                        needs_fit: true,
+                        expanded_nodes: HashSet::new(),
+                        hovered_node: None,
+                        panels: PanelVisibility::default(),
                     });
                 }
                 Err(e) => {
@@ -486,6 +654,7 @@ fn process_gui_event(
                         dst_node: None,
                         channel: ch_name,
                         data_preview: format_data_preview(data),
+                        data_raw: data.clone(),
                     });
                 }
                 TraceEvent::MessageRecv {
@@ -502,6 +671,7 @@ fn process_gui_event(
                         dst_node: None,
                         channel: ch_name,
                         data_preview: format_data_preview(data),
+                        data_raw: data.clone(),
                     });
                 }
                 TraceEvent::MessageDropped {
@@ -518,6 +688,7 @@ fn process_gui_event(
                         dst_node: None,
                         channel: ch_name,
                         data_preview: String::new(),
+                        data_raw: Vec::new(),
                     });
                 }
                 TraceEvent::PositionUpdate { node, x, y, z } => {
@@ -563,6 +734,16 @@ fn channel_name_by_index(sim: &config::ast::Simulation, index: usize) -> String 
 }
 
 fn format_data_preview(data: &[u8]) -> String {
+    if let Ok(s) = std::str::from_utf8(data) {
+        if s.chars().all(|c| !c.is_control() || c == '\n') {
+            return if s.len() <= 64 {
+                s.to_string()
+            } else {
+                format!("{}... ({} bytes)", &s[..64], data.len())
+            };
+        }
+    }
+    // Fallback to hex
     if data.len() <= 32 {
         hex::encode(data)
     } else {
@@ -663,6 +844,7 @@ fn trace_record_to_message(
             dst_node: None,
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: format_data_preview(data),
+            data_raw: data.clone(),
         }),
         TraceEvent::MessageRecv {
             dst_node,
@@ -675,6 +857,7 @@ fn trace_record_to_message(
             dst_node: None,
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: format_data_preview(data),
+            data_raw: data.clone(),
         }),
         TraceEvent::MessageDropped {
             src_node,
@@ -687,6 +870,7 @@ fn trace_record_to_message(
             dst_node: None,
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: String::new(),
+            data_raw: Vec::new(),
         }),
         _ => None,
     }
