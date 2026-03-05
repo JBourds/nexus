@@ -25,7 +25,7 @@ pub enum LogRecord {
     Battery {
         timestep: u64,
         node: NodeHandle,
-        charge_nj: i64,
+        charge_nj: u64,
     },
 }
 
@@ -44,7 +44,7 @@ struct LogVisitor {
     channel: Option<usize>,
     is_publisher: Option<bool>,
     data: Option<Vec<u8>>,
-    charge_nj: Option<i64>,
+    charge_nj: Option<u64>,
 }
 
 impl Visit for LogVisitor {
@@ -55,15 +55,12 @@ impl Visit for LogVisitor {
             "timestep" => self.timestep = value,
             "channel" => self.channel = Some(value as usize),
             "node" => self.node = value as usize,
+            "charge_nj" => self.charge_nj = Some(value),
             _ => {}
         }
     }
 
-    fn record_i64(&mut self, field: &tracing::field::Field, value: i64) {
-        if field.name() == "charge_nj" {
-            self.charge_nj = Some(value);
-        }
-    }
+    fn record_i64(&mut self, _field: &tracing::field::Field, _value: i64) {}
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
         if field.name() == "tx" {

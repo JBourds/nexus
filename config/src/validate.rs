@@ -766,12 +766,8 @@ impl PowerRate {
     /// Validate an unsigned consumption rate (power_states).
     /// Stored as positive; callers handle the sign at accounting time.
     fn validate_rate(val: parse::PowerRate) -> Result<Self> {
-        let rate: i64 = val
-            .rate
-            .try_into()
-            .context("Power rate too large to fit in i64")?;
         Ok(PowerRate {
-            rate,
+            rate: val.rate,
             unit: PowerUnit::validate(val.unit).context("Failed to validate power unit")?,
             time: TimeUnit::validate(val.time).context("Failed to validate time unit")?,
         })

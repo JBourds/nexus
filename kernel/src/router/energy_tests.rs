@@ -105,7 +105,7 @@ mod tests {
         make_router(vec![make_node(Some(energy))], vec![], vec![])
     }
 
-    fn basic_energy(charge_nj: i64, max_nj: u64) -> EnergyState {
+    fn basic_energy(charge_nj: u64, max_nj: u64) -> EnergyState {
         EnergyState {
             charge_nj,
             max_nj,
@@ -190,9 +190,9 @@ mod tests {
 
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
-        // 100 - 150 = -50
-        assert_eq!(e.charge_nj, -50);
-        assert!(e.is_dead, "Node should be dead when charge <= 0");
+        // 100 - 150 saturates to 0
+        assert_eq!(e.charge_nj, 0);
+        assert!(e.is_dead, "Node should be dead when charge == 0");
         // step() pushes to newly_depleted (serve() drains it after each poll)
         assert_eq!(router.newly_depleted, vec![0]);
     }
@@ -219,7 +219,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_dead_node_ambient_only() {
-        let mut energy = basic_energy(-100, 10_000);
+        let mut energy = basic_energy(0, 10_000);
         energy.ambient_nj_per_ts = 30;
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
@@ -228,8 +228,8 @@ mod tests {
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        // -100 + 30 (ambient) - 0 (no drain while dead) = -70
-        assert_eq!(charge, -70, "Dead node should only get ambient, no drain");
+        // 0 + 30 (ambient) - 0 (no drain while dead) = 30
+        assert_eq!(charge, 30, "Dead node should only get ambient, no drain");
     }
 
     // -----------------------------------------------------------------------
@@ -237,18 +237,18 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_node_restart_at_threshold() {
-        let mut energy = basic_energy(-10, 10_000);
+        let mut energy = basic_energy(0, 10_000);
         energy.ambient_nj_per_ts = 100;
         energy.is_dead = true;
         // restart at 50% = 5000 nJ — won't trigger yet
         energy.restart_threshold_nj = Some(5000);
         let (mut router, _rx) = make_single_node_router(energy);
 
-        // Step 1: -10 + 100 = 90, still below 5000
+        // Step 1: 0 + 100 = 100, still below 5000
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
-        assert_eq!(e.charge_nj, 90);
-        assert!(e.is_dead, "Should still be dead at 90 nJ");
+        assert_eq!(e.charge_nj, 100);
+        assert!(e.is_dead, "Should still be dead at 100 nJ");
 
         // Now set charge close to threshold
         router.channels.nodes[0].energy.as_mut().unwrap().charge_nj = 4950;
@@ -266,7 +266,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_permanent_death_without_threshold() {
-        let mut energy = basic_energy(-10, 10_000);
+        let mut energy = basic_energy(0, 10_000);
         energy.ambient_nj_per_ts = 10_000; // lots of ambient
         energy.is_dead = true;
         energy.restart_threshold_nj = None; // no restart
@@ -280,7 +280,7 @@ mod tests {
             "Node without restart_threshold should stay dead permanently"
         );
         // Charge still accumulates (capped at max)
-        assert_eq!(e.charge_nj, 9990);
+        assert_eq!(e.charge_nj, 10_000);
     }
 
     // -----------------------------------------------------------------------
@@ -375,11 +375,10 @@ mod tests {
         router.write_channel_file(0, msg).unwrap();
 
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        // 5000 - 100*1000 (100 µJ = 100_000 nJ)
+        // 5000 saturating_sub 100_000 (100 µJ = 100,000 nJ) = 0
         assert_eq!(
-            charge,
-            5000 - 100_000,
-            "TX should deduct 100 µJ = 100,000 nJ"
+            charge, 0,
+            "TX cost exceeds charge, should saturate to 0"
         );
     }
 

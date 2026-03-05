@@ -126,7 +126,7 @@ impl EnergyUnit {
 
 impl PowerUnit {
     /// Factor to convert a value in this unit to nanowatts.
-    pub fn to_nw_factor(self) -> i64 {
+    pub fn to_nw_factor(self) -> u64 {
         match self {
             Self::NanoWatt => 1,
             Self::MicroWatt => 1_000,
@@ -141,7 +141,7 @@ impl PowerUnit {
 
 impl TimeUnit {
     /// Factor to convert a value in this unit to nanoseconds.
-    pub fn to_ns_factor(self) -> i64 {
+    pub fn to_ns_factor(self) -> u64 {
         match self {
             Self::Hours => 3_600_000_000_000,
             Self::Minutes => 60_000_000_000,
@@ -154,12 +154,10 @@ impl TimeUnit {
 }
 
 impl PowerRate {
-    /// Convert this rate to nanojoules drained per timestep of `timestep_ns`
-    /// nanoseconds. Result is negative (consumption) when rate > 0, positive
-    /// (generation) when rate < 0. Caller accounts for sign conventions.
+    /// Convert this rate to nanojoules per timestep of `timestep_ns` nanoseconds.
     ///
     /// Formula: energy_nj = rate_nw × timestep_ns / time_ns
-    pub fn nj_per_timestep(&self, timestep_ns: i64) -> i64 {
+    pub fn nj_per_timestep(&self, timestep_ns: u64) -> u64 {
         let rate_nw = self.rate * self.unit.to_nw_factor();
         let time_ns = self.time.to_ns_factor();
         rate_nw * timestep_ns / time_ns

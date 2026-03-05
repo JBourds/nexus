@@ -75,14 +75,14 @@ impl Channel {
 /// Runtime energy tracking state for a node with a battery.
 #[derive(Clone, Debug)]
 pub struct EnergyState {
-    /// Current charge in nanojoules. Can go negative (node dead when <= 0).
-    pub charge_nj: i64,
+    /// Current charge in nanojoules. Saturates at 0 (node dead when == 0).
+    pub charge_nj: u64,
     /// Maximum capacity in nanojoules.
     pub max_nj: u64,
-    /// Per-timestep ambient generation in nJ (positive = generates energy).
-    pub ambient_nj_per_ts: i64,
-    /// Per-timestep drain in nJ for each named power state (positive = drains).
-    pub power_states_nj: HashMap<String, i64>,
+    /// Per-timestep ambient generation in nJ.
+    pub ambient_nj_per_ts: u64,
+    /// Per-timestep drain in nJ for each named power state.
+    pub power_states_nj: HashMap<String, u64>,
     /// Currently active power state.
     pub current_state: Option<String>,
     /// Charge level in nJ at which a dead node is restarted.
@@ -95,8 +95,8 @@ impl EnergyState {
     pub fn from_node(node: &ast::Node, ts_config: &TimestepConfig) -> Option<Self> {
         let charge = node.charge.as_ref()?;
         let max_nj = charge.unit.to_nj(charge.max);
-        let charge_nj = charge.unit.to_nj(charge.quantity) as i64;
-        let timestep_ns = ts_config.length.get() as i64 * ts_config.unit.to_ns_factor();
+        let charge_nj = charge.unit.to_nj(charge.quantity);
+        let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
         let ambient_nj_per_ts = node
             .ambient_rate
             .as_ref()
@@ -107,7 +107,7 @@ impl EnergyState {
             .map(|(name, rate)| (name.clone(), rate.nj_per_timestep(timestep_ns)))
             .collect();
         let restart_threshold_nj = node.restart_threshold.map(|t| (t * max_nj as f64) as u64);
-        let is_dead = charge_nj <= 0;
+        let is_dead = charge_nj == 0;
         Some(EnergyState {
             charge_nj,
             max_nj,

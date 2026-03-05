@@ -257,17 +257,17 @@ impl RoutingServer {
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
 
         // Deduct TX channel energy cost before queuing
-        let tx_cost_nj: i64 = self.channels.nodes[src_node]
+        let tx_cost_nj: u64 = self.channels.nodes[src_node]
             .protocols
             .iter()
             .filter(|p| p.publishers.contains(&channel_handle))
             .filter_map(|p| p.channel_energy.get(&channel_handle))
             .filter_map(|ce| ce.tx.as_ref())
-            .map(|e| e.unit.to_nj(e.quantity) as i64)
+            .map(|e| e.unit.to_nj(e.quantity))
             .sum();
         if tx_cost_nj > 0 {
             if let Some(energy) = &mut self.channels.nodes[src_node].energy {
-                energy.charge_nj -= tx_cost_nj;
+                energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
             }
         }
 
@@ -377,17 +377,17 @@ impl RoutingServer {
                         .as_deref()
                         .and_then(|s| energy.power_states_nj.get(s).copied())
                         .unwrap_or(0);
-                    energy.charge_nj -= drain;
+                    energy.charge_nj = energy.charge_nj.saturating_sub(drain);
                 }
-                energy.charge_nj = energy.charge_nj.min(energy.max_nj as i64);
+                energy.charge_nj = energy.charge_nj.min(energy.max_nj);
                 // Detect transitions
-                if !was_dead && energy.charge_nj <= 0 {
+                if !was_dead && energy.charge_nj == 0 {
                     energy.is_dead = true;
                     self.newly_depleted.push(node_idx);
                 } else if was_dead {
                     let recovered = energy
                         .restart_threshold_nj
-                        .is_some_and(|t| energy.charge_nj as u64 >= t);
+                        .is_some_and(|t| energy.charge_nj >= t);
                     if recovered {
                         energy.is_dead = false;
                         self.newly_recovered.push(node_idx);
@@ -434,17 +434,17 @@ impl RoutingServer {
                 mailbox.push_back(frame.msg);
 
                 // Deduct RX channel energy cost on delivery
-                let rx_cost_nj: i64 = self.channels.nodes[dst_node]
+                let rx_cost_nj: u64 = self.channels.nodes[dst_node]
                     .protocols
                     .iter()
                     .filter(|p| p.subscribers.contains(&channel_handle))
                     .filter_map(|p| p.channel_energy.get(&channel_handle))
                     .filter_map(|ce| ce.rx.as_ref())
-                    .map(|e| e.unit.to_nj(e.quantity) as i64)
+                    .map(|e| e.unit.to_nj(e.quantity))
                     .sum();
                 if rx_cost_nj > 0 {
                     if let Some(energy) = &mut self.channels.nodes[dst_node].energy {
-                        energy.charge_nj -= rx_cost_nj;
+                        energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
                     }
                 }
             } else {

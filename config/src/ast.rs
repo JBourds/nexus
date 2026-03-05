@@ -277,7 +277,7 @@ pub struct DataRate {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct PowerRate {
-    pub rate: i64,
+    pub rate: u64,
     pub unit: PowerUnit,
     pub time: TimeUnit,
 }
