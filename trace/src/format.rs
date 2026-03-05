@@ -1,0 +1,55 @@
+use bincode::{Decode, Encode};
+use serde::{Deserialize, Serialize};
+
+pub const MAGIC: [u8; 4] = *b"NXTR";
+pub const VERSION: u16 = 1;
+
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone)]
+pub struct TraceHeader {
+    pub node_names: Vec<String>,
+    pub channel_names: Vec<String>,
+    pub timestep_count: u64,
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum DropReason {
+    BelowSensitivity,
+    PacketLoss,
+    TtlExpired,
+    BufferFull,
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub enum TraceEvent {
+    MessageSent {
+        src_node: u32,
+        channel: u32,
+        data: Vec<u8>,
+    },
+    MessageRecv {
+        dst_node: u32,
+        channel: u32,
+        data: Vec<u8>,
+    },
+    MessageDropped {
+        src_node: u32,
+        channel: u32,
+        reason: DropReason,
+    },
+    PositionUpdate {
+        node: u32,
+        x: f64,
+        y: f64,
+        z: f64,
+    },
+    EnergyUpdate {
+        node: u32,
+        energy_nj: i64,
+    },
+}
+
+#[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq)]
+pub struct TraceRecord {
+    pub timestep: u64,
+    pub event: TraceEvent,
+}

@@ -282,6 +282,13 @@ impl RoutingServer {
                 mailbox.push_back(frame.msg);
             } else {
                 warn!("Message dropped due to full queue!");
+                event!(
+                    target: "drop", Level::WARN,
+                    timestep = self.timestep,
+                    channel = channel_index,
+                    node = frame.msg.src,
+                    reason = "buffer_full"
+                );
             }
         }
         Ok(())

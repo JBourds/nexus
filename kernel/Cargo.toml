@@ -15,3 +15,4 @@ serde = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
 mio = {version = "1.0.4", features = ["os-poll", "os-ext"] }
+trace = { path = "../trace" }

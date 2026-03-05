@@ -10,19 +10,27 @@ use std::{fs::File, io::BufReader};
 use crate::log::BinaryLogRecord;
 use crate::router::RoutingServer;
 use crate::{errors::SourceError, router::Timestep};
+use trace::format::{TraceEvent, TraceRecord};
+use trace::reader::TraceReader;
 
 /// Different sources for write events
 /// * `Simulate`: Take actual writes from processes.
 /// * `Replay`: Use the timesteps writes were logged at from simulation.
+/// * `ReplayTrace`: Replay from the unified trace format.
 /// * `Empty`: Stub. No messages get delivered.
 #[derive(Debug)]
 pub enum Source {
     /// Write events come from executing processes.
     Simulated { rx: mpsc::Receiver<fuse::FsMessage> },
-    /// Write events come from a log.
+    /// Write events come from a legacy binary log.
     Replay {
         src: BufReader<File>,
         next_log: Option<BinaryLogRecord>,
+    },
+    /// Write events come from a unified trace file.
+    ReplayTrace {
+        reader: TraceReader,
+        next_record: Option<TraceRecord>,
     },
     /// No write events happen
     Empty,
@@ -38,6 +46,15 @@ impl Source {
         Ok(Self::Replay {
             src,
             next_log: None,
+        })
+    }
+
+    pub fn replay_trace(trace_path: impl AsRef<Path>) -> Result<Self, SourceError> {
+        let reader = TraceReader::open(trace_path)
+            .map_err(|e| SourceError::ReplayLogOpen(std::io::Error::other(e.to_string())))?;
+        Ok(Self::ReplayTrace {
+            reader,
+            next_record: None,
         })
     }
 
@@ -132,6 +149,61 @@ impl Source {
         Ok(())
     }
 
+    fn poll_trace(
+        reader: &mut TraceReader,
+        ts: Timestep,
+        router: &mut RoutingServer,
+        next_record: &mut Option<TraceRecord>,
+    ) -> Result<(), SourceError> {
+        // Deliver buffered record if ready
+        if next_record.as_ref().is_none_or(|rec| rec.timestep <= ts) {
+            if let Some(rec) = next_record.take()
+                && let TraceEvent::MessageSent {
+                    src_node,
+                    channel,
+                    data,
+                } = rec.event
+            {
+                router
+                    .queue_message(src_node as usize, channel as usize, data)
+                    .map_err(SourceError::RouterError)?;
+            }
+
+            loop {
+                match reader.next_record() {
+                    Ok(Some(rec)) => {
+                        // Only replay MessageSent events
+                        if !matches!(rec.event, TraceEvent::MessageSent { .. }) {
+                            continue;
+                        }
+                        if rec.timestep > ts {
+                            *next_record = Some(rec);
+                            break;
+                        }
+                        if let TraceEvent::MessageSent {
+                            src_node,
+                            channel,
+                            data,
+                        } = rec.event
+                        {
+                            router
+                                .queue_message(src_node as usize, channel as usize, data)
+                                .map_err(SourceError::RouterError)?;
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        return Err(SourceError::ReplayLogOpen(std::io::Error::other(
+                            e.to_string(),
+                        )));
+                    }
+                }
+            }
+        }
+        router.step().map_err(SourceError::RouterError)?;
+        Ok(())
+    }
+
     pub(crate) fn poll(
         &mut self,
         router: &mut RoutingServer,
@@ -141,6 +213,10 @@ impl Source {
             Self::Empty => Ok(()),
             Self::Simulated { rx } => Self::poll_simulated(rx, router),
             Self::Replay { src, next_log } => Self::poll_log(src, ts, router, next_log),
+            Self::ReplayTrace {
+                reader,
+                next_record,
+            } => Self::poll_trace(reader, ts, router, next_record),
         }
     }
 }

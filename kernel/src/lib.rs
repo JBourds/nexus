@@ -182,6 +182,11 @@ impl Kernel {
         match cmd {
             RunCmd::Simulate => Source::simulated(rx),
             RunCmd::Replay { logs } => {
+                // Prefer unified trace format if available, fall back to legacy
+                let trace_file = logs.join("trace.nxs");
+                if trace_file.exists() {
+                    return Source::replay_trace(trace_file);
+                }
                 let logfile = logs.join(TX);
                 if !logfile.exists() {
                     return Err(SourceError::NonexistentReplayLog(logfile));
