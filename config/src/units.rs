@@ -1,4 +1,6 @@
-use crate::ast::{ClockUnit, DataRate, DataUnit, DistanceUnit, EnergyUnit, PowerRate, PowerUnit, TimeUnit};
+use crate::ast::{
+    ClockUnit, DataRate, DataUnit, DistanceUnit, EnergyUnit, PowerRate, PowerUnit, TimeUnit,
+};
 
 impl DataUnit {
     /// Return the left shift ratio of left / right with a boolean

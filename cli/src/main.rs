@@ -89,9 +89,15 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles =
-            Kernel::new(sim.clone(), runc, file_handles, rx, tx, pending_remaps.clone())?
-                .run(args.cmd.clone())?;
+        let protocol_handles = Kernel::new(
+            sim.clone(),
+            runc,
+            file_handles,
+            rx,
+            tx,
+            pending_remaps.clone(),
+        )?
+        .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));
     }
     match args.dest {

@@ -91,11 +91,10 @@ impl Source {
         // is or if we know there are logs ready to be sent.
         if next_log.as_ref().is_none_or(|rec| rec.timestep() <= ts) {
             // Queue the previously peeked record if it's due.
-            if let Some(rec) = next_log.take() {
-                if let Some(e) = Self::queue_record(router, rec).err() {
+            if let Some(rec) = next_log.take()
+                && let Some(e) = Self::queue_record(router, rec).err() {
                     return Err(e);
                 }
-            }
 
             loop {
                 let config = config::standard();

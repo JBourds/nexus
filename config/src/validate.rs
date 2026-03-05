@@ -341,14 +341,15 @@ impl Simulation {
             // Append a unique suffix corresponding to deployment ID to each
             // node's name to deduplicate the handles
             .map(|(key, node)| {
-                Node::validate(config_root, node, &params.timestep.start, &channel_handles)
-                    .map(|nodes| {
+                Node::validate(config_root, node, &params.timestep.start, &channel_handles).map(
+                    |nodes| {
                         nodes
                             .into_iter()
                             .enumerate()
                             .map(|(index, node)| (format!("{key}.{index}"), node))
                             .collect::<Vec<_>>()
-                    })
+                    },
+                )
             })
             // Collect the intermediary step
             .collect::<Result<Vec<Vec<(NodeHandle, Node)>>>>()
@@ -708,8 +709,7 @@ impl Energy {
     fn validate(val: parse::Energy) -> Result<Self> {
         Ok(Self {
             quantity: val.quantity,
-            unit: EnergyUnit::validate(val.unit)
-                .context("Failed to validate energy unit.")?,
+            unit: EnergyUnit::validate(val.unit).context("Failed to validate energy unit.")?,
         })
     }
 }
@@ -941,7 +941,7 @@ impl Node {
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
                 power_states: power_states.clone(),
-                ambient_rate: ambient_rate.clone(),
+                ambient_rate: ambient_rate,
                 initial_state,
                 restart_threshold,
                 start,

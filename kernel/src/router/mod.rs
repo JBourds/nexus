@@ -29,8 +29,8 @@ use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
-mod timectl;
 mod energy_tests;
+mod timectl;
 use crate::types::ChannelHandle;
 
 pub type Timestep = u64;
@@ -170,7 +170,10 @@ impl RoutingServer {
                                 .map(|i| router.channels.node_names[i].clone())
                                 .collect();
                             if router_tx
-                                .send(RouterMessage::EnergyEvents { depleted, recovered })
+                                .send(RouterMessage::EnergyEvents {
+                                    depleted,
+                                    recovered,
+                                })
                                 .is_err()
                             {
                                 break Err(KernelError::RouterError(RouterError::RouteError));
@@ -227,11 +230,10 @@ impl RoutingServer {
             ["time", ..] => self.update_time(node_index, msg),
             ["energy_state"] => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
-                if let Some(energy) = &mut self.channels.nodes[node_index].energy {
-                    if energy.power_states_nj.contains_key(&state) {
+                if let Some(energy) = &mut self.channels.nodes[node_index].energy
+                    && energy.power_states_nj.contains_key(&state) {
                         energy.current_state = Some(state);
                     }
-                }
                 Ok(())
             }
             _ => unimplemented!("Unimplemented control file: {remaining}"),
@@ -265,11 +267,10 @@ impl RoutingServer {
             .filter_map(|ce| ce.tx.as_ref())
             .map(|e| e.unit.to_nj(e.quantity))
             .sum();
-        if tx_cost_nj > 0 {
-            if let Some(energy) = &mut self.channels.nodes[src_node].energy {
+        if tx_cost_nj > 0
+            && let Some(energy) = &mut self.channels.nodes[src_node].energy {
                 energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
             }
-        }
 
         self.queue_message(src_node, channel_handle, msg.data)
     }
@@ -442,11 +443,10 @@ impl RoutingServer {
                     .filter_map(|ce| ce.rx.as_ref())
                     .map(|e| e.unit.to_nj(e.quantity))
                     .sum();
-                if rx_cost_nj > 0 {
-                    if let Some(energy) = &mut self.channels.nodes[dst_node].energy {
+                if rx_cost_nj > 0
+                    && let Some(energy) = &mut self.channels.nodes[dst_node].energy {
                         energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
                     }
-                }
             } else {
                 warn!("Message dropped due to full queue!");
             }

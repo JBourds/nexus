@@ -172,8 +172,10 @@ impl Kernel {
                     }
                     status::messages::StatusMessage::Respawned { .. } => {}
                 }
-                let router::RouterMessage::EnergyEvents { depleted, recovered } =
-                    routing_server.poll(timestep)?
+                let router::RouterMessage::EnergyEvents {
+                    depleted,
+                    recovered,
+                } = routing_server.poll(timestep)?
                 else {
                     continue;
                 };
@@ -184,11 +186,9 @@ impl Kernel {
                     // Kill the frozen process and respawn a fresh one
                     if let status::messages::StatusMessage::Respawned { pid_changes, .. } =
                         status_server.respawn_node(name)?
-                    {
-                        if !pid_changes.is_empty() {
+                        && !pid_changes.is_empty() {
                             routing_server.remap_pids(pid_changes)?;
                         }
-                    }
                 }
             }
             if start.elapsed().is_err() {

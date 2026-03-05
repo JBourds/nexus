@@ -376,10 +376,7 @@ mod tests {
 
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
         // 5000 saturating_sub 100_000 (100 µJ = 100,000 nJ) = 0
-        assert_eq!(
-            charge, 0,
-            "TX cost exceeds charge, should saturate to 0"
-        );
+        assert_eq!(charge, 0, "TX cost exceeds charge, should saturate to 0");
     }
 
     // -----------------------------------------------------------------------
@@ -808,15 +805,24 @@ mod tests {
         router.step().unwrap();
 
         // Subscriber mailbox should have the message
-        assert!(!router.mailboxes[1].is_empty(), "Mailbox should have message before remap");
+        assert!(
+            !router.mailboxes[1].is_empty(),
+            "Mailbox should have message before remap"
+        );
 
         // Remap subscriber PID 2 → 3 (simulates respawn)
         router.apply_pid_remaps(&[(2, 3)]);
 
         // Mailbox for the remapped handle should be cleared
-        assert!(router.mailboxes[1].is_empty(), "Mailbox should be cleared after remap");
+        assert!(
+            router.mailboxes[1].is_empty(),
+            "Mailbox should be cleared after remap"
+        );
         // Publisher mailbox (not remapped) should still have its message
-        assert!(!router.mailboxes[0].is_empty(), "Publisher mailbox should be untouched by remap");
+        assert!(
+            !router.mailboxes[0].is_empty(),
+            "Publisher mailbox should be untouched by remap"
+        );
     }
 
     // -----------------------------------------------------------------------
