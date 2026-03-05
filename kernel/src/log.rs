@@ -41,7 +41,7 @@ pub enum LogRecord {
     Movement(MovementRecord),
 }
 
-// ── Visitors ──────────────────────────────────────────────────────────────────
+// Visitors
 
 #[derive(Debug, Default)]
 struct MessageVisitor {
@@ -140,7 +140,109 @@ impl From<MovementVisitor> for LogRecord {
     }
 }
 
-// ── Layer ─────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn roundtrip(record: &LogRecord) -> LogRecord {
+        let cfg = config::standard();
+        let bytes = bincode::encode_to_vec(record, cfg).unwrap();
+        let (decoded, _): (LogRecord, _) = bincode::decode_from_slice(&bytes, cfg).unwrap();
+        decoded
+    }
+
+    #[test]
+    fn message_record_roundtrip() {
+        let original = LogRecord::Message(MessageRecord {
+            timestep: 42,
+            tx: true,
+            node: 3,
+            channel: 7,
+            data: vec![0xDE, 0xAD, 0xBE, 0xEF],
+        });
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn message_record_rx_roundtrip() {
+        let original = LogRecord::Message(MessageRecord {
+            timestep: 100,
+            tx: false,
+            node: 0,
+            channel: 1,
+            data: vec![],
+        });
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn movement_record_roundtrip() {
+        let original = LogRecord::Movement(MovementRecord {
+            timestep: 999,
+            node: 2,
+            x: 1.5,
+            y: -3.7,
+            z: 0.0,
+            az: 45.0,
+            el: 10.0,
+            roll: 0.0,
+        });
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
+    fn mixed_records_sequential_roundtrip() {
+        let records = vec![
+            LogRecord::Message(MessageRecord {
+                timestep: 1,
+                tx: true,
+                node: 0,
+                channel: 0,
+                data: vec![1, 2, 3],
+            }),
+            LogRecord::Movement(MovementRecord {
+                timestep: 2,
+                node: 0,
+                x: 10.0,
+                y: 20.0,
+                z: 0.0,
+                az: 0.0,
+                el: 0.0,
+                roll: 0.0,
+            }),
+            LogRecord::Message(MessageRecord {
+                timestep: 3,
+                tx: false,
+                node: 1,
+                channel: 0,
+                data: vec![1, 2, 3],
+            }),
+        ];
+
+        let cfg = config::standard();
+        let mut buf: Vec<u8> = Vec::new();
+        for r in &records {
+            bincode::encode_into_std_write(r, &mut buf, cfg).unwrap();
+        }
+
+        let mut reader = std::io::BufReader::new(std::io::Cursor::new(buf));
+        let mut decoded = Vec::new();
+        loop {
+            match bincode::decode_from_reader::<LogRecord, _, _>(&mut reader, cfg) {
+                Ok(r) => decoded.push(r),
+                Err(bincode::error::DecodeError::Io { inner, .. })
+                    if inner.kind() == std::io::ErrorKind::UnexpectedEof =>
+                {
+                    break;
+                }
+                Err(e) => panic!("unexpected decode error: {e}"),
+            }
+        }
+        assert_eq!(decoded, records);
+    }
+}
+
+// Layer
 
 pub struct BinaryLogLayer(Option<Mutex<BufWriter<File>>>);
 
