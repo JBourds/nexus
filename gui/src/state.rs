@@ -36,6 +36,8 @@ pub struct LiveSimState {
     pub current_timestep: u64,
     pub messages: Vec<MessageEntry>,
     pub node_states: Vec<NodeState>,
+    /// Directory where trace.nxs lives, for post-sim replay.
+    pub sim_dir: std::path::PathBuf,
 }
 
 /// State for replay mode.

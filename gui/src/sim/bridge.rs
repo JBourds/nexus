@@ -1,9 +1,12 @@
+use std::sync::{Arc, Mutex};
+
 use crossbeam_channel::Sender;
 use tracing::field::Visit;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
 use trace::format::{DropReason, TraceEvent, TraceRecord};
+use trace::writer::TraceWriter;
 
 /// Events sent from the simulation bridge to the GUI.
 #[derive(Debug, Clone)]
@@ -14,14 +17,50 @@ pub enum GuiEvent {
     SimulationError(String),
 }
 
-/// A `tracing_subscriber::Layer` that sends trace events to the GUI via a channel.
-pub struct GuiBridgeLayer {
-    tx: Sender<GuiEvent>,
+/// Shared, swappable sinks for the simulation tracing layer.
+///
+/// Populated before each simulation run, cleared when the simulation ends.
+/// The `Arc<Mutex<Option<...>>>` pattern lets a single global subscriber
+/// serve multiple sequential simulation runs.
+#[derive(Clone)]
+pub struct SimSinks {
+    pub gui_tx: Arc<Mutex<Option<Sender<GuiEvent>>>>,
+    pub trace_writer: Arc<Mutex<Option<TraceWriter>>>,
 }
 
-impl GuiBridgeLayer {
-    pub fn new(tx: Sender<GuiEvent>) -> Self {
-        Self { tx }
+impl SimSinks {
+    pub fn new() -> Self {
+        Self {
+            gui_tx: Arc::new(Mutex::new(None)),
+            trace_writer: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    /// Install sinks for a new simulation run.
+    pub fn install(&self, gui_tx: Sender<GuiEvent>, writer: TraceWriter) {
+        *self.gui_tx.lock().unwrap() = Some(gui_tx);
+        *self.trace_writer.lock().unwrap() = Some(writer);
+    }
+
+    /// Clear sinks (flushes/drops the trace writer).
+    pub fn clear(&self) {
+        *self.gui_tx.lock().unwrap() = None;
+        *self.trace_writer.lock().unwrap() = None;
+    }
+}
+
+/// A `tracing_subscriber::Layer` with swappable sinks, allowing the same
+/// global subscriber to serve multiple sequential simulation runs.
+///
+/// Handles `tx`, `rx`, and `drop` target events — forwarding each record
+/// to both the GUI channel and the trace file writer (when installed).
+pub struct ReloadableSimLayer {
+    sinks: SimSinks,
+}
+
+impl ReloadableSimLayer {
+    pub fn new(sinks: SimSinks) -> Self {
+        Self { sinks }
     }
 }
 
@@ -66,7 +105,7 @@ impl Visit for BridgeVisitor {
     }
 }
 
-impl<S: Subscriber> Layer<S> for GuiBridgeLayer {
+impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let target = event.metadata().target();
 
@@ -88,7 +127,7 @@ impl<S: Subscriber> Layer<S> for GuiBridgeLayer {
                     reason,
                 },
             };
-            let _ = self.tx.send(GuiEvent::Trace(record));
+            self.emit(record);
             return;
         }
 
@@ -117,6 +156,19 @@ impl<S: Subscriber> Layer<S> for GuiBridgeLayer {
             timestep: visitor.timestep,
             event: trace_event,
         };
-        let _ = self.tx.send(GuiEvent::Trace(record));
+        self.emit(record);
+    }
+}
+
+impl ReloadableSimLayer {
+    fn emit(&self, record: TraceRecord) {
+        // Send to GUI
+        if let Some(tx) = self.sinks.gui_tx.lock().unwrap().as_ref() {
+            let _ = tx.send(GuiEvent::Trace(record.clone()));
+        }
+        // Write to trace file
+        if let Some(writer) = self.sinks.trace_writer.lock().unwrap().as_mut() {
+            let _ = writer.write_record(&record);
+        }
     }
 }

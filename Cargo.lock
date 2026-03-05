@@ -1734,13 +1734,18 @@ name = "gui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "chrono",
  "config",
  "crossbeam-channel",
+ "ctrlc",
  "eframe",
  "egui",
+ "fuse",
  "hex",
  "kernel",
+ "libc",
  "rfd",
+ "runner",
  "serde",
  "toml",
  "trace",

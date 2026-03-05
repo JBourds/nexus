@@ -9,6 +9,7 @@ pub enum ToolbarAction {
     OpenConfig,
     NewConfig,
     OpenTrace,
+    RunSimulation,
 }
 
 pub fn show_toolbar(ui: &mut Ui, mode: &AppMode) -> ToolbarAction {
@@ -33,6 +34,13 @@ pub fn show_toolbar(ui: &mut Ui, mode: &AppMode) -> ToolbarAction {
         }
         if ui.button("Open Trace").clicked() {
             action = ToolbarAction::OpenTrace;
+        }
+
+        if matches!(mode, AppMode::ConfigEditor(_)) {
+            ui.separator();
+            if ui.button("\u{25b6} Run").clicked() {
+                action = ToolbarAction::RunSimulation;
+            }
         }
 
         // Show mode indicator on the right

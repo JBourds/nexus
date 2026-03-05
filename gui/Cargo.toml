@@ -11,6 +11,8 @@ path = "src/main.rs"
 config = { path = "../config" }
 kernel = { path = "../kernel" }
 trace = { path = "../trace" }
+runner = { path = "../runner" }
+fuse = { path = "../fuse" }
 eframe = { workspace = true }
 egui = { workspace = true }
 crossbeam-channel = { workspace = true }
@@ -19,5 +21,8 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 anyhow = { workspace = true }
 toml = { workspace = true }
+chrono = { workspace = true }
+libc = { workspace = true }
+ctrlc = { version = "3.5.2", features = ["termination"] }
 rfd = "0.15"
 hex = "0.4"

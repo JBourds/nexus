@@ -38,6 +38,9 @@ impl App for NexusApp {
                 toolbar::ToolbarAction::OpenTrace => {
                     self.open_trace();
                 }
+                toolbar::ToolbarAction::RunSimulation => {
+                    self.run_simulation();
+                }
                 toolbar::ToolbarAction::None => {}
             }
         });
@@ -128,6 +131,8 @@ impl NexusApp {
 
         // Timeline at bottom
         let total = state.sim.params.timestep.count.get();
+        let finished = state.controller.is_finished();
+        let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             let mut playing = true;
             let mut speed = 1.0;
@@ -138,6 +143,14 @@ impl NexusApp {
                 &mut playing,
                 &mut speed,
             );
+            if finished {
+                ui.horizontal(|ui| {
+                    ui.label("Simulation complete.");
+                    if ui.button("View Replay").clicked() {
+                        view_replay = true;
+                    }
+                });
+            }
         });
 
         // Central grid
@@ -153,8 +166,36 @@ impl NexusApp {
         });
 
         // Keep requesting repaints during live sim
-        if !state.controller.is_finished() {
+        if !finished {
             ctx.request_repaint();
+        }
+
+        if view_replay {
+            self.try_transition_to_replay();
+        }
+    }
+
+    fn try_transition_to_replay(&mut self) {
+        let AppMode::LiveSimulation(state) = &self.mode else {
+            return;
+        };
+        let trace_path = state.sim_dir.join("trace.nxs");
+        if let Ok(controller) = crate::sim::replay::ReplayController::open(&trace_path) {
+            let sim = state.sim.clone();
+            let initial_states = nodes_from_sim(&sim);
+            let total_timesteps = controller.total_timesteps;
+            self.mode = AppMode::Replay(ReplayState {
+                sim,
+                controller,
+                grid: GridView::default(),
+                selected_node: None,
+                current_timestep: 0,
+                total_timesteps,
+                playing: false,
+                playback_speed: 1.0,
+                messages: Vec::new(),
+                node_states: initial_states,
+            });
         }
     }
 
@@ -263,6 +304,31 @@ impl NexusApp {
 
         if state.playing {
             ctx.request_repaint();
+        }
+    }
+
+    fn run_simulation(&mut self) {
+        let AppMode::ConfigEditor(state) = &mut self.mode else {
+            return;
+        };
+
+        match crate::sim::launch::launch_simulation(state.sim.clone(), None) {
+            Ok((controller, sim_dir)) => {
+                let node_states = nodes_from_sim(&state.sim);
+                self.mode = AppMode::LiveSimulation(LiveSimState {
+                    sim: state.sim.clone(),
+                    controller,
+                    grid: GridView::default(),
+                    selected_node: None,
+                    current_timestep: 0,
+                    messages: Vec::new(),
+                    node_states,
+                    sim_dir,
+                });
+            }
+            Err(e) => {
+                state.validation_error = Some(format!("Launch failed: {e:#}"));
+            }
         }
     }
 
