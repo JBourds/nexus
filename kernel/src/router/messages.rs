@@ -1,6 +1,8 @@
 pub enum KernelMessage {
     Shutdown,
     Poll(u64),
+    /// Remap PIDs in handles and fuse_mapping after a process respawn.
+    RemapPids(Vec<(u32, u32)>),
 }
 
 pub enum RouterMessage {
@@ -11,4 +13,6 @@ pub enum RouterMessage {
         /// Node names that recovered above their restart threshold.
         recovered: Vec<String>,
     },
+    /// Acknowledgement that PID remapping is complete.
+    PidsRemapped,
 }

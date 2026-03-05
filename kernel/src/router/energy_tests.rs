@@ -93,6 +93,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
+            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         };
         (router, rx)
     }
@@ -488,6 +489,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
+            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         };
 
         // Write "active" to ctl.energy_state
@@ -551,6 +553,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
+            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
         };
 
         // Write unknown state
@@ -734,6 +737,209 @@ mod tests {
     // -----------------------------------------------------------------------
     // Test: two nodes with independent energy tracking
     // -----------------------------------------------------------------------
+    // -----------------------------------------------------------------------
+    // Test: apply_pid_remaps updates handles and rebuilds fuse_mapping
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_updates_handles_and_fuse_mapping() {
+        let energy = basic_energy(5000, 10_000);
+        let ch_handle: usize = 0;
+        let node = make_node_with_protocol(
+            Some(energy),
+            HashSet::from([ch_handle]),
+            HashSet::from([ch_handle]),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([0]),
+            publishers: HashSet::from([0]),
+        };
+        // Handle: PID=100, node=0, channel=0
+        let handles = vec![(100u32, 0usize, 0usize)];
+        let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
+
+        // Verify initial state
+        assert_eq!(router.channels.handles[0].0, 100);
+        assert!(router.fuse_mapping.contains_key(&(100, "ch_0".to_string())));
+
+        // Remap PID 100 → 200
+        router.apply_pid_remaps(&[(100, 200)]);
+
+        // Handle PID should be updated
+        assert_eq!(router.channels.handles[0].0, 200);
+        // fuse_mapping should reflect new PID
+        assert!(!router.fuse_mapping.contains_key(&(100, "ch_0".to_string())));
+        assert!(router.fuse_mapping.contains_key(&(200, "ch_0".to_string())));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: apply_pid_remaps clears mailboxes for remapped handles
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_clears_mailboxes() {
+        let energy = basic_energy(10_000, 10_000);
+        let ch_handle: usize = 0;
+
+        // Publisher node 0, subscriber node 1
+        let pub_node = make_node_with_protocol(
+            Some(basic_energy(10_000, 10_000)),
+            HashSet::new(),
+            HashSet::from([ch_handle]),
+            HashMap::new(),
+        );
+        let sub_node = make_node_with_protocol(
+            Some(energy),
+            HashSet::from([ch_handle]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([1]),
+            publishers: HashSet::from([0]),
+        };
+        let handles = vec![(1u32, 0usize, 0usize), (2u32, 1usize, 0usize)];
+        let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+
+        // Queue a message and deliver it
+        router.queue_message(0, 0, vec![0xAB]).unwrap();
+        router.step().unwrap();
+
+        // Subscriber mailbox should have the message
+        assert!(!router.mailboxes[1].is_empty(), "Mailbox should have message before remap");
+
+        // Remap subscriber PID 2 → 3 (simulates respawn)
+        router.apply_pid_remaps(&[(2, 3)]);
+
+        // Mailbox for the remapped handle should be cleared
+        assert!(router.mailboxes[1].is_empty(), "Mailbox should be cleared after remap");
+        // Publisher mailbox (not remapped) should still have its message
+        assert!(!router.mailboxes[0].is_empty(), "Publisher mailbox should be untouched by remap");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: apply_pid_remaps does not affect unrelated handles
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_unrelated_handles_untouched() {
+        let ch_handle: usize = 0;
+        let node_a = make_node_with_protocol(
+            Some(basic_energy(5000, 10_000)),
+            HashSet::from([ch_handle]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let node_b = make_node_with_protocol(
+            Some(basic_energy(5000, 10_000)),
+            HashSet::from([ch_handle]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([0, 1]),
+            publishers: HashSet::new(),
+        };
+        let handles = vec![(10u32, 0usize, 0usize), (20u32, 1usize, 0usize)];
+        let (mut router, _rx) = make_router(vec![node_a, node_b], vec![channel], handles);
+
+        // Only remap PID 10 → 11
+        router.apply_pid_remaps(&[(10, 11)]);
+
+        // Node A's handle remapped
+        assert_eq!(router.channels.handles[0].0, 11);
+        // Node B's handle NOT remapped
+        assert_eq!(router.channels.handles[1].0, 20);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: apply_pid_remaps pushes pairs to shared FUSE queue
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_pushes_to_shared_queue() {
+        let (mut router, _rx) = make_single_node_router(basic_energy(1000, 10_000));
+
+        let queue = router.pending_remaps.clone();
+        router.apply_pid_remaps(&[(5, 6), (7, 8)]);
+
+        let pairs = queue.lock().unwrap();
+        assert_eq!(*pairs, vec![(5, 6), (7, 8)]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: multiple pid remaps applied in batch
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_batch() {
+        let ch_handle: usize = 0;
+        let node = make_node_with_protocol(
+            Some(basic_energy(5000, 10_000)),
+            HashSet::from([ch_handle]),
+            HashSet::from([ch_handle]),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([0]),
+            publishers: HashSet::from([0]),
+        };
+        // Two handles with different PIDs for the same node (two protocols)
+        let handles = vec![(100u32, 0usize, 0usize), (101u32, 0usize, 0usize)];
+        let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
+
+        // Batch remap both
+        router.apply_pid_remaps(&[(100, 200), (101, 201)]);
+
+        assert_eq!(router.channels.handles[0].0, 200);
+        assert_eq!(router.channels.handles[1].0, 201);
+        assert!(router.fuse_mapping.contains_key(&(200, "ch_0".to_string())));
+        assert!(router.fuse_mapping.contains_key(&(201, "ch_0".to_string())));
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: remap + subsequent message delivery works with new PID
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_pid_remap_then_deliver_message() {
+        let ch_handle: usize = 0;
+
+        let pub_node = make_node_with_protocol(
+            Some(basic_energy(10_000, 10_000)),
+            HashSet::new(),
+            HashSet::from([ch_handle]),
+            HashMap::new(),
+        );
+        let sub_node = make_node_with_protocol(
+            Some(basic_energy(10_000, 10_000)),
+            HashSet::from([ch_handle]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([1]),
+            publishers: HashSet::from([0]),
+        };
+        let handles = vec![(1u32, 0usize, 0usize), (2u32, 1usize, 0usize)];
+        let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+
+        // Remap subscriber's PID before any message delivery
+        router.apply_pid_remaps(&[(2, 42)]);
+
+        // Queue and deliver a message — should work with new PID in handle
+        router.queue_message(0, 0, vec![0xCD]).unwrap();
+        router.step().unwrap();
+
+        // Subscriber mailbox should have received the message
+        assert_eq!(router.mailboxes[1].len(), 1);
+    }
+
     #[test]
     fn test_two_nodes_independent() {
         let energy_a = {

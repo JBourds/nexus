@@ -21,6 +21,7 @@ use config::{
 };
 use rand::rngs::StdRng;
 use std::rc::Rc;
+use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -59,6 +60,15 @@ impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
             .recv()
             .map_err(|e| KernelError::RouterError(RouterError::RecvError(e)))
     }
+    pub fn remap_pids(&mut self, pairs: Vec<(u32, u32)>) -> Result<RouterMessage, KernelError> {
+        self.tx
+            .send(router::KernelMessage::RemapPids(pairs))
+            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
+        self.rx
+            .recv()
+            .map_err(|e| KernelError::RouterError(RouterError::RecvError(e)))
+    }
+
     pub fn shutdown(self) -> Result<(), KernelError> {
         self.tx
             .send(router::KernelMessage::Shutdown)
@@ -95,6 +105,8 @@ pub(crate) struct RoutingServer {
     newly_depleted: Vec<usize>,
     /// Node indices that recovered above their restart threshold this timestep.
     newly_recovered: Vec<usize>,
+    /// Shared queue of (old_pid, new_pid) pairs for FUSE buffer migration.
+    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
 }
 
 impl RoutingServer {
@@ -106,6 +118,7 @@ impl RoutingServer {
         ts_config: TimestepConfig,
         rng: StdRng,
         mut source: Source,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -128,11 +141,18 @@ impl RoutingServer {
                     tx,
                     newly_depleted: Vec::new(),
                     newly_recovered: Vec::new(),
+                    pending_remaps,
                 };
                 loop {
                     match kernel_rx.recv() {
                         Ok(KernelMessage::Shutdown) => {
                             return Ok(());
+                        }
+                        Ok(KernelMessage::RemapPids(pairs)) => {
+                            router.apply_pid_remaps(&pairs);
+                            if router_tx.send(RouterMessage::PidsRemapped).is_err() {
+                                break Err(KernelError::RouterError(RouterError::RouteError));
+                            }
                         }
                         Ok(KernelMessage::Poll(timestep)) => {
                             router.timestep = timestep;
@@ -164,6 +184,26 @@ impl RoutingServer {
             })
             .map_err(|e| KernelError::RouterError(RouterError::ThreadCreation(e)))
             .map(|handle| KernelServer::new(handle, kernel_tx, router_rx))
+    }
+
+    /// Apply PID remaps: update handles, rebuild fuse_mapping, clear mailboxes
+    /// for affected handles, and push remaps to the shared FUSE queue.
+    fn apply_pid_remaps(&mut self, pairs: &[(u32, u32)]) {
+        for &(old_pid, new_pid) in pairs {
+            for (idx, handle) in self.channels.handles.iter_mut().enumerate() {
+                if handle.0 == old_pid {
+                    handle.0 = new_pid;
+                    // Clear mailbox — a real device losing power loses buffered frames
+                    self.mailboxes[idx].clear();
+                }
+            }
+        }
+        // Rebuild fuse_mapping from scratch
+        self.fuse_mapping = self.channels.make_fuse_mapping();
+        // Push remaps to shared FUSE queue
+        if let Ok(mut queue) = self.pending_remaps.lock() {
+            queue.extend_from_slice(pairs);
+        }
     }
 
     /// Map the ID communicated by the FUSE FS to a handle index
