@@ -25,13 +25,13 @@ simulations model these conditions directly.
 
 Each node can be configured with a battery capacity and a set of named power
 states (e.g., "sleep", "active", "transmit"). The kernel deducts energy each
-simulated timestep according to the active power state and applies an optional
-always-on generation rate (modeling a solar panel or other ambient source).
-When a node's charge reaches zero its protocol process is frozen via the cgroup
-v2 freezer, from the protocol's perspective, execution stops. If a
-`restart_threshold` is configured, the node automatically unfreezes once the
-battery recovers to that level; otherwise death is permanent for the
-simulation run.
+simulated timestep according to the active power state and applies named
+`power_sources` and `power_sinks`- always-on flows that run regardless of
+whether the node is alive (modeling a solar panel, a quiescent MCU draw, etc.).
+When a node's charge reaches zero its protocol process is killed and the node
+is marked dead. If a `restart_threshold` is configured, the node automatically
+respawns once the battery recovers to that level; otherwise death is permanent
+for the simulation run.
 
 Individual channel operations can also carry energy costs. Configuring TX and
 RX costs per channel lets you model the real power draw of radio hardware
@@ -67,7 +67,7 @@ deployments = [{ charge = { max = 3000, quantity = 2400, unit = "mwh" } }]
 | `unit` | string | Energy unit (see table below) |
 
 If `quantity` is zero the node starts dead; it will only be able to run once
-ambient generation charges it past `restart_threshold` (if one is set).
+a power source charges it past `restart_threshold` (if one is set).
 
 #### Energy Units
 
@@ -115,20 +115,54 @@ The `time` field uses the standard time unit strings (`"s"`, `"ms"`, `"us"`,
 like "80 mW per second" — meaning 80 mJ of energy consumed every simulated
 second.
 
-### Ambient Generation Rate
+### Power Sources and Power Sinks
 
-`ambient_rate` models a passive energy source such as a solar panel. It uses
-the same `{ rate, unit, time }` shape as a power state and is applied every
-timestep regardless of whether the node is alive:
+`power_sources` and `power_sinks` are named always-on energy flows applied
+every timestep regardless of whether the node is alive or dead. Sources add
+charge; sinks remove it (using `saturating_sub`). They replace the old
+`ambient_rate` field.
+
+#### Constant flows
+
+A constant flow uses the same `{ rate, unit, time }` shape as a power state:
 
 ```toml
-[nodes.main]
-ambient_rate = { rate = 400, unit = "mw", time = "s" }
+[nodes.sensor.power_sinks]
+mcu = { rate = 80, unit = "mw", time = "s" }
+
+[nodes.sensor.power_sources]
+battery_charger = { rate = 400, unit = "mw", time = "s" }
 ```
 
-A dead node with ambient generation will slowly recharge. Combined with
+#### Piecewise linear flows
+
+A piecewise linear flow varies over simulated time according to a `schedule`
+of `{ at, rate }` breakpoints. Between breakpoints the rate is linearly
+interpolated. The `repeat` field makes the schedule loop; without it the last
+breakpoint rate holds forever.
+
+```toml
+[nodes.sensor.power_sources.solar]
+unit     = "mw"
+time     = "s"
+schedule = [
+  { at = "0h",  rate = 0   },
+  { at = "6h",  rate = 0   },
+  { at = "12h", rate = 500 },
+  { at = "18h", rate = 0   },
+  { at = "24h", rate = 0   },
+]
+repeat = "24h"
+```
+
+Duration strings in `at` and `repeat` accept: `h`, `m`, `s`, `ms`, `us`.
+
+A dead node with a source will slowly recharge. Combined with
 `restart_threshold`, this models a solar-powered node that recovers
 automatically after going dark.
+
+> **Note:** Flows added at runtime via `ctl.power_flows` are always Constant;
+> piecewise linear flows can only be defined in the simulation config file.
 
 ### Initial State and Restart Threshold
 
@@ -178,7 +212,8 @@ energy references are validated: the channel name must appear in either
 
 ```toml
 # Sensor node: 3000 mWh battery, starts 80% charged, sleeps by default,
-# restarts at 5%, with explicit radio TX/RX costs.
+# restarts at 5%, with a solar source, a quiescent MCU sink, and explicit
+# radio TX/RX costs.
 
 [params]
 timestep.length = 1
@@ -199,6 +234,21 @@ deployments = [{
 [nodes.sensor.power_states]
 sleep    = { rate = 10,  unit = "uw", time = "s" }
 transmit = { rate = 100, unit = "mw", time = "s" }
+
+[nodes.sensor.power_sinks]
+mcu = { rate = 80, unit = "mw", time = "s" }
+
+[nodes.sensor.power_sources.solar]
+unit     = "mw"
+time     = "s"
+schedule = [
+  { at = "0h",  rate = 0   },
+  { at = "6h",  rate = 0   },
+  { at = "12h", rate = 500 },
+  { at = "18h", rate = 0   },
+  { at = "24h", rate = 0   },
+]
+repeat = "24h"
 
 [[nodes.sensor.protocols]]
 name        = "firmware"
@@ -239,8 +289,10 @@ pub struct EnergyState {
     pub charge_nj: u64,
     /// Maximum capacity in nanojoules.
     pub max_nj: u64,
-    /// Per-timestep ambient generation in nJ.
-    pub ambient_nj_per_ts: u64,
+    /// Named always-on generation flows (applied even when dead).
+    pub power_sources: Vec<(String, PowerFlowState)>,
+    /// Named always-on drain flows (applied even when dead, saturating_sub).
+    pub power_sinks: Vec<(String, PowerFlowState)>,
     /// Per-timestep drain in nJ for each named power state.
     pub power_states_nj: HashMap<String, u64>,
     /// Currently active power state name.
@@ -250,14 +302,26 @@ pub struct EnergyState {
     /// Whether this node is currently dead.
     pub is_dead: bool,
 }
+
+pub enum PowerFlowState {
+    /// Fixed nJ added/removed every timestep.
+    Constant { nj_per_ts: u64 },
+    /// Linearly interpolated schedule. `breakpoints` is a sorted list of
+    /// `(timestamp_ns, rate_nw)` pairs. `repeat_us` is the period in
+    /// microseconds (None = no repeat).
+    PiecewiseLinear {
+        breakpoints: Vec<(u64, u64)>,
+        repeat_us: Option<u64>,
+    },
+}
 ```
 
-`charge_nj` is an unsigned integer. Drain uses `saturating_sub` so charge
+`charge_nj` is an unsigned integer. All drain uses `saturating_sub` so charge
 never goes below zero. Death fires when charge hits exactly 0.
 
 ### The `nj_per_timestep` Formula
 
-Power state rates and `ambient_rate` are both stored as `PowerRate` values in
+Power state rates and constant power flows are stored as `PowerRate` values in
 config. The conversion to nanojoules-per-timestep is:
 
 ```
@@ -280,12 +344,16 @@ time_ns      = 1_000_000_000   (seconds in ns)
 nj_per_ts    = 100_000_000 × 1_000_000 / 1_000_000_000 = 100_000 nJ
 ```
 
-This conversion runs only once at startup. The per-timestep loop never touches
-floating-point arithmetic or performs unit conversion.
+This conversion runs only once at startup for Constant flows. The per-timestep
+loop never touches floating-point arithmetic or performs unit conversion.
+
+For PiecewiseLinear flows, the interpolated rate in nW is computed at each
+timestep from the breakpoint table, then converted to nJ/ts using the same
+formula above.
 
 `restart_threshold_nj` is derived as a floating-point multiplication at init
 time (`threshold × max_nj`) then truncated to `u64`. This is the only
-floating-point operation in the energy path.
+floating-point operation in the energy path (excluding piecewise interpolation).
 
 ---
 
@@ -298,34 +366,40 @@ order:
 ```
 for each node with an EnergyState:
 
-  1. Apply ambient generation (always, even if the node is dead)
-         charge_nj += ambient_nj_per_ts
+  1. Apply all power_sources (always, even if the node is dead)
+         for each (name, flow) in power_sources:
+             charge_nj += flow.nj_for_current_ts(current_time)
 
-  2. Apply power state drain (only if the node is alive)
+  2. Apply all power_sinks (always, even if the node is dead)
+         for each (name, flow) in power_sinks:
+             charge_nj = saturating_sub(charge_nj, flow.nj_for_current_ts(current_time))
+
+  3. Apply power state drain (only if the node is alive)
          drain = power_states_nj[current_state]  (0 if no state is active)
          charge_nj = saturating_sub(charge_nj, drain)
 
-  3. Cap charge at maximum capacity
+  4. Cap charge at maximum capacity
          charge_nj = min(charge_nj, max_nj)
 
-  4. Detect death transition (alive → dead)
+  5. Detect death transition (alive → dead)
          if !was_dead && charge_nj == 0:  (saturating_sub ensures no underflow)
              is_dead = true
              push node index to newly_depleted
 
-  5. Detect restart transition (dead → alive)
+  6. Detect restart transition (dead → alive)
          if was_dead && restart_threshold set && charge_nj >= threshold:
              is_dead = false
              push node index to newly_recovered
 
-  6. Emit battery snapshot to tracing log
+  7. Emit battery snapshot to tracing log
 ```
 
-Ambient generation is applied before the death check so that a node receiving
-exactly enough ambient to reach zero on this step is not immediately killed:
-the cap and death check see the post-ambient value. Similarly, ambient is
-applied before capping so a node does not permanently lose generation energy
-when it is already at `max_nj`.
+Sources are applied before sinks so that a source and a sink with exactly
+cancelling rates leave the charge unchanged rather than risking a
+`saturating_sub` underflow that clips to zero. Both are applied before the
+death check, so the check sees the fully-adjusted value. Sources and sinks are
+applied before capping so a node at `max_nj` does not permanently lose
+generation energy on the same step a sink drains a small amount.
 
 After `step()`, the main event loop drains `newly_depleted` and
 `newly_recovered` and calls into the `StatusServer` to freeze or unfreeze the
@@ -415,7 +489,7 @@ catch this.
 
 ## Control Files
 
-Two control files expose energy state to running protocol processes.
+Three control files expose energy state to running protocol processes.
 
 ### `ctl.energy_left`
 
@@ -461,6 +535,32 @@ an unknown state name is a no-op, not an error. This is a deliberate
 robustness choice: protocol code that writes a state that was removed from the
 config will not crash the simulation.
 
+### `ctl.power_flows`
+
+**Mode:** Read/Write
+
+**Read:** Returns all currently active power flows, one per line. Each line has
+the form `<kind> <name> <value> nj/ts`:
+
+```
+source solar 350 nj/ts
+sink mcu 80 nj/ts
+```
+
+**Write:** Adds, updates, or removes a Constant flow. The write format is one
+command per write:
+
+```
+source battery_charger 400 mw/s   # add/update a source
+sink radio 120 mw/s               # add/update a sink
+remove mcu                        # remove a flow by name (source or sink)
+```
+
+The unit string in writes uses the same `<power_unit>/<time_unit>` form as the
+config file (e.g., `mw/s`, `uw/s`). Flows added dynamically are always
+Constant. Piecewise linear flows defined in config appear in the read output
+with their current instantaneous rate but cannot be updated through this file.
+
 ---
 
 ## Node Death and Restart
@@ -505,14 +605,14 @@ could mask bugs that would appear on real hardware.
 ### Permanent Death
 
 Omitting `restart_threshold` means the node stays frozen for the remainder of
-the simulation. Ambient generation still applies — `charge_nj` can recover and
-even reach `max_nj` — but without a threshold the recovery check never fires
-and `is_dead` never clears.
+the simulation. Power sources still apply — `charge_nj` can recover and even
+reach `max_nj` — but without a threshold the recovery check never fires and
+`is_dead` never clears.
 
 ### State Summary
 
-| Condition | `is_dead` | Process state | Ambient applied | Drain applied |
-|-----------|-----------|---------------|-----------------|---------------|
+| Condition | `is_dead` | Process state | Sources/sinks applied | Power state drain |
+|-----------|-----------|---------------|-----------------------|-------------------|
 | Normal operation | `false` | Running | Yes | Yes |
 | Charge == 0, no threshold | `true` | Frozen | Yes | No |
 | Charge == 0, threshold not yet reached | `true` | Frozen | Yes | No |
@@ -565,7 +665,8 @@ happen when a protocol process makes a filesystem call.
   │  RoutingServer::step()                                   │
   │                                                          │
   │  for each node with EnergyState:                         │
-  │    charge_nj += ambient_nj_per_ts    ← solar / ambient   │
+  │    charge_nj += power_sources        ← solar, charger …  │
+  │    charge_nj -= power_sinks (sat.)   ← quiescent MCU …   │
   │    if alive:                                             │
   │      charge_nj -= power_states_nj    ← background drain  │
   │    charge_nj = min(charge_nj, max)   ← cap at full       │
@@ -600,14 +701,15 @@ happen when a protocol process makes a filesystem call.
 
 Key observations from the diagram:
 
-- Ambient and drain happen before message delivery, so a node that goes dead
-  this timestep does not also receive a message in the same step.
+- Sources and sinks run before power-state drain and before message delivery.
+  A node that goes dead this timestep does not also receive a message in the
+  same step.
 - TX cost is deducted at write time (synchronous with the protocol's write
   syscall), not at delivery time.
 - RX cost is deducted at delivery time within `step()`, not when the protocol
   reads the file. A message arriving in a dead node's mailbox still costs
   energy; the next death check will catch any resulting depletion.
-- The freeze/unfreeze cgroup writes happen in the main loop, one level above
+- The freeze/kill cgroup writes happen in the main loop, one level above
   the routing server. There is a one-timestep lag between the depletion event
   and the actual process freeze.
 
@@ -615,7 +717,7 @@ Key observations from the diagram:
 
 ## Test Coverage
 
-29 tests in `kernel/src/router/energy_tests.rs` and 4 tests in `fuse/src/fs.rs`
+37 tests in `kernel/src/router/energy_tests.rs` and 4 tests in `fuse/src/fs.rs`
 cover the full energy accounting and PID remapping paths. Router tests operate
 by constructing a `RoutingServer` directly (no FUSE filesystem, no real
 processes) and calling `step()` or `write_channel_file()` directly. FUSE tests
@@ -623,11 +725,16 @@ construct a `NexusFs` and exercise buffer migration via the shared remap queue.
 
 The tests are grouped by concern:
 
-**Core per-timestep accounting (8):**
+**Core per-timestep accounting (13):**
 
-- `test_ambient_generation` — ambient adds to charge each step
+- `test_constant_source_generation` — constant source adds to charge each step
+- `test_constant_sink_drain` — constant sink removes charge each step (saturating)
+- `test_piecewise_linear_source` — piecewise source interpolates between breakpoints
+- `test_piecewise_linear_repeat` — piecewise source wraps at `repeat` boundary
+- `test_source_applied_when_dead` — source still adds charge when node is dead
+- `test_sink_applied_when_dead` — sink still removes charge when node is dead
 - `test_power_state_drain` — active state drains the correct amount
-- `test_ambient_plus_drain` — both effects combined in the correct order
+- `test_source_plus_drain` — source and power-state drain combined in the correct order
 - `test_charge_capped_at_max` — overflow past max is clipped
 - `test_multi_step_accumulation` — 100 steps accumulate correctly
 - `test_no_current_state_no_drain` — node with no active state has zero drain
@@ -638,7 +745,7 @@ The tests are grouped by concern:
 
 - `test_node_death` — charge == 0 sets `is_dead` and populates `newly_depleted`
 - `test_newly_depleted_populated` — `newly_depleted` is not auto-drained by `step()`
-- `test_dead_node_ambient_only` — dead node receives ambient but no drain
+- `test_dead_node_sources_only` — dead node receives sources/sinks but no power-state drain
 - `test_node_restart_at_threshold` — node revives when charge crosses threshold
 - `test_permanent_death_without_threshold` — no threshold means no restart
 - `test_full_lifecycle` — alive → dead → solar charging → restart → alive again
@@ -648,10 +755,11 @@ The tests are grouped by concern:
 - `test_tx_energy_deduction` — 100 µJ TX cost deducted (= 100,000 nJ); saturates to 0 if cost exceeds charge
 - `test_rx_energy_deduction` — 50 µJ RX cost deducted on message delivery
 
-**Control file state transitions (2):**
+**Control file state transitions (3):**
 
 - `test_energy_state_transition` — writing `"active"` to `ctl.energy_state` changes drain rate
 - `test_unknown_energy_state_ignored` — writing an unknown name leaves state unchanged
+- `test_power_flows_ctl_add_and_remove` — writing to `ctl.power_flows` adds a constant flow and `remove` deletes it
 
 **PID remapping (6):**
 
@@ -664,14 +772,16 @@ The tests are grouped by concern:
 
 **Config conversion (`EnergyState::from_node`) (3):**
 
-- `test_from_node_basic` — µJ capacity, mW drain, mW ambient, 0.5 restart threshold
+- `test_from_node_basic` — µJ capacity, mW drain, constant source and sink, 0.5 restart threshold
 - `test_from_node_no_charge_returns_none` — node without `charge` block produces `None`
 - `test_from_node_zero_charge_is_dead` — initial charge of 0 sets `is_dead = true`
 
-**Unit conversion (`nj_per_timestep`) (2):**
+**Unit conversion (`nj_per_timestep`) (4):**
 
 - `test_nj_per_timestep_milliwatt_per_second` — 100 mW at 1 ms timestep = 100,000 nJ/ts
 - `test_nj_per_timestep_watt_per_millisecond` — 1 W at 1 ms / ms rate = 10⁹ nJ/ts
+- `test_piecewise_interpolation_midpoint` — rate interpolated correctly at the midpoint of two breakpoints
+- `test_piecewise_interpolation_at_repeat_boundary` — value at exact repeat boundary wraps to schedule start
 
 **FUSE buffer migration (4, in `fuse/src/fs.rs`):**
 

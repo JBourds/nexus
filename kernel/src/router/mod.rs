@@ -33,6 +33,7 @@ use tracing::{Level, debug, event, info, instrument, warn};
 
 mod energy_tests;
 mod posctl;
+mod powerctl;
 mod timectl;
 use crate::types::ChannelHandle;
 
@@ -243,6 +244,7 @@ impl RoutingServer {
             ["pos", "dx" | "dy" | "dz"] => self.write_pos_delta(node_index, msg),
             ["pos", "motion"] => self.write_pos_motion(node_index, msg),
             ["pos", ..] => self.write_pos(node_index, msg),
+            ["power_flows"] => self.write_power_flows(node_index, msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -336,6 +338,7 @@ impl RoutingServer {
             }
             ["pos", "motion"] => self.read_pos_motion(node_index, msg),
             ["pos", ..] => self.read_pos(node_index, msg),
+            ["power_flows"] => self.read_power_flows(node_index, msg),
             _ => unimplemented!("Unimplemented control file: {remaining}"),
         }
     }
@@ -375,12 +378,29 @@ impl RoutingServer {
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
 
+        // Compute current simulation time in microseconds for piecewise flows
+        let timestep_ns =
+            self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
+        let current_time_us = self.timestep * timestep_ns / 1000;
+
         // Drain per-timestep energy for all nodes with batteries
         for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
             if let Some(energy) = &mut node.energy {
                 let was_dead = energy.is_dead;
-                // Always apply ambient generation (even when dead, e.g. solar charging)
-                energy.charge_nj += energy.ambient_nj_per_ts;
+                // Always apply power sources (even when dead, e.g. solar charging)
+                let source_nj: u64 = energy
+                    .power_sources
+                    .iter()
+                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
+                    .sum();
+                energy.charge_nj += source_nj;
+                // Always apply power sinks (even when dead; saturating keeps charge at 0)
+                let sink_nj: u64 = energy
+                    .power_sinks
+                    .iter()
+                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
+                    .sum();
+                energy.charge_nj = energy.charge_nj.saturating_sub(sink_nj);
                 // Only drain power state if alive
                 if !was_dead {
                     let drain = energy

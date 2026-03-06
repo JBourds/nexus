@@ -27,7 +27,7 @@ use std::{collections::HashMap, path::PathBuf};
 static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
-pub const CONTROL_FILES: [(&str, ChannelMode); 18] = [
+pub const CONTROL_FILES: [(&str, ChannelMode); 19] = [
     // Time control: read/write current virtual time per node
     ("ctl.time.us", ChannelMode::ReadWrite),
     ("ctl.time.ms", ChannelMode::ReadWrite),
@@ -52,6 +52,8 @@ pub const CONTROL_FILES: [(&str, ChannelMode); 18] = [
     ("ctl.pos.dz", ChannelMode::WriteOnly),
     // Motion pattern (read/write; formats: none | velocity | linear | circle)
     ("ctl.pos.motion", ChannelMode::ReadWrite),
+    // Power flows (read/write; runtime manipulation of power sources/sinks)
+    ("ctl.power_flows", ChannelMode::ReadWrite),
 ];
 
 pub fn control_files() -> Vec<String> {

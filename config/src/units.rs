@@ -1,6 +1,30 @@
+use anyhow::{Context, Result, bail};
+
 use crate::ast::{
     ClockUnit, DataRate, DataUnit, DistanceUnit, EnergyUnit, PowerRate, PowerUnit, TimeUnit,
 };
+
+/// Parse a duration string like `"6h"`, `"30m"`, `"1s"`, `"500ms"`, `"100us"`
+/// into microseconds.
+pub fn parse_duration_to_us(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let num_end = s
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(s.len());
+    let (num_str, unit_str) = s.split_at(num_end);
+    let num: u64 = num_str
+        .parse()
+        .context(format!("invalid number in duration \"{s}\""))?;
+    let factor: u64 = match unit_str {
+        "h" => 3_600_000_000,
+        "m" => 60_000_000,
+        "s" => 1_000_000,
+        "ms" => 1_000,
+        "us" => 1,
+        _ => bail!("unknown duration unit \"{unit_str}\" in \"{s}\"; expected h, m, s, ms, or us"),
+    };
+    Ok(num * factor)
+}
 
 impl DataUnit {
     /// Return the left shift ratio of left / right with a boolean

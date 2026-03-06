@@ -5,6 +5,7 @@ use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
+use crate::units::parse_duration_to_us;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
@@ -774,6 +775,69 @@ impl PowerRate {
     }
 }
 
+impl PowerFlow {
+    fn validate(def: parse::PowerFlowDef) -> Result<Self> {
+        match def {
+            parse::PowerFlowDef::Constant { rate, unit, time } => {
+                let unit =
+                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time =
+                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                Ok(Self::Constant(PowerRate { rate, unit, time }))
+            }
+            parse::PowerFlowDef::Scheduled {
+                unit,
+                time,
+                schedule,
+                repeat,
+            } => {
+                ensure!(
+                    schedule.len() >= 2,
+                    "Piecewise linear schedule must have at least 2 breakpoints"
+                );
+                let unit =
+                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time =
+                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let mut breakpoints = Vec::with_capacity(schedule.len());
+                for bp in schedule {
+                    let time_us = parse_duration_to_us(&bp.at)
+                        .context(format!("Failed to parse breakpoint time \"{}\"", bp.at))?;
+                    breakpoints.push((time_us, bp.rate));
+                }
+                // Validate breakpoints are sorted by time
+                for i in 1..breakpoints.len() {
+                    ensure!(
+                        breakpoints[i].0 >= breakpoints[i - 1].0,
+                        "Breakpoints must be in non-decreasing time order; \
+                         got {} after {}",
+                        breakpoints[i].0,
+                        breakpoints[i - 1].0
+                    );
+                }
+                let repeat_us = repeat
+                    .map(|s| parse_duration_to_us(&s))
+                    .transpose()
+                    .context("Failed to parse repeat duration")?;
+                if let Some(period) = repeat_us {
+                    ensure!(period > 0, "repeat duration must be positive");
+                    let last_time = breakpoints.last().unwrap().0;
+                    ensure!(
+                        last_time <= period,
+                        "Last breakpoint time ({last_time} us) exceeds repeat period ({period} us)"
+                    );
+                }
+                Ok(Self::PiecewiseLinear {
+                    unit,
+                    time,
+                    breakpoints,
+                    repeat_us,
+                })
+            }
+        }
+    }
+}
+
 impl Node {
     pub const SELF: &'static str = "self";
     fn validate(
@@ -841,12 +905,29 @@ impl Node {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
-        // Validate ambient rate (always-on background generation)
-        let ambient_rate = val
-            .ambient_rate
-            .map(PowerRate::validate_rate)
-            .transpose()
-            .context("Failed to validate ambient_rate")?;
+        // Validate power sources
+        let power_sources = val
+            .power_sources
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, def)| {
+                PowerFlow::validate(def)
+                    .context(format!("Failed to validate power source \"{name}\""))
+                    .map(|f| (name, f))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        // Validate power sinks
+        let power_sinks = val
+            .power_sinks
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, def)| {
+                PowerFlow::validate(def)
+                    .context(format!("Failed to validate power sink \"{name}\""))
+                    .map(|f| (name, f))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
         // Check that all internal names were used
         let internal_names_used = protocols
@@ -941,7 +1022,8 @@ impl Node {
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
                 power_states: power_states.clone(),
-                ambient_rate,
+                power_sources: power_sources.clone(),
+                power_sinks: power_sinks.clone(),
                 initial_state,
                 restart_threshold,
                 start,

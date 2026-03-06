@@ -1,4 +1,4 @@
-# Node with battery, named power states, and ambient generation rate.
+# Node with battery, named power states, and piecewise linear solar source.
 
 [params]
 timestep.length = 1
@@ -10,14 +10,20 @@ root = "~/simulations"
 [nodes]
 
 [nodes.main]
-# Always-on solar panel generating 400 mW
-ambient_rate = { rate = 400, unit = "mw", time = "s" }
 deployments = [{ charge = { max = 1000, quantity = 800, unit = "mwh" }, initial_state = "active" }]
 
 [nodes.main.power_states]
 sleep    = { rate = 20,  unit = "uw", time = "s" }
 standby  = { rate = 200, unit = "uw", time = "s" }
 active   = { rate = 80,  unit = "mw", time = "s" }
+
+# Always-on solar panel generating 400 mW
+[nodes.main.power_sources]
+solar = { rate = 400, unit = "mw", time = "s" }
+
+# MCU baseline draw
+[nodes.main.power_sinks]
+mcu = { rate = 10, unit = "mw", time = "s" }
 
 [[nodes.main.protocols]]
 

@@ -72,9 +72,12 @@ pub struct Node {
     /// Named power consumption states the process can switch between
     /// via `ctl.energy_state`. Rates are positive = consumption.
     pub power_states: HashMap<String, PowerRate>,
-    /// Always-on background generation rate (e.g. solar panel).
-    /// Positive = generation, applied regardless of process state.
-    pub ambient_rate: Option<PowerRate>,
+    /// Named passive power sources (e.g. solar panel, battery charger).
+    /// Applied every timestep regardless of alive/dead state.
+    pub power_sources: HashMap<String, PowerFlow>,
+    /// Named passive power sinks (e.g. MCU baseline, sensor draw).
+    /// Applied every timestep regardless of alive/dead state.
+    pub power_sinks: HashMap<String, PowerFlow>,
     /// Which power state to start in (must be a key in `power_states`).
     pub initial_state: Option<String>,
     /// Fraction of max charge (0..=1) at which a dead node restarts.
@@ -280,6 +283,22 @@ pub struct PowerRate {
     pub rate: u64,
     pub unit: PowerUnit,
     pub time: TimeUnit,
+}
+
+/// A power flow that is either constant or piecewise-linear over time.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum PowerFlow {
+    /// A fixed rate that never changes.
+    Constant(PowerRate),
+    /// A rate that varies linearly between breakpoints over simulated time.
+    PiecewiseLinear {
+        unit: PowerUnit,
+        time: TimeUnit,
+        /// Sorted breakpoints: `(time_us, rate_in_original_units)`.
+        breakpoints: Vec<(u64, u64)>,
+        /// Optional repeat period in microseconds. If set, time wraps around.
+        repeat_us: Option<u64>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]

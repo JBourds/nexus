@@ -3,7 +3,7 @@ mod tests {
     use crate::{
         resolver::ResolvedChannels,
         router::{RoutingServer, table::RoutingTable},
-        types::{self, EnergyState},
+        types::{self, EnergyState, PowerFlowState},
     };
     use config::ast::{
         ChannelEnergy, ChannelType, Energy, EnergyUnit, Link, Position, TimeUnit, TimestepConfig,
@@ -111,7 +111,8 @@ mod tests {
         EnergyState {
             charge_nj,
             max_nj,
-            ambient_nj_per_ts: 0,
+            power_sources: vec![],
+            power_sinks: vec![],
             power_states_nj: HashMap::new(),
             current_state: None,
             restart_threshold_nj: None,
@@ -119,18 +120,30 @@ mod tests {
         }
     }
 
+    /// Helper: create an EnergyState with a constant power source.
+    fn energy_with_source(charge_nj: u64, max_nj: u64, source_nj_per_ts: u64) -> EnergyState {
+        EnergyState {
+            power_sources: vec![(
+                "ambient".into(),
+                PowerFlowState::Constant {
+                    nj_per_ts: source_nj_per_ts,
+                },
+            )],
+            ..basic_energy(charge_nj, max_nj)
+        }
+    }
+
     // -----------------------------------------------------------------------
-    // Test: per-timestep ambient generation
+    // Test: per-timestep power source generation
     // -----------------------------------------------------------------------
     #[test]
-    fn test_ambient_generation() {
-        let mut energy = basic_energy(500, 10_000);
-        energy.ambient_nj_per_ts = 100;
+    fn test_power_source_generation() {
+        let energy = energy_with_source(500, 10_000, 100);
         let (mut router, _rx) = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        assert_eq!(charge, 600, "Ambient should add 100 nJ per step");
+        assert_eq!(charge, 600, "Source should add 100 nJ per step");
     }
 
     // -----------------------------------------------------------------------
@@ -149,19 +162,18 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: ambient + drain combined
+    // Test: source + drain combined
     // -----------------------------------------------------------------------
     #[test]
-    fn test_ambient_plus_drain() {
-        let mut energy = basic_energy(1000, 10_000);
-        energy.ambient_nj_per_ts = 50;
+    fn test_source_plus_drain() {
+        let mut energy = energy_with_source(1000, 10_000, 50);
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         let (mut router, _rx) = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        // 1000 + 50 (ambient) - 200 (drain) = 850
+        // 1000 + 50 (source) - 200 (drain) = 850
         assert_eq!(charge, 850);
     }
 
@@ -170,8 +182,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_charge_capped_at_max() {
-        let mut energy = basic_energy(9950, 10_000);
-        energy.ambient_nj_per_ts = 200;
+        let energy = energy_with_source(9950, 10_000, 200);
         let (mut router, _rx) = make_single_node_router(energy);
 
         router.step().unwrap();
@@ -217,12 +228,15 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: dead node gets ambient but no state drain
+    // Test: dead node gets sources and sinks but no state drain
     // -----------------------------------------------------------------------
     #[test]
-    fn test_dead_node_ambient_only() {
-        let mut energy = basic_energy(0, 10_000);
-        energy.ambient_nj_per_ts = 30;
+    fn test_dead_node_sources_and_sinks() {
+        let mut energy = energy_with_source(0, 10_000, 50);
+        energy.power_sinks.push((
+            "mcu".into(),
+            PowerFlowState::Constant { nj_per_ts: 20 },
+        ));
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         energy.is_dead = true;
@@ -230,8 +244,11 @@ mod tests {
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        // 0 + 30 (ambient) - 0 (no drain while dead) = 30
-        assert_eq!(charge, 30, "Dead node should only get ambient, no drain");
+        // 0 + 50 (source) - 20 (sink) - 0 (no power state drain while dead) = 30
+        assert_eq!(
+            charge, 30,
+            "Dead node should get sources and sinks, but no power state drain"
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -239,8 +256,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_node_restart_at_threshold() {
-        let mut energy = basic_energy(0, 10_000);
-        energy.ambient_nj_per_ts = 100;
+        let mut energy = energy_with_source(0, 10_000, 100);
         energy.is_dead = true;
         // restart at 50% = 5000 nJ — won't trigger yet
         energy.restart_threshold_nj = Some(5000);
@@ -268,13 +284,12 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_permanent_death_without_threshold() {
-        let mut energy = basic_energy(0, 10_000);
-        energy.ambient_nj_per_ts = 10_000; // lots of ambient
+        let mut energy = energy_with_source(0, 10_000, 10_000);
         energy.is_dead = true;
         energy.restart_threshold_nj = None; // no restart
         let (mut router, _rx) = make_single_node_router(energy);
 
-        // Even with massive ambient, node stays dead
+        // Even with massive source, node stays dead
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert!(
@@ -301,8 +316,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_multi_step_accumulation() {
-        let mut energy = basic_energy(1000, 10_000);
-        energy.ambient_nj_per_ts = 10;
+        let mut energy = energy_with_source(1000, 10_000, 10);
         energy.power_states_nj = HashMap::from([("idle".into(), 3)]);
         energy.current_state = Some("idle".into());
         let (mut router, _rx) = make_single_node_router(energy);
@@ -439,7 +453,7 @@ mod tests {
 
         let charge = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
         // RX cost: 50 µJ = 50_000 nJ
-        // Also ambient (0) and drain (0) applied during step
+        // Also source (0) and drain (0) applied during step
         let expected = initial_charge - 50_000;
         assert_eq!(charge, expected, "RX should deduct 50 µJ = 50,000 nJ");
     }
@@ -576,8 +590,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_full_lifecycle() {
-        let mut energy = basic_energy(300, 10_000);
-        energy.ambient_nj_per_ts = 50;
+        let mut energy = energy_with_source(300, 10_000, 50);
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         energy.restart_threshold_nj = Some(500);
@@ -597,7 +610,7 @@ mod tests {
         assert!(e.is_dead);
         assert_eq!(router.newly_depleted, vec![0]);
 
-        // Steps 3-12: dead, only ambient. 0 + 10*50 = 500 (at threshold!)
+        // Steps 3-12: dead, only sources. 0 + 10*50 = 500 (at threshold!)
         for _ in 0..10 {
             router.newly_recovered.clear();
             router.step().unwrap();
@@ -637,11 +650,15 @@ mod tests {
                     time: TimeUnit::Seconds,
                 },
             )]),
-            ambient_rate: Some(config::ast::PowerRate {
-                rate: 2,
-                unit: config::ast::PowerUnit::MilliWatt,
-                time: TimeUnit::Seconds,
-            }),
+            power_sources: HashMap::from([(
+                "solar".into(),
+                config::ast::PowerFlow::Constant(config::ast::PowerRate {
+                    rate: 2,
+                    unit: config::ast::PowerUnit::MilliWatt,
+                    time: TimeUnit::Seconds,
+                }),
+            )]),
+            power_sinks: HashMap::new(),
             initial_state: Some("active".into()),
             restart_threshold: Some(0.5),
             start: SystemTime::UNIX_EPOCH,
@@ -656,8 +673,10 @@ mod tests {
         // 10 mW = 10_000_000 nW; timestep = 1ms = 1_000_000 ns; per second = 1e9 ns
         // nj/ts = 10_000_000 * 1_000_000 / 1_000_000_000 = 10_000
         assert_eq!(*e.power_states_nj.get("active").unwrap(), 10_000);
-        // 2 mW → 2_000_000 nW; same formula → 2_000
-        assert_eq!(e.ambient_nj_per_ts, 2_000);
+        // Power source "solar": 2 mW → 2_000_000 nW; same formula → 2_000
+        assert_eq!(e.power_sources.len(), 1);
+        assert_eq!(e.power_sources[0].0, "solar");
+        assert_eq!(e.power_sources[0].1.nj_per_timestep(0), 2_000);
         assert_eq!(e.current_state.as_deref(), Some("active"));
         // restart_threshold = 0.5 * 1_000_000 = 500_000
         assert_eq!(e.restart_threshold_nj, Some(500_000));
@@ -673,7 +692,8 @@ mod tests {
             internal_names: vec![],
             resources: config::ast::Resources::default(),
             power_states: HashMap::new(),
-            ambient_rate: None,
+            power_sources: HashMap::new(),
+            power_sinks: HashMap::new(),
             initial_state: None,
             restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,
@@ -694,7 +714,8 @@ mod tests {
             internal_names: vec![],
             resources: config::ast::Resources::default(),
             power_states: HashMap::new(),
-            ambient_rate: None,
+            power_sources: HashMap::new(),
+            power_sinks: HashMap::new(),
             initial_state: None,
             restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,
@@ -735,6 +756,31 @@ mod tests {
     // -----------------------------------------------------------------------
     // Test: two nodes with independent energy tracking
     // -----------------------------------------------------------------------
+    #[test]
+    fn test_two_nodes_independent() {
+        let energy_a = {
+            let mut e = energy_with_source(1000, 10_000, 10);
+            e.power_states_nj = HashMap::from([("on".into(), 100)]);
+            e.current_state = Some("on".into());
+            e
+        };
+        let energy_b = energy_with_source(500, 5000, 200);
+        let (mut router, _rx) = make_router(
+            vec![make_node(Some(energy_a)), make_node(Some(energy_b))],
+            vec![],
+            vec![],
+        );
+
+        router.step().unwrap();
+
+        let a = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
+        let b = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
+        // A: 1000 + 10 - 100 = 910
+        assert_eq!(a, 910);
+        // B: 500 + 200 = 700
+        assert_eq!(b, 700);
+    }
+
     // -----------------------------------------------------------------------
     // Test: apply_pid_remaps updates handles and rebuilds fuse_mapping
     // -----------------------------------------------------------------------
@@ -947,33 +993,251 @@ mod tests {
         assert_eq!(router.mailboxes[1].len(), 1);
     }
 
+    // -----------------------------------------------------------------------
+    // Test: piecewise linear evaluation — interpolation
+    // -----------------------------------------------------------------------
     #[test]
-    fn test_two_nodes_independent() {
-        let energy_a = {
-            let mut e = basic_energy(1000, 10_000);
-            e.ambient_nj_per_ts = 10;
-            e.power_states_nj = HashMap::from([("on".into(), 100)]);
-            e.current_state = Some("on".into());
-            e
+    fn test_piecewise_linear_interpolation() {
+        // Schedule: 0us → 0 nj/ts, 1000us → 100 nj/ts
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(0, 0), (1000, 100)],
+            repeat_us: None,
         };
-        let energy_b = {
-            let mut e = basic_energy(500, 5000);
-            e.ambient_nj_per_ts = 200;
-            e
+        assert_eq!(flow.nj_per_timestep(0), 0);
+        assert_eq!(flow.nj_per_timestep(500), 50);
+        assert_eq!(flow.nj_per_timestep(1000), 100);
+        // Beyond last breakpoint: clamp to last value
+        assert_eq!(flow.nj_per_timestep(2000), 100);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: piecewise linear evaluation — repeat wraparound
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_piecewise_linear_repeat() {
+        // Schedule: 0us → 0 nj/ts, 500us → 100 nj/ts, 1000us → 0 nj/ts
+        // Repeats every 1000us
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(0, 0), (500, 100), (1000, 0)],
+            repeat_us: Some(1000),
         };
-        let (mut router, _rx) = make_router(
-            vec![make_node(Some(energy_a)), make_node(Some(energy_b))],
-            vec![],
-            vec![],
-        );
+        assert_eq!(flow.nj_per_timestep(250), 50);
+        assert_eq!(flow.nj_per_timestep(500), 100);
+        assert_eq!(flow.nj_per_timestep(750), 50);
+        // After one full cycle, should wrap around
+        assert_eq!(flow.nj_per_timestep(1250), 50);
+        assert_eq!(flow.nj_per_timestep(1500), 100);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: piecewise linear — boundary values
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_piecewise_linear_boundary() {
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(100, 10), (200, 20), (300, 30)],
+            repeat_us: None,
+        };
+        // Before first breakpoint
+        assert_eq!(flow.nj_per_timestep(0), 10);
+        // Exactly on breakpoints
+        assert_eq!(flow.nj_per_timestep(100), 10);
+        assert_eq!(flow.nj_per_timestep(200), 20);
+        assert_eq!(flow.nj_per_timestep(300), 30);
+        // After last breakpoint
+        assert_eq!(flow.nj_per_timestep(500), 30);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: multiple sources + sinks combining correctly
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_multiple_sources_and_sinks() {
+        let mut energy = basic_energy(1000, 100_000);
+        energy.power_sources = vec![
+            (
+                "solar".into(),
+                PowerFlowState::Constant { nj_per_ts: 100 },
+            ),
+            (
+                "charger".into(),
+                PowerFlowState::Constant { nj_per_ts: 50 },
+            ),
+        ];
+        energy.power_sinks = vec![
+            ("mcu".into(), PowerFlowState::Constant { nj_per_ts: 30 }),
+            ("radio".into(), PowerFlowState::Constant { nj_per_ts: 20 }),
+        ];
+        let (mut router, _rx) = make_single_node_router(energy);
 
         router.step().unwrap();
+        let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
+        // 1000 + (100 + 50) - (30 + 20) = 1000 + 150 - 50 = 1100
+        assert_eq!(charge, 1100);
+    }
 
-        let a = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
-        let b = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
-        // A: 1000 + 10 - 100 = 910
-        assert_eq!(a, 910);
-        // B: 500 + 200 = 700
-        assert_eq!(b, 700);
+    // -----------------------------------------------------------------------
+    // Test: dead node — sinks keep charge at 0 via saturating_sub
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_dead_node_sinks_keep_zero() {
+        let mut energy = basic_energy(0, 10_000);
+        energy.power_sinks = vec![(
+            "mcu".into(),
+            PowerFlowState::Constant { nj_per_ts: 100 },
+        )];
+        energy.is_dead = true;
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        router.step().unwrap();
+        let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
+        // 0 + 0 (no sources) - 100 (sink, saturates to 0) = 0
+        assert_eq!(charge, 0, "Sink on dead node should saturate to 0");
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: control file read/write round-trip
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_power_flows_control_file_roundtrip() {
+        let energy = basic_energy(5000, 10_000);
+        let node =
+            make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
+
+        let (tx, rx) = mpsc::channel();
+        let handles = vec![(1u32, 0usize, 0usize)];
+        let resolved = ResolvedChannels {
+            nodes: vec![node],
+            node_names: vec!["node_0".to_string()],
+            channels: vec![types::Channel {
+                link: Link::default(),
+                r#type: ChannelType::new_internal(),
+                subscribers: HashSet::new(),
+                publishers: HashSet::new(),
+            }],
+            channel_names: vec!["ctl.power_flows".to_string()],
+            handles: handles.clone(),
+        };
+        let fuse_mapping = resolved.make_fuse_mapping();
+        let routes = RoutingTable::new(&resolved);
+        let mut router = RoutingServer {
+            timestep: 1,
+            ts_config: test_ts_config(),
+            channels: resolved,
+            routes,
+            queued: BinaryHeap::new(),
+            fuse_mapping,
+            mailboxes: vec![VecDeque::new(); handles.len()],
+            rng: StdRng::seed_from_u64(42),
+            tx,
+            newly_depleted: Vec::new(),
+            newly_recovered: Vec::new(),
+            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+
+        // Write a source and a sink via control file (nj/ts passthrough)
+        let write_msg = fuse::Message {
+            id: (1, "ctl.power_flows".to_string()),
+            data: b"source solar 200 nj/ts\nsink mcu 50 nj/ts\n".to_vec(),
+        };
+        router.write_control_file(0, write_msg).unwrap();
+
+        // Verify they were added
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.power_sources.len(), 1);
+        assert_eq!(e.power_sources[0].0, "solar");
+        assert_eq!(e.power_sources[0].1.nj_per_timestep(0), 200);
+        assert_eq!(e.power_sinks.len(), 1);
+        assert_eq!(e.power_sinks[0].0, "mcu");
+        assert_eq!(e.power_sinks[0].1.nj_per_timestep(0), 50);
+
+        // Read the flows back
+        let read_msg = fuse::Message {
+            id: (1, "ctl.power_flows".to_string()),
+            data: vec![],
+        };
+        router.read_control_file(0, read_msg).unwrap();
+
+        let response = rx.recv().unwrap();
+        let data = match response {
+            fuse::KernelMessage::Exclusive(msg) => String::from_utf8(msg.data).unwrap(),
+            _ => panic!("Expected Exclusive message"),
+        };
+        assert!(data.contains("source solar 200 nj/ts"));
+        assert!(data.contains("sink mcu 50 nj/ts"));
+
+        // Step and verify sources/sinks are applied
+        router.step().unwrap();
+        let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
+        // 5000 + 200 - 50 = 5150
+        assert_eq!(charge, 5150);
+
+        // Remove the sink via control file
+        let remove_msg = fuse::Message {
+            id: (1, "ctl.power_flows".to_string()),
+            data: b"remove mcu\n".to_vec(),
+        };
+        router.write_control_file(0, remove_msg).unwrap();
+        assert_eq!(
+            router.channels.nodes[0]
+                .energy
+                .as_ref()
+                .unwrap()
+                .power_sinks
+                .len(),
+            0
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: control file write with mw/s units
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_power_flows_control_file_unit_conversion() {
+        let energy = basic_energy(0, 100_000_000);
+        let node =
+            make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
+
+        let (tx, _rx) = mpsc::channel();
+        let handles = vec![(1u32, 0usize, 0usize)];
+        let resolved = ResolvedChannels {
+            nodes: vec![node],
+            node_names: vec!["node_0".to_string()],
+            channels: vec![types::Channel {
+                link: Link::default(),
+                r#type: ChannelType::new_internal(),
+                subscribers: HashSet::new(),
+                publishers: HashSet::new(),
+            }],
+            channel_names: vec!["ctl.power_flows".to_string()],
+            handles: handles.clone(),
+        };
+        let fuse_mapping = resolved.make_fuse_mapping();
+        let routes = RoutingTable::new(&resolved);
+        let mut router = RoutingServer {
+            timestep: 1,
+            ts_config: test_ts_config(),
+            channels: resolved,
+            routes,
+            queued: BinaryHeap::new(),
+            fuse_mapping,
+            mailboxes: vec![VecDeque::new(); handles.len()],
+            rng: StdRng::seed_from_u64(42),
+            tx,
+            newly_depleted: Vec::new(),
+            newly_recovered: Vec::new(),
+            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+        };
+
+        // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep
+        // nj/ts = 100 * 1_000_000 * 1_000_000 / 1_000_000_000 = 100_000
+        let write_msg = fuse::Message {
+            id: (1, "ctl.power_flows".to_string()),
+            data: b"source solar 100 mw/s\n".to_vec(),
+        };
+        router.write_control_file(0, write_msg).unwrap();
+
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.power_sources[0].1.nj_per_timestep(0), 100_000);
     }
 }

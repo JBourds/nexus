@@ -65,7 +65,7 @@ pub struct Charge {
     pub(super) unit: Unit,
 }
 
-/// A power rate used for per-node power states and ambient rates.
+/// A power rate used for per-node power states.
 /// `rate` is always positive; semantics (consumption vs. generation) are
 /// determined by the field it appears in.
 #[derive(Debug, Default, Deserialize)]
@@ -74,6 +74,32 @@ pub struct PowerRate {
     pub(super) rate: u64,
     pub(super) unit: Unit,
     pub(super) time: Unit,
+}
+
+/// A single breakpoint in a piecewise-linear power schedule.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Breakpoint {
+    pub(super) at: String,
+    pub(super) rate: u64,
+}
+
+/// A power flow definition that can be either constant or scheduled.
+/// Deserialized as untagged: presence of `schedule` distinguishes the two.
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+pub enum PowerFlowDef {
+    Scheduled {
+        unit: Unit,
+        time: Unit,
+        schedule: Vec<Breakpoint>,
+        repeat: Option<String>,
+    },
+    Constant {
+        rate: u64,
+        unit: Unit,
+        time: Unit,
+    },
 }
 
 /// One-time energy cost (e.g. per TX or RX on a channel).
@@ -238,8 +264,10 @@ pub struct Node {
     /// Named power consumption/generation states the process can switch
     /// between via `ctl.energy_state`. Positive rate = consumption.
     pub(super) power_states: Option<HashMap<String, PowerRate>>,
-    /// Always-on background power rate. Positive = generation (e.g. solar).
-    pub(super) ambient_rate: Option<PowerRate>,
+    /// Named passive power sources (e.g. solar panel, battery charger).
+    pub(super) power_sources: Option<HashMap<String, PowerFlowDef>>,
+    /// Named passive power sinks (e.g. MCU baseline, sensor).
+    pub(super) power_sinks: Option<HashMap<String, PowerFlowDef>>,
 }
 
 #[derive(Debug, Default, Deserialize)]

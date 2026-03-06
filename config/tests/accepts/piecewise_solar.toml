@@ -1,0 +1,33 @@
+# Node with piecewise-linear solar source and constant sink.
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 100
+seed = 0
+root = "~/simulations"
+
+[nodes.sensor]
+deployments = [{ charge = { max = 5000, quantity = 2500, unit = "mwh" } }]
+
+# Piecewise-linear solar panel: ramps up from 6h to noon, back down by 6pm
+[nodes.sensor.power_sources.solar]
+unit = "mw"
+time = "s"
+schedule = [
+  { at = "0h",  rate = 0 },
+  { at = "6h",  rate = 0 },
+  { at = "12h", rate = 500 },
+  { at = "18h", rate = 0 },
+  { at = "24h", rate = 0 },
+]
+repeat = "24h"
+
+# Constant baseline draw
+[nodes.sensor.power_sinks]
+mcu = { rate = 80, unit = "mw", time = "s" }
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["sensor.py"]
