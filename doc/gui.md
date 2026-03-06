@@ -89,7 +89,7 @@ gui/src/
     ├── mod.rs                Re-exports
     ├── grid.rs               GridView: pan/zoom/coordinate transform/grid drawing
     ├── node.rs               draw_node: circle + label + selection ring
-    └── message.rs            draw_message_arc: in-flight message arc (defined, unused by live panels)
+    └── message.rs            draw_message_arc: animated message arrows (TX/RX/Drop)
 ```
 
 ---
@@ -105,11 +105,14 @@ as inline data:
 ```rust
 pub enum AppMode {
     Home,
-    ConfigEditor(ConfigEditorState),
-    LiveSimulation(LiveSimState),
-    Replay(ReplayState),
+    ConfigEditor(Box<ConfigEditorState>),
+    LiveSimulation(Box<LiveSimState>),
+    Replay(Box<ReplayState>),
 }
 ```
+
+The large state structs are boxed to satisfy clippy's `large_enum_variant` lint
+and keep the `AppMode` enum itself small.
 
 `Home` is the default. It renders a centered splash screen with three action
 buttons.
@@ -192,6 +195,10 @@ Holds the state of a running or just-finished simulation.
 | `expanded_nodes` | `HashSet<String>` | Sole source of truth for inspector expand/collapse state |
 | `hovered_node` | `Option<String>` | Node name under the pointer, set each frame |
 | `panels` | `PanelVisibility` | Which side panels are currently visible |
+| `active_arrows` | `Vec<ArrowAnimation>` | In-flight message arrow animations on the grid |
+| `channel_subscribers` | `Vec<Vec<usize>>` | channel_index → subscriber node indices for arrow routing |
+| `last_sender` | `Vec<Option<usize>>` | channel_index → last TX node index (for linking RX arrows) |
+| `time_dilation` | `Arc<AtomicU64>` | Shared f64 (as bits) for live kernel time dilation adjustment |
 
 ### ReplayState
 
@@ -207,7 +214,7 @@ Holds the state of the replay mode. Shares the same visual fields as
 | `current_timestep` | `u64` | The timestep currently displayed |
 | `total_timesteps` | `u64` | Total timestep count from the trace header |
 | `playing` | `bool` | Whether auto-advance is active |
-| `playback_speed` | `f32` | Speed multiplier (0.1–10.0); currently exposed in the UI but does not yet govern advance rate |
+| `playback_speed` | `f32` | Speed multiplier (0.1–10.0); governs real-time advance rate via `time_accumulator` |
 | `messages` | `Vec<MessageEntry>` | Accumulated message events up to `current_timestep` |
 | `node_states` | `Vec<NodeState>` | Per-node state reconstructed at `current_timestep` |
 | `initial_states` | `Vec<NodeState>` | Starting node states from the AST; kept to seed reconstruction without re-reading the AST |
@@ -215,6 +222,10 @@ Holds the state of the replay mode. Shares the same visual fields as
 | `expanded_nodes` | `HashSet<String>` | Inspector expand/collapse state |
 | `hovered_node` | `Option<String>` | Node under pointer |
 | `panels` | `PanelVisibility` | Which side panels are visible |
+| `active_arrows` | `Vec<ArrowAnimation>` | In-flight message arrow animations on the grid |
+| `channel_subscribers` | `Vec<Vec<usize>>` | channel_index → subscriber node indices for arrow routing |
+| `last_sender` | `Vec<Option<usize>>` | channel_index → last TX node index (for linking RX arrows) |
+| `time_accumulator` | `f64` | Fractional timestep accumulator for real-time replay advance |
 
 ### NodeState
 
@@ -228,6 +239,12 @@ pub struct NodeState {
     pub y: f64,
     pub z: f64,
     pub charge_ratio: Option<f32>,
+    pub max_nj: Option<u64>,
+    pub is_dead: bool,
+    pub prev_x: f64,
+    pub prev_y: f64,
+    pub prev_z: f64,
+    pub last_move_ts: u64,
 }
 ```
 
@@ -239,6 +256,11 @@ This ratio controls the color of the node circle on the grid:
 - Green — high charge (ratio near 1.0)
 - Yellow — medium charge (ratio near 0.5)
 - Red — low charge (ratio near 0.0)
+- Grey (semi-transparent) — dead (charge == 0)
+
+`prev_x/y/z` and `last_move_ts` track the previous position for velocity
+computation in the inspector panel. The velocity delta vector and speed
+magnitude are displayed when `last_move_ts > 0`.
 
 `nodes_from_sim` in `app.rs` builds the initial `Vec<NodeState>` from the AST.
 Nodes are sorted alphabetically by name so that index-based node name lookups
@@ -289,6 +311,37 @@ pub struct PanelVisibility {
 Both fields default to `true`. Toggling via toolbar buttons flips the boolean
 directly. A panel with its flag set to `false` is simply not rendered — no
 collapsed strip is shown and no `egui::SidePanel` is created for it.
+
+### ArrowAnimation and ArrowKind
+
+```rust
+pub struct ArrowAnimation {
+    pub src_node: usize,
+    pub dst_node: usize,
+    pub kind: ArrowKind,
+    pub start_time: f64,
+    pub duration: f32,
+}
+
+pub enum ArrowKind {
+    Sent,      // green (#64C864)
+    Received,  // blue (#6496FF)
+    Dropped,   // red (#FF6464) with X at midpoint
+}
+```
+
+`ArrowAnimation` represents an in-flight message arrow on the grid. Arrows are
+created by `process_gui_event` when message events arrive:
+
+- **MessageSent**: green arrow from sender to each subscriber of the channel.
+- **MessageRecv**: blue arrow from the last known sender to the receiver.
+- **MessageDropped**: red arrow from sender to each subscriber with an X overlay.
+
+Arrows animate for 0.25 seconds. Each frame, expired arrows are removed before
+new events are processed. The `channel_subscribers` lookup (built at mode init
+from the simulation config) maps channel indices to subscriber node indices.
+`last_sender` tracks the most recent TX source per channel so that RX arrows
+can be linked back to the sender.
 
 ---
 
@@ -358,7 +411,9 @@ screen_x = canvas_center_x + (world_x * zoom) + offset_x
 screen_y = canvas_center_y - (world_y * zoom) + offset_y
 ```
 
-**Pan input:** middle-mouse drag, or left-mouse drag while holding Shift.
+**Pan input:** primary (left) mouse drag on empty space, middle-mouse drag, or
+shift+left drag. Primary drag is suppressed when it starts on a node (tracked
+via egui temp data) to avoid panning when clicking nodes.
 
 **Zoom input:** scroll wheel on the canvas. Zoom is clamped to `[0.01, 1000.0]`
 and applied multiplicatively (`factor = 1 + scroll * 0.002`).
@@ -402,10 +457,13 @@ Nodes whose screen position falls outside `canvas_rect` are skipped entirely.
 `panels::grid::show_grid_panel` allocates the full remaining UI area as a
 single egui widget with `Sense::click_and_drag()`, then:
 
-1. Calls `grid.handle_input(&response)` to process pan/zoom.
-2. Calls `grid.draw(ui, canvas_rect)` to paint grid lines.
-3. Calls `draw_node` for each node.
-4. Performs hit testing to determine which node (if any) was clicked or is
+1. Tracks whether the drag started on a node (persisted in egui temp data).
+2. Calls `grid.handle_input(&response, drag_started_on_node)` to process
+   pan/zoom (primary drag pans only when not started on a node).
+3. Calls `grid.draw(ui, canvas_rect)` to paint grid lines.
+4. Calls `draw_node` for each node.
+5. Draws active message arrows (`ArrowAnimation` list) with animated progress.
+6. Performs hit testing to determine which node (if any) was clicked or is
    currently hovered.
 
 **Click detection** uses `response.clicked()` combined with
@@ -468,6 +526,8 @@ selection-driven auto-scroll; the user must scroll to the selected node manually
 **Node details** show:
 
 - Current position (`x`, `y`, `z`) from `NodeState`
+- Velocity vector and speed magnitude (computed from `prev_x/y/z` delta) when
+  the node has moved at least once (`last_move_ts > 0`)
 - Charge percentage, if `charge_ratio` is `Some`
 - Protocol list from the AST (`ast::Simulation`), each with its root path,
   publishers, and subscribers as collapsing sections
@@ -508,7 +568,8 @@ The editor is organized into collapsing sections:
   input), seed, time dilation, root directory
 - **Nodes** — add/remove nodes; per-node: position (x/y/z/az/el/roll),
   distance unit, optional charge (max/quantity/unit), resources
-  (CPU cores/rate, memory), protocols, internal channels, sinks, sources
+  (CPU cores/rate, memory), protocols, internal channels, sinks, sources,
+  per-channel TX/RX energy costs
 - **Channels** — add/remove channels; per-channel: type (Shared/Exclusive)
   with type-specific fields, then an inline link editor
 - **Sinks** — add/remove global sink definitions with `PowerRate`
@@ -577,7 +638,8 @@ ensures the sim thread never outlives the controller.
 6. Spawns a `"nexus-sim"` thread that calls `run_simulation`, then sends
    `GuiEvent::SimulationComplete` or `GuiEvent::SimulationError` on exit, then
    calls `sinks.clear()` to flush the trace writer.
-7. Returns `(SimController, sim_dir)`.
+7. Returns `(SimController, sim_dir, Arc<AtomicU64>)` where the atomic holds
+   the shared time dilation value (f64 bits) for live GUI adjustment.
 
 Inside the thread, `run_simulation` creates a `TraceWriter`, installs it into
 `SimSinks`, then calls `run_inner` which builds the FUSE filesystem, spawns
@@ -703,6 +765,8 @@ tracing targets:
 | `"tx"` | Kernel on message send | `TraceEvent::MessageSent` |
 | `"rx"` | Kernel on message receive | `TraceEvent::MessageRecv` |
 | `"drop"` | Kernel on message drop | `TraceEvent::MessageDropped` |
+| `"battery"` | Kernel on energy update | `TraceEvent::EnergyUpdate` |
+| `"movement"` | Kernel on position change | `TraceEvent::PositionUpdate` |
 
 Events on any other target pass through to the `fmt` layer (stderr) filtered
 by `RUST_LOG`.
@@ -743,7 +807,7 @@ after.
 
 ```
 Kernel routing code
-  │  tracing::event!(target: "tx" | "rx" | "drop", ...)
+  │  tracing::event!(target: "tx" | "rx" | "drop" | "battery" | "movement", ...)
   ▼
 ReloadableSimLayer::on_event()
   │  extracts fields via BridgeVisitor
@@ -756,7 +820,8 @@ ReloadableSimLayer::on_event()
   │                                           │
   │                                           ├── updates current_timestep
   │                                           ├── updates node_states (position/charge)
-  │                                           └── appends to messages
+  │                                           ├── appends to messages
+  │                                           └── creates ArrowAnimations (TX/RX/Drop)
   │
   └──► SimSinks::trace_writer  ──►  trace.nxs  (for post-sim replay)
 ```
@@ -766,7 +831,8 @@ ReloadableSimLayer::on_event()
 ## Messages Panel
 
 `panels::messages::show_messages` renders up to `max_display` (currently 200)
-of the most recent entries in a vertical scroll area.
+of the most recent entries in a vertical scroll area with `stick_to_bottom(true)`
+so new messages auto-scroll into view while allowing manual scroll-up.
 
 Each entry occupies two rows:
 
@@ -818,10 +884,15 @@ scratch. Step operations append only the single-timestep delta.
 In `LiveSimulation` mode, `toggle_play` calls `state.controller.set_paused`.
 In `Replay` mode, `toggle_play` flips `state.playing`.
 
-The speed `DragValue` modifies `playback_speed` in place. The value is exposed
-in the UI but the replay advance logic in `app.rs` currently advances by
-exactly one timestep per frame regardless of speed. The field is wired up for
-future use.
+The speed `DragValue` modifies `playback_speed` in place. In replay mode, the
+advance logic uses real-time playback: each frame, `dt * playback_speed` is
+accumulated in `time_accumulator` and converted to simulation timesteps based
+on the configured timestep duration. This produces correct real-time playback
+at 1.0x speed and proportional fast/slow at other speeds.
+
+In live simulation mode, a **time dilation slider** (0.1x–10.0x, logarithmic)
+adjusts the kernel's CPU bandwidth allocation in real time via a shared
+`Arc<AtomicU64>`. The kernel reads this value each step.
 
 ---
 

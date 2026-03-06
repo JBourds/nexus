@@ -74,8 +74,13 @@ The `MotionPattern` type in `kernel/src/types.rs` describes how a node's
 and evaluated at every simulation step.
 
 All coordinate values are in the node's configured distance unit. Velocities
-and angular rates are expressed **per microsecond** to match the simulator's
-internal timestep unit.
+and angular rates are expressed **per microsecond**.
+
+`current_point(timestep, us_per_step)` converts the raw step counter to elapsed
+microseconds before applying velocities and durations. The `us_per_step` factor
+is derived from the simulation's timestep config (e.g., 10ms steps = 10,000
+µs/step). This ensures that motion speeds specified in distance-unit/µs produce
+correct displacement regardless of the configured timestep duration.
 
 ### Static
 
@@ -96,14 +101,14 @@ Constant-velocity rectilinear motion from an initial point.
 - `velocity` — per-axis velocity in distance-unit per microsecond
 - `start_ts` — simulator timestep when the pattern was activated
 
-**Formula** at timestep `t`:
+**Formula** at timestep `t` with `us_per_step` microseconds per step:
 
 ```
-dt = max(t - start_ts, 0)   # saturating subtraction
+dt_us = max(t - start_ts, 0) * us_per_step   # elapsed microseconds
 
-x(t) = initial.x + velocity.x * dt
-y(t) = initial.y + velocity.y * dt
-z(t) = initial.z + velocity.z * dt
+x(t) = initial.x + velocity.x * dt_us
+y(t) = initial.y + velocity.y * dt_us
+z(t) = initial.z + velocity.z * dt_us
 ```
 
 The node moves indefinitely; there is no stopping condition. To halt a
@@ -122,19 +127,19 @@ duration. The node stops at the end point once the duration elapses.
 - `start_ts` — simulator timestep when the pattern was activated
 - `duration_us` — total travel time in microseconds
 
-**Formula** at timestep `t`:
+**Formula** at timestep `t` with `us_per_step` microseconds per step:
 
 ```
-dt = max(t - start_ts, 0)
-frac = min(dt / duration_us, 1.0)   # clamped to [0, 1]
+dt_us = max(t - start_ts, 0) * us_per_step
+frac = min(dt_us / duration_us, 1.0)   # clamped to [0, 1]
 
 x(t) = start.x + (end.x - start.x) * frac
 y(t) = start.y + (end.y - start.y) * frac
 z(t) = start.z + (end.z - start.z) * frac
 ```
 
-Once `t >= start_ts + duration_us`, `frac` is clamped at `1.0` and the node
-sits at `end` until the pattern changes.
+Once the elapsed microseconds exceed `duration_us`, `frac` is clamped at `1.0`
+and the node sits at `end` until the pattern changes.
 
 ### Circle
 
@@ -152,11 +157,11 @@ Circular orbit in the XY plane. The Z coordinate is held fixed at
 - `angular_vel_deg_per_us` — rate of rotation in degrees per microsecond
 - `start_ts` — simulator timestep when the pattern was activated
 
-**Formula** at timestep `t`:
+**Formula** at timestep `t` with `us_per_step` microseconds per step:
 
 ```
-dt = max(t - start_ts, 0)
-angle_deg = start_angle_deg + angular_vel_deg_per_us * dt
+dt_us = max(t - start_ts, 0) * us_per_step
+angle_deg = start_angle_deg + angular_vel_deg_per_us * dt_us
 angle_rad = angle_deg * pi / 180
 
 x(t) = center.x + radius * cos(angle_rad)
@@ -320,9 +325,10 @@ At the start of `RoutingServer::step()`, before any messages are delivered,
 active (non-`Static`) motion pattern:
 
 ```
+us_per_step = ts_config.length * ts_config.unit.to_ns_factor() / 1000
 for each node:
     if node.motion != Static:
-        node.position.point = node.motion.current_point(timestep)
+        node.position.point = node.motion.current_point(timestep, us_per_step)
         emit "movement" tracing event
 ```
 
