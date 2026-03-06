@@ -20,7 +20,7 @@ pub enum Source {
     /// Write events come from executing processes.
     Simulated { rx: mpsc::Receiver<fuse::FsMessage> },
     /// Write events come from a log. Only `Message { tx: true }` records are
-    /// replayed; RX and Movement records are skipped.
+    /// replayed; RX, Movement, and Battery records are skipped.
     Replay {
         src: BufReader<File>,
         next_log: Option<MessageRecord>,
@@ -91,11 +91,11 @@ impl Source {
         // Only do this I/O if we either don't know when the next log
         // is or if we know there are logs ready to be sent.
         if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
-            if let Some(Err(e)) = next_log
-                .take()
-                .map(|rec| router.queue_message(rec.node, rec.channel, rec.data))
-            {
-                return Err(SourceError::RouterError(e));
+            // Queue the previously peeked record if it's due.
+            if let Some(rec) = next_log.take() {
+                router
+                    .queue_message(rec.node, rec.channel, rec.data)
+                    .map_err(SourceError::RouterError)?;
             }
 
             loop {
@@ -105,6 +105,8 @@ impl Source {
                     Ok(LogRecord::Message(MessageRecord { tx: false, .. })) => continue,
                     // Skip movement records during replay (positions are recomputed)
                     Ok(LogRecord::Movement(_)) => continue,
+                    // Skip battery records during replay (energy is recomputed)
+                    Ok(LogRecord::Battery(_)) => continue,
                     // TX record scheduled for the future: buffer it
                     Ok(LogRecord::Message(rec)) if rec.timestep > ts => {
                         *next_log = Some(rec);

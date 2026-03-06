@@ -1,0 +1,7 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Error {
+        context: "Failed to validate nodes",
+        source: "charge.quantity (200) exceeds charge.max (100)",
+    },
+}

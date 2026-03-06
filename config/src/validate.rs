@@ -5,9 +5,7 @@ use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
-use crate::parse::PowerSink;
-use crate::parse::PowerSource;
-use crate::parse::Unit;
+use crate::units::parse_duration_to_us;
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
@@ -65,6 +63,27 @@ impl DataUnit {
             "gigabytes" | "gigabyte" | "gB" => Self::Gigabyte,
             s => {
                 bail!("Expected a valid data unit but found \"{s}\"");
+            }
+        };
+        Ok(variant)
+    }
+}
+
+impl EnergyUnit {
+    fn validate(mut val: parse::Unit) -> Result<Self> {
+        val.0.make_ascii_lowercase();
+        let variant = match val.0.as_str() {
+            "nanojoule" | "nanojoules" | "nj" => Self::NanoJoule,
+            "microjoule" | "microjoules" | "uj" => Self::MicroJoule,
+            "millijoule" | "millijoules" | "mj" => Self::MilliJoule,
+            "joule" | "joules" | "j" => Self::Joule,
+            "kilojoule" | "kilojoules" | "kj" => Self::KiloJoule,
+            "microwatthour" | "microwatthours" | "uwh" => Self::MicroWattHour,
+            "milliwatthour" | "milliwatthours" | "mwh" => Self::MilliWattHour,
+            "watthour" | "watthours" | "wh" => Self::WattHour,
+            "kilowatthour" | "kilowatthours" | "kwh" => Self::KiloWattHour,
+            s => {
+                bail!("Expected a valid energy unit but found \"{s}\"");
             }
         };
         Ok(variant)
@@ -213,36 +232,6 @@ fn link_namespace(mut links: HashMap<String, parse::Link>) -> Result<Namespace<p
     Ok(ns)
 }
 
-fn source_namespace(sources: Vec<PowerSource>) -> Result<Namespace<PowerRate>> {
-    let mut ns = Namespace::<PowerRate>::new(String::from("PowerSource"));
-    for (name, v) in sources.into_iter().map(
-        |PowerSource {
-             name,
-             quantity,
-             unit,
-             time,
-         }| (name, PowerRate::validate(quantity, unit, time, true)),
-    ) {
-        ns.add(name, v?)?;
-    }
-    Ok(ns)
-}
-
-fn sink_namespace(sinks: Vec<PowerSink>) -> Result<Namespace<PowerRate>> {
-    let mut ns = Namespace::<PowerRate>::new(String::from("PowerSink"));
-    for (name, v) in sinks.into_iter().map(
-        |PowerSink {
-             name,
-             quantity,
-             unit,
-             time,
-         }| (name, PowerRate::validate(quantity, unit, time, true)),
-    ) {
-        ns.add(name, v?)?;
-    }
-    Ok(ns)
-}
-
 fn channel_namespace(
     channels: HashMap<String, parse::Channel>,
     processed: &HashMap<LinkHandle, Link>,
@@ -345,12 +334,6 @@ impl Simulation {
             let _ = processed.insert(key.to_string(), res);
         }
 
-        let sources: HashMap<_, _> = source_namespace(val.sources.unwrap_or_default())?.into();
-        let source_names: HashSet<_> = sources.keys().cloned().collect();
-
-        let sinks: HashMap<_, _> = sink_namespace(val.sinks.unwrap_or_default())?.into();
-        let sink_names: HashSet<_> = sinks.keys().cloned().collect();
-
         let channels: HashMap<_, _> = channel_namespace(val.channels, &processed)?.into();
         let channel_handles = channels.keys().cloned().collect::<HashSet<_>>();
         let validated_nodes = val
@@ -359,21 +342,15 @@ impl Simulation {
             // Append a unique suffix corresponding to deployment ID to each
             // node's name to deduplicate the handles
             .map(|(key, node)| {
-                Node::validate(
-                    config_root,
-                    node,
-                    &params.timestep.start,
-                    &channel_handles,
-                    &sink_names,
-                    &source_names,
+                Node::validate(config_root, node, &params.timestep.start, &channel_handles).map(
+                    |nodes| {
+                        nodes
+                            .into_iter()
+                            .enumerate()
+                            .map(|(index, node)| (format!("{key}.{index}"), node))
+                            .collect::<Vec<_>>()
+                    },
                 )
-                .map(|nodes| {
-                    nodes
-                        .into_iter()
-                        .enumerate()
-                        .map(|(index, node)| (format!("{key}.{index}"), node))
-                        .collect::<Vec<_>>()
-                })
             })
             // Collect the intermediary step
             .collect::<Result<Vec<Vec<(NodeHandle, Node)>>>>()
@@ -400,8 +377,6 @@ impl Simulation {
             params,
             nodes,
             channels,
-            sinks,
-            sources,
         };
         res.scale_cpu(res.params.time_dilation);
         Ok(res)
@@ -714,12 +689,37 @@ impl Medium {
 
 impl Charge {
     fn validate(val: parse::Charge) -> Result<Self> {
+        let max = val.max.unwrap_or(u64::MAX);
+        if val.quantity > max {
+            bail!(
+                "charge.quantity ({}) exceeds charge.max ({})",
+                val.quantity,
+                max
+            );
+        }
         Ok(Self {
-            max: val.max.unwrap_or(u64::MAX),
+            max,
             quantity: val.quantity,
-            unit: PowerUnit::validate(val.unit)
-                .context("Failed to validate poer unit in charge.")?,
+            unit: EnergyUnit::validate(val.unit)
+                .context("Failed to validate energy unit in charge.")?,
         })
+    }
+}
+
+impl Energy {
+    fn validate(val: parse::Energy) -> Result<Self> {
+        Ok(Self {
+            quantity: val.quantity,
+            unit: EnergyUnit::validate(val.unit).context("Failed to validate energy unit.")?,
+        })
+    }
+}
+
+impl ChannelEnergy {
+    fn validate(val: parse::ChannelEnergy) -> Result<Self> {
+        let tx = val.tx.map(Energy::validate).transpose()?;
+        let rx = val.rx.map(Energy::validate).transpose()?;
+        Ok(Self { tx, rx })
     }
 }
 
@@ -764,16 +764,77 @@ impl Orientation {
 }
 
 impl PowerRate {
-    fn validate(quantity: u64, unit: Unit, time: Unit, is_source: bool) -> Result<Self> {
-        let multiplier: i64 = if is_source { 1 } else { -1 };
-        let quantity: i64 = quantity
-            .try_into()
-            .context("Power quantity too large to fit in i64")?;
+    /// Validate an unsigned consumption rate (power_states).
+    /// Stored as positive; callers handle the sign at accounting time.
+    fn validate_rate(val: parse::PowerRate) -> Result<Self> {
         Ok(PowerRate {
-            rate: multiplier * quantity,
-            unit: PowerUnit::validate(unit).context("Failed to validate power unit")?,
-            time: TimeUnit::validate(time).context("Failed to validate time unit")?,
+            rate: val.rate,
+            unit: PowerUnit::validate(val.unit).context("Failed to validate power unit")?,
+            time: TimeUnit::validate(val.time).context("Failed to validate time unit")?,
         })
+    }
+}
+
+impl PowerFlow {
+    fn validate(def: parse::PowerFlowDef) -> Result<Self> {
+        match def {
+            parse::PowerFlowDef::Constant { rate, unit, time } => {
+                let unit =
+                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time =
+                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                Ok(Self::Constant(PowerRate { rate, unit, time }))
+            }
+            parse::PowerFlowDef::Scheduled {
+                unit,
+                time,
+                schedule,
+                repeat,
+            } => {
+                ensure!(
+                    schedule.len() >= 2,
+                    "Piecewise linear schedule must have at least 2 breakpoints"
+                );
+                let unit =
+                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time =
+                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let mut breakpoints = Vec::with_capacity(schedule.len());
+                for bp in schedule {
+                    let time_us = parse_duration_to_us(&bp.at)
+                        .context(format!("Failed to parse breakpoint time \"{}\"", bp.at))?;
+                    breakpoints.push((time_us, bp.rate));
+                }
+                // Validate breakpoints are sorted by time
+                for i in 1..breakpoints.len() {
+                    ensure!(
+                        breakpoints[i].0 >= breakpoints[i - 1].0,
+                        "Breakpoints must be in non-decreasing time order; \
+                         got {} after {}",
+                        breakpoints[i].0,
+                        breakpoints[i - 1].0
+                    );
+                }
+                let repeat_us = repeat
+                    .map(|s| parse_duration_to_us(&s))
+                    .transpose()
+                    .context("Failed to parse repeat duration")?;
+                if let Some(period) = repeat_us {
+                    ensure!(period > 0, "repeat duration must be positive");
+                    let last_time = breakpoints.last().unwrap().0;
+                    ensure!(
+                        last_time <= period,
+                        "Last breakpoint time ({last_time} us) exceeds repeat period ({period} us)"
+                    );
+                }
+                Ok(Self::PiecewiseLinear {
+                    unit,
+                    time,
+                    breakpoints,
+                    repeat_us,
+                })
+            }
+        }
     }
 }
 
@@ -784,8 +845,6 @@ impl Node {
         val: parse::Node,
         default_start: &SystemTime,
         channel_handles: &HashSet<ChannelHandle>,
-        sink_handles: &HashSet<SinkHandle>,
-        source_handles: &HashSet<SourceHandle>,
     ) -> Result<Vec<Self>> {
         let resources = val
             .resources
@@ -834,19 +893,57 @@ impl Node {
             .collect::<Result<HashMap<ProtocolHandle, NodeProtocol>>>()
             .context("Unable to validate node protocols")?;
 
-        // Validate sinks/source names are valid
-        let sink_names: HashSet<_> = val.sinks.unwrap_or_default().into_iter().collect();
-        let sink_diff: HashSet<_> = sink_names.difference(sink_handles).collect();
-        ensure!(
-            sink_diff.is_empty(),
-            "Found undefined sink names in node: {sink_diff:#?}"
-        );
-        let source_names: HashSet<_> = val.sources.unwrap_or_default().into_iter().collect();
-        let source_diff: HashSet<_> = source_names.difference(source_handles).collect();
-        ensure!(
-            source_diff.is_empty(),
-            "Found undefined source names in node: {source_diff:#?}"
-        );
+        // Validate per-node power states
+        let power_states = val
+            .power_states
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, rate)| {
+                PowerRate::validate_rate(rate)
+                    .context(format!("Failed to validate power state \"{name}\""))
+                    .map(|r| (name, r))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        // Validate power sources
+        let power_sources = val
+            .power_sources
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, def)| {
+                PowerFlow::validate(def)
+                    .context(format!("Failed to validate power source \"{name}\""))
+                    .map(|f| (name, f))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        // Validate power sinks
+        let power_sinks = val
+            .power_sinks
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(name, def)| {
+                PowerFlow::validate(def)
+                    .context(format!("Failed to validate power sink \"{name}\""))
+                    .map(|f| (name, f))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
+        // Validate per-node channel energy costs
+        let channel_energy = val
+            .channel_energy
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(ch, energy)| {
+                ensure!(
+                    valid_channels.contains(&ch),
+                    "channel_energy references unknown channel \"{ch}\""
+                );
+                ChannelEnergy::validate(energy)
+                    .context(format!("Failed to validate channel_energy for \"{ch}\""))
+                    .map(|e| (ch, e))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
 
         // Check that all internal names were used
         let internal_names_used = protocols
@@ -873,12 +970,31 @@ impl Node {
             run_args: deployment_run_args,
             build_args: deployment_build_args,
             charge,
+            initial_state,
+            restart_threshold,
             start,
         } in deployments
         {
             let start = start
                 .map(toml_datetime_to_system_time)
                 .unwrap_or(*default_start);
+
+            // Validate restart_threshold is in [0, 1]
+            if let Some(rt) = restart_threshold {
+                ensure!(
+                    (0.0..=1.0).contains(&rt),
+                    "restart_threshold must be between 0.0 and 1.0, got {rt}"
+                );
+            }
+
+            // Validate initial_state references an existing power state
+            if let Some(ref state) = initial_state {
+                ensure!(
+                    power_states.contains_key(state),
+                    "initial_state \"{state}\" is not defined in power_states"
+                );
+            }
+
             let deployment_run_args = deployment_run_args.unwrap_or_default();
             let deployment_build_args = deployment_build_args.unwrap_or_default();
             let protocols = protocols
@@ -913,13 +1029,7 @@ impl Node {
                 .map(Position::validate)
                 .unwrap_or(Ok(Position::default()))
                 .context("Failed to validate node coordinates.")?;
-            // Allow user to omit charge, but if they specify it
-            // then it must pass validation.
-            let charge = if let Some(charge) = charge {
-                Some(Charge::validate(charge)?)
-            } else {
-                None
-            };
+            let charge = charge.map(Charge::validate).transpose()?;
 
             nodes.push(Node {
                 charge,
@@ -927,8 +1037,12 @@ impl Node {
                 resources: resources.clone(),
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
-                sinks: sink_names.clone(),
-                sources: source_names.clone(),
+                power_states: power_states.clone(),
+                power_sources: power_sources.clone(),
+                power_sinks: power_sinks.clone(),
+                channel_energy: channel_energy.clone(),
+                initial_state,
+                restart_threshold,
                 start,
             });
         }

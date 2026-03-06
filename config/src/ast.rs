@@ -8,16 +8,12 @@ pub type LinkHandle = String;
 pub type ChannelHandle = String;
 pub type NodeHandle = String;
 pub type ProtocolHandle = String;
-pub type SinkHandle = String;
-pub type SourceHandle = String;
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Node>,
-    pub sinks: HashMap<SinkHandle, PowerRate>,
-    pub sources: HashMap<SourceHandle, PowerRate>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -73,8 +69,21 @@ pub struct Node {
     pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
     pub internal_names: Vec<ChannelHandle>,
     pub resources: Resources,
-    pub sinks: HashSet<SinkHandle>,
-    pub sources: HashSet<SourceHandle>,
+    /// Named power consumption states the process can switch between
+    /// via `ctl.energy_state`. Rates are positive = consumption.
+    pub power_states: HashMap<String, PowerRate>,
+    /// Named passive power sources (e.g. solar panel, battery charger).
+    /// Applied every timestep regardless of alive/dead state.
+    pub power_sources: HashMap<String, PowerFlow>,
+    /// Named passive power sinks (e.g. MCU baseline, sensor draw).
+    /// Applied every timestep regardless of alive/dead state.
+    pub power_sinks: HashMap<String, PowerFlow>,
+    /// Per-channel TX/RX energy costs (keyed by channel name).
+    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
+    /// Which power state to start in (must be a key in `power_states`).
+    pub initial_state: Option<String>,
+    /// Fraction of max charge (0..=1) at which a dead node restarts.
+    pub restart_threshold: Option<f64>,
     pub start: SystemTime,
 }
 
@@ -103,7 +112,21 @@ pub struct Mem {
 pub struct Charge {
     pub max: u64,
     pub quantity: u64,
-    pub unit: PowerUnit,
+    pub unit: EnergyUnit,
+}
+
+/// One-time energy cost for a single send or receive on a channel.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct Energy {
+    pub quantity: u64,
+    pub unit: EnergyUnit,
+}
+
+/// Per-channel TX/RX energy costs attached to a protocol.
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct ChannelEnergy {
+    pub tx: Option<Energy>,
+    pub rx: Option<Energy>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -257,9 +280,25 @@ pub struct DataRate {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 pub struct PowerRate {
-    pub rate: i64,
+    pub rate: u64,
     pub unit: PowerUnit,
     pub time: TimeUnit,
+}
+
+/// A power flow that is either constant or piecewise-linear over time.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum PowerFlow {
+    /// A fixed rate that never changes.
+    Constant(PowerRate),
+    /// A rate that varies linearly between breakpoints over simulated time.
+    PiecewiseLinear {
+        unit: PowerUnit,
+        time: TimeUnit,
+        /// Sorted breakpoints: `(time_us, rate_in_original_units)`.
+        breakpoints: Vec<(u64, u64)>,
+        /// Optional repeat period in microseconds. If set, time wraps around.
+        repeat_us: Option<u64>,
+    },
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
@@ -294,6 +333,20 @@ pub enum PowerUnit {
     KiloWatt,
     MegaWatt,
     GigaWatt,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]
+pub enum EnergyUnit {
+    NanoJoule,
+    MicroJoule,
+    MilliJoule,
+    #[default]
+    Joule,
+    KiloJoule,
+    MicroWattHour,
+    MilliWattHour,
+    WattHour,
+    KiloWattHour,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq)]

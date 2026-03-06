@@ -8,6 +8,7 @@ use std::collections::HashSet;
 use std::fs::{File, OpenOptions};
 use std::io::stdout;
 use std::path::Path;
+use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
@@ -71,7 +72,12 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     for _ in 0..args.n.unwrap_or(1) {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
-        let fs = args.root.clone().map(NexusFs::new).unwrap_or_default();
+        let pending_remaps = Arc::new(Mutex::new(Vec::new()));
+        let fs = args
+            .root
+            .clone()
+            .map(|root| NexusFs::new(root, pending_remaps.clone()))
+            .unwrap_or_default();
 
         #[allow(unused_variables)]
         let (sess, (tx, rx)) = fs
@@ -83,8 +89,15 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles =
-            Kernel::new(sim.clone(), runc, file_handles, rx, tx)?.run(args.cmd.clone())?;
+        let protocol_handles = Kernel::new(
+            sim.clone(),
+            runc,
+            file_handles,
+            rx,
+            tx,
+            pending_remaps.clone(),
+        )?
+        .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));
     }
     match args.dest {

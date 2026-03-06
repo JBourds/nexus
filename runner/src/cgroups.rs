@@ -69,6 +69,8 @@ pub struct ProtocolHandle {
     pub protocol: ast::ProtocolHandle,
     /// Handle for the executing process.
     pub process: Option<Child>,
+    /// Path to the cgroup directory for this protocol.
+    pub cgroup_path: Option<PathBuf>,
 }
 
 impl ProtocolHandle {
@@ -86,7 +88,30 @@ impl ProtocolHandle {
             node,
             protocol,
             process: None,
+            cgroup_path: None,
         }
+    }
+
+    /// Return the PID of the running process, if any.
+    pub fn pid(&self) -> Option<u32> {
+        self.process.as_ref().map(Child::id)
+    }
+
+    /// Kill the current process and respawn it in its cgroup.
+    /// Returns `(old_pid, new_pid)` on success.
+    pub fn respawn(&mut self) -> Option<(u32, u32)> {
+        let old_pid = self.pid()?;
+        let cgroup = self.cgroup_path.as_ref()?;
+        // Kill and wait for the old process
+        if let Some(ref mut child) = self.process {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+        self.process = None;
+        // Spawn a fresh process
+        self.run(cgroup.clone());
+        let new_pid = self.pid()?;
+        Some((old_pid, new_pid))
     }
 
     pub fn running(&mut self) -> bool {
@@ -214,6 +239,35 @@ impl CgroupController {
         freeze(&self.nodes_limited.root, false);
     }
 
+    /// Freeze a single node's cgroup by name.
+    pub fn freeze_node(&mut self, name: &str) {
+        if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
+            freeze(&cgroup.path, true);
+        } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
+            freeze(&cgroup.path, true);
+        }
+    }
+
+    /// Unfreeze a single node's cgroup by name.
+    pub fn unfreeze_node(&mut self, name: &str) {
+        if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
+            freeze(&cgroup.path, false);
+        } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
+            freeze(&cgroup.path, false);
+        }
+    }
+
+    /// Unfreeze a node's cgroup, then respawn all its protocols.
+    /// Returns the list of `(old_pid, new_pid)` pairs.
+    pub fn respawn_node(&mut self, name: &str, handles: &mut [ProtocolHandle]) -> Vec<(u32, u32)> {
+        self.unfreeze_node(name);
+        handles
+            .iter_mut()
+            .filter(|h| h.node == name)
+            .filter_map(|h| h.respawn())
+            .collect()
+    }
+
     pub fn add_node(&mut self, name: &str, resources: Resources) -> NodeHandle {
         let has_limited_resources = resources.has_cpu_limit();
         let parent = if has_limited_resources {
@@ -262,6 +316,7 @@ impl CgroupController {
             handle.key.clone(),
             name.to_string(),
         );
+        handle.cgroup_path = Some(cgroup.clone());
         if !handle.run(&cgroup) {
             panic!("error running protocol");
         }

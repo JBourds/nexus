@@ -34,11 +34,20 @@ pub struct MovementRecord {
     pub roll: f64,
 }
 
+/// A snapshot of a node's battery charge at a given timestep.
+#[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
+pub struct BatteryRecord {
+    pub timestep: u64,
+    pub node: NodeHandle,
+    pub charge_nj: u64,
+}
+
 /// Top-level log record. Encoded as a bincode enum (u32 variant tag + payload).
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, PartialEq)]
 pub enum LogRecord {
     Message(MessageRecord),
     Movement(MovementRecord),
+    Battery(BatteryRecord),
 }
 
 // Visitors
@@ -63,6 +72,8 @@ impl Visit for MessageVisitor {
             _ => {}
         }
     }
+
+    fn record_i64(&mut self, _field: &tracing::field::Field, _value: i64) {}
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
         if field.name() == "tx" {
@@ -140,6 +151,36 @@ impl From<MovementVisitor> for LogRecord {
     }
 }
 
+#[derive(Debug, Default)]
+struct BatteryVisitor {
+    timestep: u64,
+    node: usize,
+    charge_nj: u64,
+}
+
+impl Visit for BatteryVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as usize,
+            "charge_nj" => self.charge_nj = value,
+            _ => {}
+        }
+    }
+}
+
+impl From<BatteryVisitor> for LogRecord {
+    fn from(v: BatteryVisitor) -> Self {
+        LogRecord::Battery(BatteryRecord {
+            timestep: v.timestep,
+            node: v.node,
+            charge_nj: v.charge_nj,
+        })
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -191,6 +232,16 @@ mod tests {
     }
 
     #[test]
+    fn battery_record_roundtrip() {
+        let original = LogRecord::Battery(BatteryRecord {
+            timestep: 500,
+            node: 1,
+            charge_nj: 123456789,
+        });
+        assert_eq!(roundtrip(&original), original);
+    }
+
+    #[test]
     fn mixed_records_sequential_roundtrip() {
         let records = vec![
             LogRecord::Message(MessageRecord {
@@ -209,6 +260,11 @@ mod tests {
                 az: 0.0,
                 el: 0.0,
                 roll: 0.0,
+            }),
+            LogRecord::Battery(BatteryRecord {
+                timestep: 2,
+                node: 0,
+                charge_nj: 50000,
             }),
             LogRecord::Message(MessageRecord {
                 timestep: 3,
@@ -265,6 +321,11 @@ impl<S: Subscriber> Layer<S> for BinaryLogLayer {
             }
             "movement" => {
                 let mut visitor = MovementVisitor::default();
+                event.record(&mut visitor);
+                visitor.into()
+            }
+            "battery" => {
+                let mut visitor = BatteryVisitor::default();
                 event.record(&mut visitor);
                 visitor.into()
             }

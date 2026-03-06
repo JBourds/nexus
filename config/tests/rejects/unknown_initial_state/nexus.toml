@@ -1,0 +1,16 @@
+# Node references an initial_state that isn't defined in power_states
+
+[params]
+root = "~/simulations"
+
+[nodes]
+
+[nodes.main]
+deployments = [{ initial_state = "nonexistent_state" }]
+
+[nodes.main.power_states]
+sleep = { rate = 10, unit = "uw", time = "s" }
+
+[[nodes.main.protocols]]
+name = "main"
+runner = "make"

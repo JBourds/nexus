@@ -9,7 +9,7 @@ use std::{
 
 use crate::helpers::unzip;
 use crate::{errors::ConversionError, helpers::make_handles};
-use config::ast::{self, ChannelType, Charge, Cmd, Link, Point};
+use config::ast::{self, ChannelEnergy, ChannelType, Cmd, Link, Point, TimestepConfig};
 use tracing::instrument;
 
 pub type ChannelHandle = usize;
@@ -69,6 +69,141 @@ impl Channel {
             subscribers: set.clone(),
             publishers: set,
         }
+    }
+}
+
+/// A runtime power flow: either a fixed rate or a time-varying piecewise
+/// linear schedule. All values are pre-converted to nJ-per-timestep.
+#[derive(Clone, Debug)]
+pub enum PowerFlowState {
+    /// Constant rate, pre-converted to nJ per timestep.
+    Constant { nj_per_ts: u64 },
+    /// Piecewise-linear schedule with pre-converted nJ-per-timestep values.
+    /// `breakpoints`: `(time_us, nj_per_ts_at_this_rate)` sorted by time.
+    PiecewiseLinear {
+        breakpoints: Vec<(u64, u64)>,
+        repeat_us: Option<u64>,
+    },
+}
+
+impl PowerFlowState {
+    /// Evaluate this flow at the given simulation time in microseconds.
+    pub fn nj_per_timestep(&self, current_time_us: u64) -> u64 {
+        match self {
+            Self::Constant { nj_per_ts } => *nj_per_ts,
+            Self::PiecewiseLinear {
+                breakpoints,
+                repeat_us,
+            } => {
+                let t = match repeat_us {
+                    Some(period) if *period > 0 => current_time_us % period,
+                    _ => current_time_us,
+                };
+                // Binary search: find first breakpoint with time > t
+                let idx = breakpoints.partition_point(|(time, _)| *time <= t);
+                if idx == 0 {
+                    return breakpoints[0].1;
+                }
+                if idx >= breakpoints.len() {
+                    return breakpoints.last().unwrap().1;
+                }
+                // Interpolate between breakpoints[idx-1] and breakpoints[idx]
+                let (t0, r0) = breakpoints[idx - 1];
+                let (t1, r1) = breakpoints[idx];
+                if t1 == t0 {
+                    return r1;
+                }
+                let frac = (t - t0) as f64 / (t1 - t0) as f64;
+                let result = r0 as f64 + (r1 as f64 - r0 as f64) * frac;
+                result.max(0.0) as u64
+            }
+        }
+    }
+
+    /// Create from an AST `PowerFlow` definition, pre-converting rates to nJ/ts.
+    pub fn from_ast(flow: &ast::PowerFlow, timestep_ns: u64) -> Self {
+        match flow {
+            ast::PowerFlow::Constant(rate) => Self::Constant {
+                nj_per_ts: rate.nj_per_timestep(timestep_ns),
+            },
+            ast::PowerFlow::PiecewiseLinear {
+                unit,
+                time,
+                breakpoints,
+                repeat_us,
+            } => {
+                let nw_factor = unit.to_nw_factor();
+                let time_ns = time.to_ns_factor();
+                let breakpoints = breakpoints
+                    .iter()
+                    .map(|&(t_us, rate)| {
+                        let nj = rate * nw_factor * timestep_ns / time_ns;
+                        (t_us, nj)
+                    })
+                    .collect();
+                Self::PiecewiseLinear {
+                    breakpoints,
+                    repeat_us: *repeat_us,
+                }
+            }
+        }
+    }
+}
+
+/// Runtime energy tracking state for a node with a battery.
+#[derive(Clone, Debug)]
+pub struct EnergyState {
+    /// Current charge in nanojoules. Saturates at 0 (node dead when == 0).
+    pub charge_nj: u64,
+    /// Maximum capacity in nanojoules.
+    pub max_nj: u64,
+    /// Named power sources (e.g. solar), applied every timestep.
+    pub power_sources: Vec<(String, PowerFlowState)>,
+    /// Named power sinks (e.g. MCU baseline), applied every timestep.
+    pub power_sinks: Vec<(String, PowerFlowState)>,
+    /// Per-timestep drain in nJ for each named power state.
+    pub power_states_nj: HashMap<String, u64>,
+    /// Currently active power state.
+    pub current_state: Option<String>,
+    /// Charge level in nJ at which a dead node is restarted.
+    pub restart_threshold_nj: Option<u64>,
+    /// Whether this node is currently dead (charge depleted, waiting to recover).
+    pub is_dead: bool,
+}
+
+impl EnergyState {
+    pub fn from_node(node: &ast::Node, ts_config: &TimestepConfig) -> Option<Self> {
+        let charge = node.charge.as_ref()?;
+        let max_nj = charge.unit.to_nj(charge.max);
+        let charge_nj = charge.unit.to_nj(charge.quantity);
+        let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
+        let power_sources = node
+            .power_sources
+            .iter()
+            .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
+            .collect();
+        let power_sinks = node
+            .power_sinks
+            .iter()
+            .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
+            .collect();
+        let power_states_nj = node
+            .power_states
+            .iter()
+            .map(|(name, rate)| (name.clone(), rate.nj_per_timestep(timestep_ns)))
+            .collect();
+        let restart_threshold_nj = node.restart_threshold.map(|t| (t * max_nj as f64) as u64);
+        let is_dead = charge_nj == 0;
+        Some(EnergyState {
+            charge_nj,
+            max_nj,
+            power_sources,
+            power_sinks,
+            power_states_nj,
+            current_state: node.initial_state.clone(),
+            restart_threshold_nj,
+            is_dead,
+        })
     }
 }
 
@@ -190,17 +325,17 @@ impl MotionPattern {
 /// The kernel-usable form of a node which includes its simulation state used
 /// by control files.
 #[derive(Clone, Debug)]
-#[allow(unused)]
 pub struct Node {
-    pub charge: Option<Charge>,
+    pub energy: Option<EnergyState>,
     pub position: ast::Position,
     pub motion: MotionPattern,
     pub start: SystemTime,
     pub protocols: Vec<NodeProtocol>,
+    /// Per-channel energy costs keyed by integer channel handle.
+    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
 }
 
 #[derive(Clone, Debug)]
-#[allow(unused)]
 pub struct NodeProtocol {
     pub root: PathBuf,
     pub runner: Cmd,
@@ -215,7 +350,11 @@ impl Node {
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
         node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+        ts_config: &TimestepConfig,
     ) -> Result<(Self, Vec<(ast::ChannelHandle, Channel)>), ConversionError> {
+        // Compute energy state before moving any fields out of node.
+        let energy = EnergyState::from_node(&node, ts_config);
+
         // Internal have their own namespace, copy the hashmap
         // and overwrite any existing links with internal names.
         let new_handles = node
@@ -238,6 +377,18 @@ impl Node {
             channel_handles
         };
 
+        let channel_energy = node
+            .channel_energy
+            .into_iter()
+            .map(|(name, energy)| {
+                channel_handles
+                    .get(&name)
+                    .copied()
+                    .ok_or(ConversionError::ChannelHandleConversion(name))
+                    .map(|ch| (ch, energy))
+            })
+            .collect::<Result<_, ConversionError>>()?;
+
         let (_, protocols) = unzip(node.protocols);
         let protocols = protocols
             .into_iter()
@@ -246,7 +397,8 @@ impl Node {
         Ok((
             Self {
                 protocols,
-                charge: node.charge,
+                energy,
+                channel_energy,
                 start: node.start,
                 position: node.position,
                 motion: MotionPattern::Static,

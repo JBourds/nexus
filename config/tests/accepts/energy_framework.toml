@@ -1,46 +1,32 @@
-# Simulate client/server communication over a perfect connection
+# Node with battery, named power states, and piecewise linear solar source.
 
 [params]
-timestep.length = 1          
+timestep.length = 1
 timestep.unit = "s"
-timestep.count = 5        
-seed = 42                       
-root = "~/simulations"  
-
-[[sources]]
-name = "solar_panel"
-quantity = 400
-unit = "w"
-time = "h"
-
-[[sinks]]
-name = "sleep"
-quantity = 20
-unit = "uw"
-time = "s"
-
-[[sinks]]
-name = "standby"
-quantity = 200
-unit = "uw"
-time = "s"
-
-[[sinks]]
-name = "processing"
-quantity = 80
-unit = "mw"
-time = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
 
 [nodes]
 
 [nodes.main]
-deployments = [ {} ]
-sources = ["solar_panel"]
-sinks = ["sleep", "standby", "processing"]
+deployments = [{ charge = { max = 1000, quantity = 800, unit = "mwh" }, initial_state = "active" }]
+
+[nodes.main.power_states]
+sleep    = { rate = 20,  unit = "uw", time = "s" }
+standby  = { rate = 200, unit = "uw", time = "s" }
+active   = { rate = 80,  unit = "mw", time = "s" }
+
+# Always-on solar panel generating 400 mW
+[nodes.main.power_sources]
+solar = { rate = 400, unit = "mw", time = "s" }
+
+# MCU baseline draw
+[nodes.main.power_sinks]
+mcu = { rate = 10, unit = "mw", time = "s" }
 
 [[nodes.main.protocols]]
 
 name = "main"
 runner = "python3"
 runner_args = ["client.py"]
-

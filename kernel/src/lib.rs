@@ -15,7 +15,10 @@ use rand::{SeedableRng, rngs::StdRng};
 use std::{
     collections::BTreeMap,
     path::PathBuf,
-    sync::mpsc::{self, Receiver},
+    sync::{
+        Arc, Mutex,
+        mpsc::{self, Receiver},
+    },
     time::{Duration, SystemTime},
 };
 
@@ -69,6 +72,7 @@ pub struct Kernel {
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
+    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
 }
 
 impl Kernel {
@@ -87,6 +91,7 @@ impl Kernel {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
     ) -> Result<Self, KernelError> {
         // CRUCIAL: Sort nodes by their name lexicographically since we are
         // not guaranteed a consistent ordering by hash maps
@@ -100,6 +105,7 @@ impl Kernel {
             nodes,
             &node_handles,
             file_handles,
+            &sim.params.timestep,
         )?;
         Ok(Self {
             root: sim.params.root,
@@ -110,6 +116,7 @@ impl Kernel {
             runc,
             rx,
             tx,
+            pending_remaps,
         })
     }
     #[instrument(skip_all)]
@@ -126,11 +133,12 @@ impl Kernel {
             runc,
             tx,
             rx,
+            pending_remaps,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source)
+            RoutingServer::serve(tx, channels, timestep, rng, source, pending_remaps)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
         queue_event(
@@ -162,8 +170,27 @@ impl Kernel {
                     status::messages::StatusMessage::PrematureExit => {
                         break 'outer;
                     }
+                    status::messages::StatusMessage::Respawned { .. } => {}
                 }
-                routing_server.poll(timestep)?;
+                let router::RouterMessage::EnergyEvents {
+                    depleted,
+                    recovered,
+                } = routing_server.poll(timestep)?
+                else {
+                    continue;
+                };
+                for name in depleted {
+                    status_server.freeze_node(name)?;
+                }
+                for name in recovered {
+                    // Kill the frozen process and respawn a fresh one
+                    if let status::messages::StatusMessage::Respawned { pid_changes, .. } =
+                        status_server.respawn_node(name)?
+                        && !pid_changes.is_empty()
+                    {
+                        routing_server.remap_pids(pid_changes)?;
+                    }
+                }
             }
             if start.elapsed().is_err() {
                 return Err(KernelError::TimestepError(timestep));
