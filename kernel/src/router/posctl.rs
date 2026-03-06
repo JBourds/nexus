@@ -213,6 +213,13 @@ impl RoutingServer {
             node = node_index as u64,
             x, y, z, az, el, roll
         );
+        event!(
+            target: "motion",
+            Level::INFO,
+            timestep,
+            node = node_index as u64,
+            spec = "none"
+        );
         Ok(())
     }
 
@@ -238,6 +245,15 @@ impl RoutingServer {
         let pattern = Self::parse_motion_spec(s.trim(), current_point, start_ts)
             .map_err(|e| RouterError::InvalidMotionPattern(e.to_string()))?;
         self.channels.nodes[node_index].motion = pattern;
+        let timestep = self.timestep;
+        let spec = self.channels.nodes[node_index].motion.to_spec();
+        event!(
+            target: "motion",
+            Level::INFO,
+            timestep,
+            node = node_index as u64,
+            spec = spec.as_str()
+        );
         Ok(())
     }
 

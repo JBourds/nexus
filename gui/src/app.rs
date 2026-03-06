@@ -275,6 +275,9 @@ impl NexusApp {
                     ui.id().with("node_tip"),
                     |ui| {
                         ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                        if n.motion_spec != "none" {
+                            ui.label(format!("Motion: {}", n.motion_spec));
+                        }
                         if let Some(r) = n.charge_ratio {
                             ui.label(format!("Charge: {:.0}%", r * 100.0));
                         }
@@ -475,6 +478,9 @@ impl NexusApp {
                     ui.id().with("node_tip"),
                     |ui| {
                         ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                        if n.motion_spec != "none" {
+                            ui.label(format!("Motion: {}", n.motion_spec));
+                        }
                         if let Some(r) = n.charge_ratio {
                             ui.label(format!("Charge: {:.0}%", r * 100.0));
                         }
@@ -703,6 +709,7 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
                 prev_y: node.position.point.y,
                 prev_z: node.position.point.z,
                 last_move_ts: 0,
+                motion_spec: "none".to_string(),
             }
         })
         .collect();
@@ -867,6 +874,11 @@ fn process_gui_event(
                         let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
                         state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
                         state.is_dead = *energy_nj == 0 && max > 0;
+                    }
+                }
+                TraceEvent::MotionUpdate { node, spec } => {
+                    if let Some(state) = node_states.get_mut(*node as usize) {
+                        state.motion_spec = spec.clone();
                     }
                 }
             }

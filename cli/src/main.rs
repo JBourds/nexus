@@ -172,7 +172,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
                 .with_filter(filter::filter_fn(|metadata| {
                     !matches!(
                         metadata.target(),
-                        "tx" | "rx" | "drop" | "battery" | "movement"
+                        "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
                     )
                 }))
                 .with_filter(EnvFilter::from_default_env()),
@@ -181,7 +181,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
             layer.with_filter(filter::filter_fn(|metadata| {
                 matches!(
                     metadata.target(),
-                    "tx" | "rx" | "drop" | "battery" | "movement"
+                    "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
                 )
             }))
         }))

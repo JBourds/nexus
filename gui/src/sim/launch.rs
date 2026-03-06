@@ -35,9 +35,9 @@ fn ensure_global_subscriber() -> SimSinks {
 
         let sim_layer = ReloadableSimLayer::new(sinks.clone());
         let sim_filter =
-            filter::filter_fn(|metadata| matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement"));
+            filter::filter_fn(|metadata| matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement" | "motion"));
         let fmt_filter =
-            filter::filter_fn(|metadata| !matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement"));
+            filter::filter_fn(|metadata| !matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement" | "motion"));
 
         let subscriber = tracing_subscriber::registry()
             .with(sim_layer.with_filter(sim_filter))

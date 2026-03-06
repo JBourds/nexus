@@ -112,6 +112,8 @@ pub struct NodeState {
     pub prev_z: f64,
     /// Timestep of last position update (0 = never moved).
     pub last_move_ts: u64,
+    /// Current motion pattern spec string (e.g. "none", "velocity 0.1 0 0").
+    pub motion_spec: String,
 }
 
 /// A message event for display in the message panel.

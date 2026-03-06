@@ -72,6 +72,7 @@ struct BridgeVisitor {
     is_tx: bool,
     data: Vec<u8>,
     reason: Option<String>,
+    motion_spec: Option<String>,
     charge_nj: u64,
     x: f64,
     y: f64,
@@ -113,8 +114,10 @@ impl Visit for BridgeVisitor {
     }
 
     fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "reason" {
-            self.reason = Some(value.to_string());
+        match field.name() {
+            "reason" => self.reason = Some(value.to_string()),
+            "spec" => self.motion_spec = Some(value.to_string()),
+            _ => {}
         }
     }
 }
@@ -169,6 +172,20 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                     x: visitor.x,
                     y: visitor.y,
                     z: visitor.z,
+                },
+            };
+            self.emit(record);
+            return;
+        }
+
+        if target == "motion" {
+            let mut visitor = BridgeVisitor::default();
+            event.record(&mut visitor);
+            let record = TraceRecord {
+                timestep: visitor.timestep,
+                event: TraceEvent::MotionUpdate {
+                    node: visitor.node,
+                    spec: visitor.motion_spec.unwrap_or_default(),
                 },
             };
             self.emit(record);

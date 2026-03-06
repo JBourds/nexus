@@ -150,6 +150,11 @@ fn apply_state_updates(states: &mut [NodeState], records: &[TraceRecord]) {
                     state.is_dead = *energy_nj == 0 && max > 0;
                 }
             }
+            TraceEvent::MotionUpdate { node, spec } => {
+                if let Some(state) = states.get_mut(*node as usize) {
+                    state.motion_spec = spec.clone();
+                }
+            }
             _ => {}
         }
     }

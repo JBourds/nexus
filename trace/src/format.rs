@@ -48,6 +48,10 @@ pub enum TraceEvent {
         node: u32,
         energy_nj: u64,
     },
+    MotionUpdate {
+        node: u32,
+        spec: String,
+    },
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq)]

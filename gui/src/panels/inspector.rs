@@ -94,6 +94,18 @@ fn show_node_details(
         }
     }
 
+    // Motion pattern
+    if let Some(rt) = runtime {
+        ui.horizontal(|ui| {
+            ui.label("Motion:");
+            if rt.motion_spec == "none" {
+                ui.label("Static");
+            } else {
+                ui.colored_label(egui::Color32::from_rgb(180, 180, 255), &rt.motion_spec);
+            }
+        });
+    }
+
     // Charge
     if let Some(rt) = runtime {
         if rt.is_dead {
