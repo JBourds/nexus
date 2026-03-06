@@ -155,9 +155,10 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
             node_max_nj: {
                 let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
                 names.sort();
-                names.iter().map(|n| {
-                    sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max))
-                }).collect()
+                names
+                    .iter()
+                    .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                    .collect()
             },
         };
         Some(trace::layer::TraceLayer::new(&trace_path, &header)?)
@@ -169,17 +170,21 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
         .with(
             fmt::layer()
                 .with_filter(filter::filter_fn(|metadata| {
-                    !matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement")
+                    !matches!(
+                        metadata.target(),
+                        "tx" | "rx" | "drop" | "battery" | "movement"
+                    )
                 }))
                 .with_filter(EnvFilter::from_default_env()),
         )
-        .with(
-            trace_layer.map(|layer| {
-                layer.with_filter(filter::filter_fn(|metadata| {
-                    matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement")
-                }))
-            }),
-        )
+        .with(trace_layer.map(|layer| {
+            layer.with_filter(filter::filter_fn(|metadata| {
+                matches!(
+                    metadata.target(),
+                    "tx" | "rx" | "drop" | "battery" | "movement"
+                )
+            }))
+        }))
         .init();
     Ok(trace_path)
 }
