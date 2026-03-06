@@ -248,7 +248,10 @@ pub enum MotionPattern {
 impl MotionPattern {
     /// Compute the position point at `timestep` from this pattern.
     /// Returns `None` for `Static` (no update needed).
-    pub fn current_point(&self, timestep: u64) -> Option<Point> {
+    ///
+    /// `us_per_step` converts the raw step counter into microseconds so that
+    /// velocities (dist_unit/µs) and durations (µs) work correctly.
+    pub fn current_point(&self, timestep: u64, us_per_step: u64) -> Option<Point> {
         match self {
             Self::Static => None,
             Self::Velocity {
@@ -256,11 +259,11 @@ impl MotionPattern {
                 velocity,
                 start_ts,
             } => {
-                let dt = timestep.saturating_sub(*start_ts) as f64;
+                let dt_us = (timestep.saturating_sub(*start_ts) * us_per_step) as f64;
                 Some(Point {
-                    x: initial.x + velocity.x * dt,
-                    y: initial.y + velocity.y * dt,
-                    z: initial.z + velocity.z * dt,
+                    x: initial.x + velocity.x * dt_us,
+                    y: initial.y + velocity.y * dt_us,
+                    z: initial.z + velocity.z * dt_us,
                 })
             }
             Self::Linear {
@@ -269,8 +272,8 @@ impl MotionPattern {
                 start_ts,
                 duration_us,
             } => {
-                let dt = timestep.saturating_sub(*start_ts) as f64;
-                let t = (dt / *duration_us as f64).min(1.0);
+                let dt_us = (timestep.saturating_sub(*start_ts) * us_per_step) as f64;
+                let t = (dt_us / *duration_us as f64).min(1.0);
                 Some(Point {
                     x: start.x + (end.x - start.x) * t,
                     y: start.y + (end.y - start.y) * t,
@@ -284,8 +287,8 @@ impl MotionPattern {
                 angular_vel_deg_per_us,
                 start_ts,
             } => {
-                let dt = timestep.saturating_sub(*start_ts) as f64;
-                let angle = (start_angle_deg + angular_vel_deg_per_us * dt).to_radians();
+                let dt_us = (timestep.saturating_sub(*start_ts) * us_per_step) as f64;
+                let angle = (start_angle_deg + angular_vel_deg_per_us * dt_us).to_radians();
                 Some(Point {
                     x: center.x + radius * angle.cos(),
                     y: center.y + radius * angle.sin(),
@@ -435,8 +438,8 @@ mod tests {
 
     #[test]
     fn static_returns_none() {
-        assert!(MotionPattern::Static.current_point(0).is_none());
-        assert!(MotionPattern::Static.current_point(1_000_000).is_none());
+        assert!(MotionPattern::Static.current_point(0, 1).is_none());
+        assert!(MotionPattern::Static.current_point(1_000_000, 1).is_none());
     }
 
     // Velocity
@@ -448,7 +451,7 @@ mod tests {
             velocity: pt(0.5, -0.5, 0.0),
             start_ts: 100,
         };
-        let p = m.current_point(100).unwrap();
+        let p = m.current_point(100, 1).unwrap();
         assert_point_near(p, pt(1.0, 2.0, 3.0), 1e-12);
     }
 
@@ -459,7 +462,7 @@ mod tests {
             velocity: pt(1.0, 2.0, 3.0),
             start_ts: 0,
         };
-        let p = m.current_point(10).unwrap();
+        let p = m.current_point(10, 1).unwrap();
         assert_point_near(p, pt(10.0, 20.0, 30.0), 1e-12);
     }
 
@@ -471,7 +474,7 @@ mod tests {
             start_ts: 100,
         };
         // timestep 50 < start_ts 100 → saturating_sub gives 0
-        let p = m.current_point(50).unwrap();
+        let p = m.current_point(50, 1).unwrap();
         assert_point_near(p, pt(5.0, 5.0, 5.0), 1e-12);
     }
 
@@ -485,7 +488,7 @@ mod tests {
             start_ts: 0,
             duration_us: 100,
         };
-        let p = m.current_point(0).unwrap();
+        let p = m.current_point(0, 1).unwrap();
         assert_point_near(p, pt(0.0, 0.0, 0.0), 1e-12);
     }
 
@@ -497,7 +500,7 @@ mod tests {
             start_ts: 0,
             duration_us: 100,
         };
-        let p = m.current_point(50).unwrap();
+        let p = m.current_point(50, 1).unwrap();
         assert_point_near(p, pt(5.0, 10.0, 0.0), 1e-12);
     }
 
@@ -510,7 +513,7 @@ mod tests {
             duration_us: 100,
         };
         // Well past duration
-        let p = m.current_point(500).unwrap();
+        let p = m.current_point(500, 1).unwrap();
         assert_point_near(p, pt(10.0, 0.0, 0.0), 1e-12);
     }
 
@@ -523,7 +526,7 @@ mod tests {
             duration_us: 40,
         };
         // t=30 → dt=20, frac=0.5
-        let p = m.current_point(30).unwrap();
+        let p = m.current_point(30, 1).unwrap();
         assert_point_near(p, pt(3.0, 4.0, 5.0), 1e-12);
     }
 
@@ -539,7 +542,7 @@ mod tests {
             angular_vel_deg_per_us: 1.0,
             start_ts: 0,
         };
-        let p = m.current_point(0).unwrap();
+        let p = m.current_point(0, 1).unwrap();
         assert_point_near(p, pt(10.0, 0.0, 0.0), 1e-9);
     }
 
@@ -553,7 +556,7 @@ mod tests {
             angular_vel_deg_per_us: 1.0,
             start_ts: 0,
         };
-        let p = m.current_point(90).unwrap();
+        let p = m.current_point(90, 1).unwrap();
         assert_point_near(p, pt(0.0, 5.0, 0.0), 1e-9);
     }
 
@@ -566,7 +569,7 @@ mod tests {
             angular_vel_deg_per_us: 1.0,
             start_ts: 0,
         };
-        let p = m.current_point(180).unwrap();
+        let p = m.current_point(180, 1).unwrap();
         assert!((p.z - 42.0).abs() < 1e-12);
     }
 
@@ -579,8 +582,8 @@ mod tests {
             angular_vel_deg_per_us: 1.0,
             start_ts: 0,
         };
-        let start = m.current_point(0).unwrap();
-        let after_360 = m.current_point(360).unwrap();
+        let start = m.current_point(0, 1).unwrap();
+        let after_360 = m.current_point(360, 1).unwrap();
         assert_point_near(after_360, start, 1e-9);
     }
 

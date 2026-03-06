@@ -65,10 +65,12 @@ impl RoutingServer {
         // TODO: Allow TX power to be configured via control file for the link
         let tx_dbm = medium.tx_max_dbm();
         let rssi = packet_loss.rssi(tx_dbm, distance, unit, medium);
-        if rssi < medium.noise_floor_dbm()
-            || packet_loss.sample_oneshot(tx_dbm, distance, unit, medium, rng)
-        {
+        if rssi < medium.noise_floor_dbm() {
             warn!("Packet dropped (rssi = {rssi})");
+            return None;
+        }
+        if packet_loss.sample_oneshot(tx_dbm, distance, unit, medium, rng) {
+            warn!("Packet dropped (packet_loss, rssi = {rssi})");
             return None;
         }
 

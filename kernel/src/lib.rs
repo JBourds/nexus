@@ -17,6 +17,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
     time::{Duration, SystemTime},
@@ -67,12 +68,14 @@ pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
     timestep: TimestepConfig,
-    time_dilation: f64,
+    time_dilation: Arc<AtomicU64>,
     channels: ResolvedChannels,
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
     pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    abort: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
 }
 
 impl Kernel {
@@ -93,6 +96,37 @@ impl Kernel {
         tx: mpsc::Sender<fuse::KernelMessage>,
         pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
     ) -> Result<Self, KernelError> {
+        Self::new_with_flags(sim, runc, file_handles, rx, tx, pending_remaps, None, None)
+    }
+
+    /// Create the kernel instance with optional abort and pause flags.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_flags(
+        sim: ast::Simulation,
+        runc: RunController,
+        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+        rx: mpsc::Receiver<fuse::FsMessage>,
+        tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        abort: Option<Arc<AtomicBool>>,
+        pause: Option<Arc<AtomicBool>>,
+    ) -> Result<Self, KernelError> {
+        Self::new_with_all_flags(sim, runc, file_handles, rx, tx, pending_remaps, abort, pause, None)
+    }
+
+    /// Create the kernel instance with all optional flags including shared time dilation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_all_flags(
+        sim: ast::Simulation,
+        runc: RunController,
+        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+        rx: mpsc::Receiver<fuse::FsMessage>,
+        tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        abort: Option<Arc<AtomicBool>>,
+        pause: Option<Arc<AtomicBool>>,
+        time_dilation_override: Option<Arc<AtomicU64>>,
+    ) -> Result<Self, KernelError> {
         // CRUCIAL: Sort nodes by their name lexicographically since we are
         // not guaranteed a consistent ordering by hash maps
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
@@ -111,12 +145,16 @@ impl Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
-            time_dilation: sim.params.time_dilation,
+            time_dilation: time_dilation_override.unwrap_or_else(|| {
+                Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))
+            }),
             channels,
             runc,
             rx,
             tx,
             pending_remaps,
+            abort,
+            pause,
         })
     }
     #[instrument(skip_all)]
@@ -134,6 +172,8 @@ impl Kernel {
             tx,
             rx,
             pending_remaps,
+            abort,
+            pause,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
@@ -148,6 +188,16 @@ impl Kernel {
         );
 
         'outer: for timestep in 0..self.timestep.count.into() {
+            if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
+                break;
+            }
+            // Spin-wait while paused, checking abort each iteration.
+            while pause.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {
+                if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
+                    break 'outer;
+                }
+                std::thread::sleep(Duration::from_millis(10));
+            }
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
                 if let Some(events) = dequeue(&mut event_queue, timestep) {
@@ -209,6 +259,11 @@ impl Kernel {
         match cmd {
             RunCmd::Simulate => Source::simulated(rx),
             RunCmd::Replay { logs } => {
+                // Prefer unified trace format if available, fall back to legacy
+                let trace_file = logs.join("trace.nxs");
+                if trace_file.exists() {
+                    return Source::replay_trace(trace_file);
+                }
                 let logfile = logs.join(TX);
                 if !logfile.exists() {
                     return Err(SourceError::NonexistentReplayLog(logfile));

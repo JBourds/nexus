@@ -264,6 +264,13 @@ impl RoutingServer {
                     self.timestep,
                     msg.expiration.unwrap().get()
                 );
+                event!(
+                    target: "drop", Level::WARN,
+                    timestep = self.timestep,
+                    channel = channel_handle,
+                    node = node_handle,
+                    reason = "ttl_expired"
+                );
                 return Ok(false);
             }
             let node_name = &self.channels.node_names[node_handle];

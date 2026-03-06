@@ -5,7 +5,7 @@ use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
-use std::fs::{File, OpenOptions};
+use std::fs::OpenOptions;
 use std::io::stdout;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
@@ -66,7 +66,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
 
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
-    let (write_log, read_log) = setup_logging(root.as_path(), &args.cmd)?;
+    let trace_path = setup_logging(root.as_path(), &args.cmd, &sim)?;
     runner::build(&sim)?;
     let mut summaries = vec![];
     for _ in 0..args.n.unwrap_or(1) {
@@ -135,38 +135,58 @@ fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn setup_logging(root: &Path, cmd: &RunCmd) -> Result<(PathBuf, PathBuf)> {
-    let tx = root.join("tx");
-    let rx = root.join("rx");
-    let (tx_logfile, rx_logfile) = if matches!(cmd, RunCmd::Simulate) {
-        (Some(make_logfile(&tx)?), Some(make_logfile(&rx)?))
+fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<PathBuf> {
+    let trace_path = root.join("trace.nxs");
+
+    // Build TraceLayer for binary logging (both tx and rx go into unified trace)
+    let trace_layer = if matches!(cmd, RunCmd::Simulate | RunCmd::Replay { .. }) {
+        let header = trace::format::TraceHeader {
+            node_names: {
+                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                names.sort();
+                names
+            },
+            channel_names: {
+                let mut names: Vec<_> = sim.channels.keys().cloned().collect();
+                names.sort();
+                names
+            },
+            timestep_count: sim.params.timestep.count.get(),
+            node_max_nj: {
+                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                names.sort();
+                names
+                    .iter()
+                    .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                    .collect()
+            },
+        };
+        Some(trace::layer::TraceLayer::new(&trace_path, &header)?)
     } else {
-        (None, Some(make_logfile(&rx)?))
+        None
     };
+
     tracing_subscriber::registry()
         .with(
             fmt::layer()
                 .with_filter(filter::filter_fn(|metadata| {
-                    !matches!(metadata.target(), "tx" | "rx" | "movement")
+                    !matches!(
+                        metadata.target(),
+                        "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                    )
                 }))
                 .with_filter(EnvFilter::from_default_env()),
         )
-        .with(
-            kernel::log::BinaryLogLayer::new(tx_logfile).with_filter(filter::filter_fn(
-                |metadata| matches!(metadata.target(), "tx" | "movement"),
-            )),
-        )
-        .with(
-            kernel::log::BinaryLogLayer::new(rx_logfile).with_filter(filter::filter_fn(
-                |metadata| matches!(metadata.target(), "rx" | "movement"),
-            )),
-        )
+        .with(trace_layer.map(|layer| {
+            layer.with_filter(filter::filter_fn(|metadata| {
+                matches!(
+                    metadata.target(),
+                    "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                )
+            }))
+        }))
         .init();
-    Ok((tx, rx))
-}
-
-fn make_logfile(path: impl AsRef<Path>) -> Result<File, std::io::Error> {
-    File::options().create(true).append(true).open(&path)
+    Ok(trace_path)
 }
 
 fn make_file_handles(

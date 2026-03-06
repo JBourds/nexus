@@ -293,6 +293,28 @@ impl Default for NexusFs {
 }
 
 impl Filesystem for NexusFs {
+    fn setattr(
+        &mut self,
+        req: &Request<'_>,
+        ino: u64,
+        _mode: Option<u32>,
+        _uid: Option<u32>,
+        _gid: Option<u32>,
+        _size: Option<u64>,
+        _atime: Option<fuser::TimeOrNow>,
+        _mtime: Option<fuser::TimeOrNow>,
+        _ctime: Option<SystemTime>,
+        _fh: Option<u64>,
+        _crtime: Option<SystemTime>,
+        _chgtime: Option<SystemTime>,
+        _bkuptime: Option<SystemTime>,
+        _flags: Option<u32>,
+        reply: ReplyAttr,
+    ) {
+        // Just return current attrs — we ignore truncate/chmod/etc.
+        self.getattr(req, ino, _fh, reply);
+    }
+
     #[instrument(skip_all)]
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         self.apply_pending_remaps();
