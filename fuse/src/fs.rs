@@ -20,22 +20,40 @@ use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
 static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
-pub const CONTROL_FILES: [(&str, ChannelMode); 9] = [
+pub const CONTROL_FILES: [(&str, ChannelMode); 19] = [
+    // Time control: read/write current virtual time per node
     ("ctl.time.us", ChannelMode::ReadWrite),
     ("ctl.time.ms", ChannelMode::ReadWrite),
     ("ctl.time.s", ChannelMode::ReadWrite),
+    // Elapsed time since simulation start (read-only)
     ("ctl.elapsed.us", ChannelMode::ReadOnly),
     ("ctl.elapsed.ms", ChannelMode::ReadOnly),
     ("ctl.elapsed.s", ChannelMode::ReadOnly),
+    // Energy (stubs, not yet implemented)
     ("ctl.energy_left", ChannelMode::ReadOnly),
     ("ctl.energy_state", ChannelMode::ReadWrite),
-    ("ctl.position", ChannelMode::ReadWrite),
+    // Absolute position and orientation (read/write in node's distance unit / degrees)
+    ("ctl.pos.x", ChannelMode::ReadWrite),
+    ("ctl.pos.y", ChannelMode::ReadWrite),
+    ("ctl.pos.z", ChannelMode::ReadWrite),
+    ("ctl.pos.az", ChannelMode::ReadWrite),
+    ("ctl.pos.el", ChannelMode::ReadWrite),
+    ("ctl.pos.roll", ChannelMode::ReadWrite),
+    // Relative position delta (write-only; adds to current position and clears motion pattern)
+    ("ctl.pos.dx", ChannelMode::WriteOnly),
+    ("ctl.pos.dy", ChannelMode::WriteOnly),
+    ("ctl.pos.dz", ChannelMode::WriteOnly),
+    // Motion pattern (read/write; formats: none | velocity | linear | circle)
+    ("ctl.pos.motion", ChannelMode::ReadWrite),
+    // Power flows (read/write; runtime manipulation of power sources/sinks)
+    ("ctl.power_flows", ChannelMode::ReadWrite),
 ];
 
 pub fn control_files() -> Vec<String> {
@@ -53,16 +71,41 @@ pub struct NexusFs {
     buffers: HashMap<ChannelId, NexusFile>,
     fs_side: FsChannels,
     kernel_side: Option<KernelChannels>,
+    /// Shared queue of (old_pid, new_pid) pairs pushed by the router.
+    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
 }
 
 impl NexusFs {
-    const EMPTY: Vec<u8> = Vec::new();
-
-    pub fn new(root: PathBuf) -> Self {
+    pub fn new(root: PathBuf, pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>) -> Self {
         Self {
             root,
             attr: Self::root_attr(),
+            pending_remaps,
             ..Default::default()
+        }
+    }
+
+    /// Drain the shared remap queue and migrate FUSE buffer entries from
+    /// old PIDs to new PIDs.
+    fn apply_pending_remaps(&mut self) {
+        let pairs: Vec<(u32, u32)> = {
+            let Ok(mut queue) = self.pending_remaps.lock() else {
+                return;
+            };
+            queue.drain(..).collect()
+        };
+        for (old_pid, new_pid) in pairs {
+            let keys_to_migrate: Vec<String> = self
+                .buffers
+                .keys()
+                .filter(|(pid, _)| *pid == old_pid)
+                .map(|(_, channel)| channel.clone())
+                .collect();
+            for channel in keys_to_migrate {
+                if let Some(file) = self.buffers.remove(&(old_pid, channel.clone())) {
+                    self.buffers.insert((new_pid, channel), file);
+                }
+            }
         }
     }
 
@@ -244,6 +287,7 @@ impl Default for NexusFs {
             buffers: HashMap::default(),
             fs_side: (fs_tx, fs_rx),
             kernel_side: Some((kernel_tx, kernel_rx)),
+            pending_remaps: Arc::new(Mutex::new(Vec::new())),
         }
     }
 }
@@ -251,6 +295,7 @@ impl Default for NexusFs {
 impl Filesystem for NexusFs {
     #[instrument(skip_all)]
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
+        self.apply_pending_remaps();
         if parent != FUSE_ROOT_ID {
             reply.error(ENOENT);
             return;
@@ -265,6 +310,7 @@ impl Filesystem for NexusFs {
 
     #[instrument(skip_all)]
     fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
+        self.apply_pending_remaps();
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
             _ => {
@@ -284,6 +330,7 @@ impl Filesystem for NexusFs {
 
     #[instrument(skip_all)]
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
+        self.apply_pending_remaps();
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
             reply.error(ENOENT);
@@ -330,6 +377,7 @@ impl Filesystem for NexusFs {
         _lock: Option<u64>,
         reply: ReplyData,
     ) {
+        self.apply_pending_remaps();
         if ino == FUSE_ROOT_ID {
             reply.error(EISDIR);
             return;
@@ -357,6 +405,7 @@ impl Filesystem for NexusFs {
         _lock_owner: Option<u64>,
         reply: ReplyWrite,
     ) {
+        self.apply_pending_remaps();
         if ino == FUSE_ROOT_ID {
             reply.error(EISDIR);
             return;
@@ -453,4 +502,103 @@ fn index_to_inode(index: usize) -> u64 {
 
 fn next_inode() -> u64 {
     INODE_GEN.fetch_add(1, Ordering::Relaxed)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::channel::ChannelMode;
+    use crate::file::NexusFile;
+    use std::num::NonZeroUsize;
+    use std::sync::{Arc, Mutex};
+
+    fn test_file() -> NexusFile {
+        NexusFile::new(
+            NonZeroUsize::new(1024).unwrap(),
+            ChannelMode::ReadWrite,
+            next_inode(),
+        )
+    }
+
+    #[test]
+    fn test_apply_pending_remaps_migrates_buffers() {
+        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let mut fs = NexusFs {
+            pending_remaps: remaps.clone(),
+            ..Default::default()
+        };
+
+        // Insert buffers for PID 100
+        fs.buffers.insert((100, "ch_a".into()), test_file());
+        fs.buffers.insert((100, "ch_b".into()), test_file());
+        // Insert buffer for a different PID that should not move
+        fs.buffers.insert((200, "ch_a".into()), test_file());
+
+        // Push a remap: 100 → 300
+        remaps.lock().unwrap().push((100, 300));
+
+        fs.apply_pending_remaps();
+
+        // Old keys gone
+        assert!(!fs.buffers.contains_key(&(100, "ch_a".into())));
+        assert!(!fs.buffers.contains_key(&(100, "ch_b".into())));
+        // New keys present
+        assert!(fs.buffers.contains_key(&(300, "ch_a".into())));
+        assert!(fs.buffers.contains_key(&(300, "ch_b".into())));
+        // Unrelated PID untouched
+        assert!(fs.buffers.contains_key(&(200, "ch_a".into())));
+        // Queue should be drained
+        assert!(remaps.lock().unwrap().is_empty());
+    }
+
+    #[test]
+    fn test_apply_pending_remaps_empty_queue_is_noop() {
+        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let mut fs = NexusFs {
+            pending_remaps: remaps,
+            ..Default::default()
+        };
+
+        fs.buffers.insert((100, "ch_a".into()), test_file());
+        fs.apply_pending_remaps();
+
+        // Nothing should change
+        assert!(fs.buffers.contains_key(&(100, "ch_a".into())));
+    }
+
+    #[test]
+    fn test_apply_pending_remaps_multiple_pairs() {
+        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let mut fs = NexusFs {
+            pending_remaps: remaps.clone(),
+            ..Default::default()
+        };
+
+        fs.buffers.insert((10, "ch_x".into()), test_file());
+        fs.buffers.insert((20, "ch_x".into()), test_file());
+
+        remaps.lock().unwrap().extend([(10, 11), (20, 21)]);
+        fs.apply_pending_remaps();
+
+        assert!(fs.buffers.contains_key(&(11, "ch_x".into())));
+        assert!(fs.buffers.contains_key(&(21, "ch_x".into())));
+        assert!(!fs.buffers.contains_key(&(10, "ch_x".into())));
+        assert!(!fs.buffers.contains_key(&(20, "ch_x".into())));
+    }
+
+    #[test]
+    fn test_apply_pending_remaps_nonexistent_pid_is_harmless() {
+        let remaps = Arc::new(Mutex::new(vec![(999, 1000)]));
+        let mut fs = NexusFs {
+            pending_remaps: remaps,
+            ..Default::default()
+        };
+
+        fs.buffers.insert((50, "ch_a".into()), test_file());
+        fs.apply_pending_remaps();
+
+        // Original buffer still there, no panic
+        assert!(fs.buffers.contains_key(&(50, "ch_a".into())));
+        assert!(!fs.buffers.contains_key(&(1000, "ch_a".into())));
+    }
 }

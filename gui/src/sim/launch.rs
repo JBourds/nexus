@@ -35,9 +35,9 @@ fn ensure_global_subscriber() -> SimSinks {
 
         let sim_layer = ReloadableSimLayer::new(sinks.clone());
         let sim_filter =
-            filter::filter_fn(|metadata| matches!(metadata.target(), "tx" | "rx" | "drop"));
+            filter::filter_fn(|metadata| matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement"));
         let fmt_filter =
-            filter::filter_fn(|metadata| !matches!(metadata.target(), "tx" | "rx" | "drop"));
+            filter::filter_fn(|metadata| !matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement"));
 
         let subscriber = tracing_subscriber::registry()
             .with(sim_layer.with_filter(sim_filter))
@@ -120,6 +120,13 @@ fn run_simulation(
             names
         },
         timestep_count: sim.params.timestep.count.get(),
+        node_max_nj: {
+            let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+            names.sort();
+            names.iter().map(|n| {
+                sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max))
+            }).collect()
+        },
     };
 
     let writer = TraceWriter::create(&trace_path, &header)
@@ -138,7 +145,10 @@ fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBo
     let runc = runner::run(&sim)?;
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
-    let fs = fs_root.map(NexusFs::new).unwrap_or_default();
+    let pending_remaps = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let fs = fs_root
+        .map(|root| NexusFs::new(root, pending_remaps.clone()))
+        .unwrap_or_default();
 
     let file_handles = make_file_handles(&sim, &runc.handles);
 
@@ -148,7 +158,7 @@ fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBo
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new_with_flags(sim, runc, file_handles, rx, tx, Some(abort), Some(pause))?;
+    let kernel = Kernel::new_with_flags(sim, runc, file_handles, rx, tx, pending_remaps, Some(abort), Some(pause))?;
     let _protocol_handles = kernel.run(RunCmd::Simulate)?;
 
     drop(sess);

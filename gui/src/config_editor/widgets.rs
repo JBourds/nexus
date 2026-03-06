@@ -2,7 +2,8 @@ use std::collections::HashSet;
 use std::num::{NonZeroU64, NonZeroUsize};
 
 use config::ast::{
-    Cmd, DataRate, DataUnit, DistanceUnit, PowerRate, PowerUnit, RssiProbExpr, TimeUnit,
+    Cmd, DataRate, DataUnit, DistanceUnit, EnergyUnit, PowerFlow, PowerRate, PowerUnit,
+    RssiProbExpr, TimeUnit,
 };
 use egui::Ui;
 
@@ -231,3 +232,92 @@ pub const SIGNAL_SHAPE_PAIRS: &[(&str, SignalShape)] = &[
     ("Cone", SignalShape::Cone),
     ("Direct", SignalShape::Direct),
 ];
+
+pub const ENERGY_UNIT_PAIRS: &[(&str, EnergyUnit)] = &[
+    ("NanoJoule", EnergyUnit::NanoJoule),
+    ("MicroJoule", EnergyUnit::MicroJoule),
+    ("MilliJoule", EnergyUnit::MilliJoule),
+    ("Joule", EnergyUnit::Joule),
+    ("KiloJoule", EnergyUnit::KiloJoule),
+    ("MicroWattHour", EnergyUnit::MicroWattHour),
+    ("MilliWattHour", EnergyUnit::MilliWattHour),
+    ("WattHour", EnergyUnit::WattHour),
+    ("KiloWattHour", EnergyUnit::KiloWattHour),
+];
+
+/// Editor for a `PowerFlow` — switches between Constant and PiecewiseLinear.
+pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
+    let is_constant = matches!(flow, PowerFlow::Constant(_));
+    let mut mode = if is_constant { 0 } else { 1 };
+    ui.horizontal(|ui| {
+        ui.label("Mode:");
+        egui::ComboBox::from_id_salt(format!("{id}_mode"))
+            .selected_text(if mode == 0 { "Constant" } else { "PiecewiseLinear" })
+            .show_ui(ui, |ui| {
+                if ui.selectable_value(&mut mode, 0, "Constant").changed() {
+                    *flow = PowerFlow::Constant(PowerRate {
+                        rate: 0,
+                        unit: Default::default(),
+                        time: Default::default(),
+                    });
+                }
+                if ui.selectable_value(&mut mode, 1, "PiecewiseLinear").changed() {
+                    *flow = PowerFlow::PiecewiseLinear {
+                        unit: Default::default(),
+                        time: Default::default(),
+                        breakpoints: vec![(0, 0)],
+                        repeat_us: None,
+                    };
+                }
+            });
+    });
+
+    match flow {
+        PowerFlow::Constant(rate) => {
+            power_rate_editor(ui, &format!("{id}_const"), rate);
+        }
+        PowerFlow::PiecewiseLinear {
+            unit,
+            time,
+            breakpoints,
+            repeat_us,
+        } => {
+            ui.horizontal(|ui| {
+                ui.label("Unit:");
+                enum_combo(ui, &format!("{id}_pu"), unit, POWER_UNIT_PAIRS);
+                ui.label("/");
+                enum_combo(ui, &format!("{id}_tu"), time, TIME_UNIT_PAIRS);
+            });
+
+            ui.label("Breakpoints:");
+            let mut to_remove = Vec::new();
+            for (i, (t, r)) in breakpoints.iter_mut().enumerate() {
+                ui.horizontal(|ui| {
+                    ui.label("t(µs):");
+                    ui.add(egui::DragValue::new(t));
+                    ui.label("rate:");
+                    ui.add(egui::DragValue::new(r));
+                    if ui.small_button("✕").clicked() {
+                        to_remove.push(i);
+                    }
+                });
+            }
+            for i in to_remove.into_iter().rev() {
+                breakpoints.remove(i);
+            }
+            if ui.small_button("+ Breakpoint").clicked() {
+                let last_t = breakpoints.last().map(|(t, _)| *t).unwrap_or(0);
+                breakpoints.push((last_t + 1_000_000, 0));
+            }
+
+            // Optional repeat
+            let mut has_repeat = repeat_us.is_some();
+            if ui.checkbox(&mut has_repeat, "Repeat period (µs)").changed() {
+                *repeat_us = if has_repeat { Some(1_000_000) } else { None };
+            }
+            if let Some(rep) = repeat_us {
+                ui.add(egui::DragValue::new(rep));
+            }
+        }
+    }
+}

@@ -82,6 +82,9 @@ fn show_node_details(
 
     // Charge
     if let Some(rt) = runtime {
+        if rt.is_dead {
+            ui.colored_label(egui::Color32::RED, "DEAD (battery depleted)");
+        }
         if let Some(ratio) = rt.charge_ratio {
             ui.label(format!("Charge: {:.1}%", ratio * 100.0));
         }

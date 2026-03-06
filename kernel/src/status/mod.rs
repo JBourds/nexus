@@ -44,6 +44,30 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
             .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
     }
 
+    pub fn freeze_node(&mut self, name: String) -> Result<(), KernelError> {
+        self.tx
+            .send(KernelMessage::FreezeNode(name))
+            .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
+    }
+
+    #[allow(dead_code)]
+    pub fn unfreeze_node(&mut self, name: String) -> Result<(), KernelError> {
+        self.tx
+            .send(KernelMessage::UnfreezeNode(name))
+            .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))
+    }
+
+    /// Kill a frozen node's processes and respawn them. Synchronous: waits
+    /// for the status server to return the new PIDs.
+    pub fn respawn_node(&mut self, name: String) -> Result<StatusMessage, KernelError> {
+        self.tx
+            .send(KernelMessage::RespawnNode(name))
+            .map_err(|e| KernelError::StatusError(StatusError::KernelSendError(e)))?;
+        self.rx
+            .recv()
+            .map_err(|e| KernelError::StatusError(StatusError::RecvError(e)))
+    }
+
     pub fn shutdown(self) -> HandleInner {
         self.tx
             .send(KernelMessage::Shutdown)
@@ -111,6 +135,22 @@ impl StatusServer {
                 }
                 Ok(KernelMessage::Unfreeze) => {
                     self.runc.cgroups.unfreeze_nodes();
+                }
+                Ok(KernelMessage::FreezeNode(name)) => {
+                    self.runc.cgroups.freeze_node(&name);
+                }
+                Ok(KernelMessage::UnfreezeNode(name)) => {
+                    self.runc.cgroups.unfreeze_node(&name);
+                }
+                Ok(KernelMessage::RespawnNode(name)) => {
+                    let pid_changes = self
+                        .runc
+                        .cgroups
+                        .respawn_node(&name, &mut self.runc.handles);
+                    let _ = self.status_tx.send(StatusMessage::Respawned {
+                        node: name,
+                        pid_changes,
+                    });
                 }
                 Err(e) => {
                     break Err(KernelError::StatusError(StatusError::RecvError(e)));

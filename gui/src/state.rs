@@ -86,6 +86,8 @@ pub struct NodeState {
     pub y: f64,
     pub z: f64,
     pub charge_ratio: Option<f32>,
+    pub max_nj: Option<u64>,
+    pub is_dead: bool,
 }
 
 /// A message event for display in the message panel.

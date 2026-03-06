@@ -1,4 +1,4 @@
-use egui::{Color32, Pos2, Rect, Stroke, Ui};
+use egui::{Color32, Pos2, Rect, Stroke, Vec2, Ui};
 
 use crate::render::grid::GridView;
 use crate::state::NodeState;
@@ -32,6 +32,14 @@ pub fn draw_node(
     // Node circle
     painter.circle_filled(screen_pos, radius, color);
 
+    // Dead node X overlay
+    if node.is_dead {
+        let half = radius * 0.7;
+        let stroke = Stroke::new(2.0, Color32::RED);
+        painter.line_segment([screen_pos + Vec2::new(-half, -half), screen_pos + Vec2::new(half, half)], stroke);
+        painter.line_segment([screen_pos + Vec2::new(-half, half), screen_pos + Vec2::new(half, -half)], stroke);
+    }
+
     // Selection ring
     if selected {
         painter.circle_stroke(screen_pos, radius + 3.0, Stroke::new(2.0, Color32::WHITE));
@@ -52,6 +60,7 @@ pub fn draw_node(
 fn charge_color(charge_ratio: Option<f32>) -> Color32 {
     match charge_ratio {
         None => Color32::from_rgb(80, 140, 220),
+        Some(r) if r == 0.0 => Color32::from_rgba_premultiplied(80, 80, 80, 128),
         Some(r) => {
             let r = r.clamp(0.0, 1.0);
             if r > 0.5 {

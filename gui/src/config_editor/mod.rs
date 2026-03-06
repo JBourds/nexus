@@ -8,7 +8,6 @@ use config::ast;
 use egui::Ui;
 
 use crate::state::ConfigEditorState;
-use widgets::{add_item_ui, power_rate_editor, remove_button};
 
 /// Show the full configuration editor UI.
 pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
@@ -29,19 +28,6 @@ pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
 
                 ui.collapsing("Channels", |ui| {
                     channels::show_channels(ui, &mut state.sim, &mut state.add_item_buf);
-                });
-
-                ui.collapsing("Sinks", |ui| {
-                    show_power_rate_map(ui, "sink", &mut state.sim.sinks, &mut state.add_item_buf);
-                });
-
-                ui.collapsing("Sources", |ui| {
-                    show_power_rate_map(
-                        ui,
-                        "source",
-                        &mut state.sim.sources,
-                        &mut state.add_item_buf,
-                    );
                 });
 
                 ui.separator();
@@ -80,45 +66,6 @@ pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
                 }
             });
         });
-}
-
-/// Reusable CRUD for a `HashMap<String, PowerRate>` (sinks or sources).
-fn show_power_rate_map(
-    ui: &mut Ui,
-    kind: &str,
-    map: &mut std::collections::HashMap<String, ast::PowerRate>,
-    buf: &mut String,
-) {
-    if let Some(name) = add_item_ui(ui, &format!("+ {kind}:"), buf) {
-        map.entry(name).or_insert_with(|| ast::PowerRate {
-                    rate: 0,
-                    unit: ast::PowerUnit::default(),
-                    time: ast::TimeUnit::default(),
-                });
-    }
-
-    let mut to_remove = Vec::new();
-    let names: Vec<String> = {
-        let mut n: Vec<_> = map.keys().cloned().collect();
-        n.sort();
-        n
-    };
-
-    for name in &names {
-        if let Some(rate) = map.get_mut(name) {
-            ui.horizontal(|ui| {
-                ui.label(format!("{name}:"));
-                power_rate_editor(ui, &format!("{kind}_{name}"), rate);
-                if remove_button(ui) {
-                    to_remove.push(name.clone());
-                }
-            });
-        }
-    }
-
-    for name in to_remove {
-        map.remove(&name);
-    }
 }
 
 fn validate_config(sim: &ast::Simulation) -> Option<String> {

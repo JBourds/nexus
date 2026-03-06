@@ -72,6 +72,10 @@ struct BridgeVisitor {
     is_tx: bool,
     data: Vec<u8>,
     reason: Option<String>,
+    charge_nj: u64,
+    x: f64,
+    y: f64,
+    z: f64,
 }
 
 impl Visit for BridgeVisitor {
@@ -82,6 +86,16 @@ impl Visit for BridgeVisitor {
             "timestep" => self.timestep = value,
             "channel" => self.channel = value as u32,
             "node" => self.node = value as u32,
+            "charge_nj" => self.charge_nj = value,
+            _ => {}
+        }
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        match field.name() {
+            "x" => self.x = value,
+            "y" => self.y = value,
+            "z" => self.z = value,
             _ => {}
         }
     }
@@ -125,6 +139,36 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                     src_node: visitor.node,
                     channel: visitor.channel,
                     reason,
+                },
+            };
+            self.emit(record);
+            return;
+        }
+
+        if target == "battery" {
+            let mut visitor = BridgeVisitor::default();
+            event.record(&mut visitor);
+            let record = TraceRecord {
+                timestep: visitor.timestep,
+                event: TraceEvent::EnergyUpdate {
+                    node: visitor.node,
+                    energy_nj: visitor.charge_nj,
+                },
+            };
+            self.emit(record);
+            return;
+        }
+
+        if target == "movement" {
+            let mut visitor = BridgeVisitor::default();
+            event.record(&mut visitor);
+            let record = TraceRecord {
+                timestep: visitor.timestep,
+                event: TraceEvent::PositionUpdate {
+                    node: visitor.node,
+                    x: visitor.x,
+                    y: visitor.y,
+                    z: visitor.z,
                 },
             };
             self.emit(record);

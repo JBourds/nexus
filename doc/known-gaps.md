@@ -11,57 +11,20 @@ implementation plan in the project memory).
 
 ## 1. Energy Framework
 
-**Priority: High** — Required for the thesis energy case studies (battery-aware
-clusterhead election in Ring Routing).
+**Status: Implemented** (branch: `charge`). See
+[energy-framework.md](energy-framework.md) for full documentation.
 
-### What exists
+Per-node battery tracking with named power states, ambient generation,
+per-channel TX/RX costs, death via cgroup freezer, and configurable restart
+threshold. All accounting in integer nanojoules. 23 kernel tests.
 
-- `config::ast`: `Charge { max, quantity, unit }`, `PowerRate { rate, unit, time }`,
-  `Simulation.sources/sinks` as `HashMap<*Handle, PowerRate>`,
-  `Node.sinks/sources` as `HashSet<*Handle>`.
-- `kernel::types::Node` carries `charge: Option<Charge>`.
-- FUSE: `ctl.energy_left` (ReadOnly) and `ctl.energy_state` (ReadWrite) are
-  listed in `CONTROL_FILES` but are not wired to any handler — reads return
-  nothing, writes are silently ignored.
+### Remaining gaps
 
-### What is missing
-
-Three categories of power flows need to be tracked per-timestep:
-
-1. **Fixed sources/sinks** — constant power in/out regardless of behavior
-   (e.g., solar panel, standby draw). Deduct/add proportional to elapsed
-   simulated time per tick.
-2. **CPU operation sinks** — read `cpu.stat` (cgroup v2 exposes
-   `usage_usec` cumulatively) each tick, diff from previous value, multiply
-   by a configurable watts-per-Hz factor.
-3. **Link tx/rx sinks** — deduct `bytes * energy_per_byte` from sender on
-   write, from each receiver on delivery. Wired into `kernel/router/`.
-
-Energy state machine. Depleted nodes (energy ≤ 0) transition to `"dead"` and
-their cgroups are frozen. When/if the node exceeds its low water mark power
-threshold, restart the process.
-
-### Key design challenges
-
-- **Thread safety**: Energy state is mutated by both the routing server
-  thread (on message events) and the status server thread (on periodic
-  ticks). Recommended: `Arc<RwLock<Vec<NodeDynamicState>>>` shared between
-  both threads.
-- **Unit normalization**: All energy must be converted to a single internal
-  unit (nanojoules recommended) at config parse time.
-- **Control file reads from FUSE thread**: FUSE reads happen on the FUSE
-  thread; needs a query mechanism to the kernel (e.g., a new
-  `FsMessage::ReadControl` variant or shared atomic state).
-- **CPU accounting delta**: `usage_usec` is cumulative; must diff from the
-  previous tick's value.
-
-### Config changes needed
-
-- Add `power` sub-table to `Link` with `tx_power_per_byte` and
-  `rx_power_per_byte` fields.
-- Add `cpu_power` to `Resources` (watts per Hz).
-- Add `charge` to `Node` with `max`, `quantity`, and `unit` fields
-  (partially done in AST but not validated or used at runtime).
+- **CPU-proportional drain** — `cpu.stat` usage_usec tracking not
+  implemented. Energy drain is currently config-driven (power states), not
+  measured from actual CPU usage.
+- **Per-byte TX/RX costs** — channel energy is a flat per-message cost, not
+  proportional to message size.
 
 ---
 
@@ -146,25 +109,29 @@ cannot be built against a stable contract.
 
 ---
 
-## 5. No Automated Testing
+## 5. Test Coverage Incomplete
 
-**Priority: Medium** — The codebase has no tests; regressions are caught
-only by running examples manually.
+**Priority: Medium** — Tests exist for config parsing/validation (21 tests),
+energy accounting (23 tests), and position control (33 tests on mobile-nodes
+branch). Gaps remain.
 
-### Needed (in order of impact)
+### What exists
 
-1. **Config unit tests** — Round-trip parse/serialize, signal model
-   invariants (RSSI decreases with distance), delay calculation edge cases,
-   power unit normalization.
-2. **Router mock tests** — Drive the routing server with raw `mpsc` channel
-   pairs (no FUSE mount). Test: message timing, TTL expiry, 100% packet
-   loss, shared-channel collision, exclusive buffer limits, replay matching
-   live run.
-3. **Cgroup mockability** — Inject `root: PathBuf` into `CgroupController`
+1. **Config unit tests** — Accept/reject fixture tests for TOML parsing and
+   validation, including energy and position config.
+2. **Energy accounting tests** — 23 tests driving `RoutingServer` directly
+   via `mpsc` channels (no FUSE). Covers drain, ambient, death/restart,
+   TX/RX costs, control files, unit conversion.
+3. **Position control tests** — 33 tests (mobile-nodes branch) for motion
+   patterns, position control file parsing, and log round-trips.
+
+### Still needed
+
+1. **Router mock tests** — Message timing, TTL expiry, 100% packet loss,
+   shared-channel collision, exclusive buffer limits, replay matching live run.
+2. **Cgroup mockability** — Inject `root: PathBuf` into `CgroupController`
    and use `tempfile::tempdir()` in tests to avoid requiring root.
-4. **Energy accounting tests** — Once the energy module exists: linear drain,
-   source replenishment cap, freeze-on-death, CPU accounting delta.
-5. **End-to-end `#[ignore]` tests** — Require cgroup v2 + FUSE; run a
+3. **End-to-end `#[ignore]` tests** — Require cgroup v2 + FUSE; run a
    0-timestep simulation, verify premature exit detection. Gated for CI.
 
 ### CI
@@ -290,11 +257,11 @@ may require tuning time dilation or disabling DVFS.
 
 | Gap | Priority | Blocks |
 |-----|----------|--------|
-| Energy framework | High | Ring Routing case study, thesis |
+| ~~Energy framework~~ | ~~High~~ | Implemented (branch: `charge`) |
 | Mobile nodes | High | Thesis position demos |
 | Memory limits enforcement | Medium | Resource accuracy |
 | Stable trace format | Medium | GUI, replay long-term |
-| Automated tests + CI | Medium | Developer confidence |
+| Test coverage gaps + CI | Medium | Developer confidence |
 | Fuzz mode | Low | — |
 | Precanned link presets | Low | Ease of use |
 | Web GUI | Low | Requires stable trace format |

@@ -20,8 +20,8 @@ but the layout looks like:
 ├── ctl.elapsed.us        # read-only: elapsed simulated time in microseconds
 ├── ctl.elapsed.ms        # read-only: elapsed simulated time in milliseconds
 ├── ctl.elapsed.s         # read-only: elapsed simulated time in seconds
-├── ctl.energy_left       # read-only: remaining energy (NOT YET IMPLEMENTED)
-├── ctl.energy_state      # read/write: energy state ("on"/"sleep"/"dead") (NOT YET IMPLEMENTED)
+├── ctl.energy_left       # read-only: remaining energy in nanojoules
+├── ctl.energy_state      # read/write: current power state name
 └── ctl.position          # read/write: node position (NOT YET IMPLEMENTED)
 ```
 
@@ -86,27 +86,36 @@ a start time.
 
 ## Energy Control Files
 
-> **Status: Not yet implemented.** These files are defined in the FUSE
-> layer but are not wired to kernel logic. See
-> [known-gaps.md](known-gaps.md#energy-framework).
+These files are fully wired. See [energy-framework.md](energy-framework.md)
+for detailed documentation.
 
 ### `ctl.energy_left`
 
-**Mode:** Read-only (planned)
+**Mode:** Read-only
 
-Returns the node's remaining energy as a decimal value in nanojoules. When
-a node's energy reaches zero, it transitions to the `"dead"` state and its
-processes are frozen.
+Returns the node's current charge as an ASCII decimal integer in nanojoules.
+Returns `0` if the node has no battery configured. Can be negative when the
+node is dead (charge depleted past zero).
+
+```python
+with open("ctl.energy_left") as f:
+    charge_nj = int(f.read())
+```
 
 ### `ctl.energy_state`
 
-**Mode:** Read/Write (planned)
+**Mode:** Read/Write
 
-**Read:** Returns the current energy state. These states are energy profiles
-defined within the simulation. Sample states could be `"dead"`, `"sleep"`, `"on"`.
+**Read:** Returns the name of the currently active power state (e.g.,
+`"sleep"`, `"active"`), or an empty string if no state is active.
 
-**Write:** Requests a state transition to the written state. Must be one
-specified in the simulation configuration.
+**Write:** Switches to a named power state. The name must exactly match a
+key in the node's `power_states` config. Unknown names are silently ignored.
+
+```python
+with open("ctl.energy_state", "w") as f:
+    f.write("transmit")
+```
 
 ## Position File
 

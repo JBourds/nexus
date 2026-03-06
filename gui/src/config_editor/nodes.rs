@@ -1,12 +1,13 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use config::ast::{self, Charge, Cmd, NodeProtocol};
+use config::ast::{self, Charge, Cmd, NodeProtocol, PowerFlow, PowerRate};
 use egui::Ui;
 
 use super::widgets::{
-    CLOCK_UNIT_PAIRS, DATA_UNIT_PAIRS, DISTANCE_UNIT_PAIRS, POWER_UNIT_PAIRS, add_item_ui,
-    channel_multi_select, cmd_editor, enum_combo, optional_nonzero_u64, remove_button,
+    CLOCK_UNIT_PAIRS, DATA_UNIT_PAIRS, DISTANCE_UNIT_PAIRS, ENERGY_UNIT_PAIRS, add_item_ui,
+    channel_multi_select, cmd_editor, enum_combo, optional_nonzero_u64, power_flow_editor,
+    power_rate_editor, remove_button,
 };
 
 pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
@@ -17,8 +18,12 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
                     protocols: Default::default(),
                     internal_names: Vec::new(),
                     resources: ast::Resources::default(),
-                    sinks: HashSet::new(),
-                    sources: HashSet::new(),
+                    power_states: HashMap::new(),
+                    power_sources: HashMap::new(),
+                    power_sinks: HashMap::new(),
+                    channel_energy: HashMap::new(),
+                    initial_state: None,
+                    restart_threshold: None,
                     start: SystemTime::now(),
                 });
     }
@@ -36,17 +41,6 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
         ch.sort();
         ch
     };
-    let available_sinks: Vec<String> = {
-        let mut s: Vec<_> = sim.sinks.keys().cloned().collect();
-        s.sort();
-        s
-    };
-    let available_sources: Vec<String> = {
-        let mut s: Vec<_> = sim.sources.keys().cloned().collect();
-        s.sort();
-        s
-    };
-
     for name in &node_names {
         let id = ui.make_persistent_id(format!("node_{name}"));
         egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
@@ -58,14 +52,7 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
             })
             .body(|ui| {
                 if let Some(node) = sim.nodes.get_mut(name) {
-                    show_node(
-                        ui,
-                        name,
-                        node,
-                        &available_channels,
-                        &available_sinks,
-                        &available_sources,
-                    );
+                    show_node(ui, name, node, &available_channels);
                 }
             });
     }
@@ -80,8 +67,6 @@ fn show_node(
     name: &str,
     node: &mut ast::Node,
     available_channels: &[String],
-    available_sinks: &[String],
-    available_sources: &[String],
 ) {
     // --- Position ---
     ui.label("Position:");
@@ -132,7 +117,7 @@ fn show_node(
                 ui,
                 &format!("node_punit_{name}"),
                 &mut charge.unit,
-                POWER_UNIT_PAIRS,
+                ENERGY_UNIT_PAIRS,
             );
         });
     }
@@ -176,28 +161,145 @@ fn show_node(
     ui.separator();
     show_internal_channels(ui, name, &mut node.internal_names);
 
-    // --- Sinks ---
-    if !available_sinks.is_empty() {
+    // --- Power States ---
+    ui.separator();
+    show_power_rate_map(ui, name, "power_state", &mut node.power_states);
+
+    // --- Power Sources ---
+    ui.separator();
+    show_power_flow_map(ui, name, "power_source", &mut node.power_sources);
+
+    // --- Power Sinks ---
+    ui.separator();
+    show_power_flow_map(ui, name, "power_sink", &mut node.power_sinks);
+
+    // --- Initial State ---
+    if !node.power_states.is_empty() {
         ui.separator();
-        ui.label("Sinks:");
-        channel_multi_select(
-            ui,
-            &format!("node_sinks_{name}"),
-            &mut node.sinks,
-            available_sinks,
-        );
+        let state_names: Vec<String> = node.power_states.keys().cloned().collect();
+        ui.horizontal(|ui| {
+            ui.label("Initial State:");
+            let current = node.initial_state.clone().unwrap_or_default();
+            egui::ComboBox::from_id_salt(format!("node_init_state_{name}"))
+                .selected_text(&current)
+                .show_ui(ui, |ui| {
+                    if ui.selectable_label(node.initial_state.is_none(), "(none)").clicked() {
+                        node.initial_state = None;
+                    }
+                    for s in &state_names {
+                        if ui.selectable_label(node.initial_state.as_ref() == Some(s), s).clicked() {
+                            node.initial_state = Some(s.clone());
+                        }
+                    }
+                });
+        });
     }
 
-    // --- Sources ---
-    if !available_sources.is_empty() {
-        ui.separator();
-        ui.label("Sources:");
-        channel_multi_select(
-            ui,
-            &format!("node_sources_{name}"),
-            &mut node.sources,
-            available_sources,
-        );
+    // --- Restart Threshold ---
+    ui.separator();
+    let mut has_threshold = node.restart_threshold.is_some();
+    if ui.checkbox(&mut has_threshold, "Restart Threshold").changed() {
+        node.restart_threshold = if has_threshold { Some(0.1) } else { None };
+    }
+    if let Some(threshold) = &mut node.restart_threshold {
+        ui.horizontal(|ui| {
+            ui.label("Threshold:");
+            ui.add(egui::Slider::new(threshold, 0.0..=1.0));
+        });
+    }
+}
+
+/// CRUD editor for a `HashMap<String, PowerRate>` on a node.
+fn show_power_rate_map(
+    ui: &mut Ui,
+    node_name: &str,
+    kind: &str,
+    map: &mut HashMap<String, PowerRate>,
+) {
+    ui.label(format!("{}s:", kind.replace('_', " ")));
+    let add_buf_id = egui::Id::new(format!("{kind}_add_buf_{node_name}"));
+    let mut add_buf: String = ui.data(|d| d.get_temp(add_buf_id)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label("+");
+        ui.text_edit_singleline(&mut add_buf);
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (ui.button("Add").clicked() || enter) && !add_buf.is_empty() {
+            map.entry(add_buf.clone()).or_insert_with(|| PowerRate {
+                rate: 0,
+                unit: Default::default(),
+                time: Default::default(),
+            });
+            add_buf.clear();
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(add_buf_id, add_buf));
+
+    let mut to_remove = Vec::new();
+    let names: Vec<String> = {
+        let mut n: Vec<_> = map.keys().cloned().collect();
+        n.sort();
+        n
+    };
+    for n in &names {
+        if let Some(rate) = map.get_mut(n) {
+            ui.horizontal(|ui| {
+                ui.label(format!("{n}:"));
+                power_rate_editor(ui, &format!("{kind}_{node_name}_{n}"), rate);
+                if remove_button(ui) {
+                    to_remove.push(n.clone());
+                }
+            });
+        }
+    }
+    for n in to_remove {
+        map.remove(&n);
+    }
+}
+
+/// CRUD editor for a `HashMap<String, PowerFlow>` on a node.
+fn show_power_flow_map(
+    ui: &mut Ui,
+    node_name: &str,
+    kind: &str,
+    map: &mut HashMap<String, PowerFlow>,
+) {
+    ui.label(format!("{}s:", kind.replace('_', " ")));
+    let add_buf_id = egui::Id::new(format!("{kind}_add_buf_{node_name}"));
+    let mut add_buf: String = ui.data(|d| d.get_temp(add_buf_id)).unwrap_or_default();
+    ui.horizontal(|ui| {
+        ui.label("+");
+        ui.text_edit_singleline(&mut add_buf);
+        let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
+        if (ui.button("Add").clicked() || enter) && !add_buf.is_empty() {
+            map.entry(add_buf.clone()).or_insert_with(|| PowerFlow::Constant(PowerRate {
+                rate: 0,
+                unit: Default::default(),
+                time: Default::default(),
+            }));
+            add_buf.clear();
+        }
+    });
+    ui.data_mut(|d| d.insert_temp(add_buf_id, add_buf));
+
+    let mut to_remove = Vec::new();
+    let names: Vec<String> = {
+        let mut n: Vec<_> = map.keys().cloned().collect();
+        n.sort();
+        n
+    };
+    for n in &names {
+        if let Some(flow) = map.get_mut(n) {
+            ui.horizontal(|ui| {
+                ui.label(format!("{n}:"));
+                if remove_button(ui) {
+                    to_remove.push(n.clone());
+                }
+            });
+            power_flow_editor(ui, &format!("{kind}_{node_name}_{n}"), flow);
+        }
+    }
+    for n in to_remove {
+        map.remove(&n);
     }
 }
 

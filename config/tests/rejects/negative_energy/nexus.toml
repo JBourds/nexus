@@ -1,0 +1,14 @@
+# Charge quantity exceeds max - should be rejected
+
+[params]
+root = "~/simulations"
+
+[nodes]
+
+[nodes.main]
+deployments = [{charge = {max = 100, quantity = 200, unit = "nj"}}]
+
+[[nodes.main.protocols]]
+name = "main"
+runner = "make"
+

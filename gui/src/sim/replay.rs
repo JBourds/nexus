@@ -50,6 +50,10 @@ impl ReplayController {
         &self.reader.header.channel_names
     }
 
+    pub fn node_max_nj(&self) -> &[Option<u64>] {
+        &self.reader.header.node_max_nj
+    }
+
     /// Get all records for a specific timestep (binary search).
     pub fn records_at(&self, ts: u64) -> &[TraceRecord] {
         match self.ts_ranges.binary_search_by_key(&ts, |(t, _)| *t) {
@@ -135,9 +139,10 @@ fn apply_state_updates(states: &mut [NodeState], records: &[TraceRecord]) {
             }
             TraceEvent::EnergyUpdate { node, energy_nj } => {
                 if let Some(state) = states.get_mut(*node as usize) {
-                    if state.charge_ratio.is_some() {
-                        let ratio = (*energy_nj as f32) / 1.0e9;
+                    if let Some(max) = state.max_nj {
+                        let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
                         state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                        state.is_dead = *energy_nj == 0 && max > 0;
                     }
                 }
             }

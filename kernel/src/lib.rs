@@ -3,10 +3,10 @@ mod events;
 mod helpers;
 pub mod log;
 mod resolver;
-mod router;
+pub(crate) mod router;
 pub mod sources;
 mod status;
-mod types;
+pub mod types;
 
 use fuse::PID;
 use helpers::{make_handles, unzip};
@@ -16,7 +16,7 @@ use std::{
     collections::BTreeMap,
     path::PathBuf,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver},
     },
@@ -73,6 +73,7 @@ pub struct Kernel {
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
+    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
 }
@@ -93,8 +94,9 @@ impl Kernel {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
     ) -> Result<Self, KernelError> {
-        Self::new_with_flags(sim, runc, file_handles, rx, tx, None, None)
+        Self::new_with_flags(sim, runc, file_handles, rx, tx, pending_remaps, None, None)
     }
 
     /// Create the kernel instance with optional abort and pause flags.
@@ -104,6 +106,7 @@ impl Kernel {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
         abort: Option<Arc<AtomicBool>>,
         pause: Option<Arc<AtomicBool>>,
     ) -> Result<Self, KernelError> {
@@ -119,6 +122,7 @@ impl Kernel {
             nodes,
             &node_handles,
             file_handles,
+            &sim.params.timestep,
         )?;
         Ok(Self {
             root: sim.params.root,
@@ -129,6 +133,7 @@ impl Kernel {
             runc,
             rx,
             tx,
+            pending_remaps,
             abort,
             pause,
         })
@@ -147,13 +152,14 @@ impl Kernel {
             runc,
             tx,
             rx,
+            pending_remaps,
             abort,
             pause,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source)
+            RoutingServer::serve(tx, channels, timestep, rng, source, pending_remaps)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
         queue_event(
@@ -195,8 +201,27 @@ impl Kernel {
                     status::messages::StatusMessage::PrematureExit => {
                         break 'outer;
                     }
+                    status::messages::StatusMessage::Respawned { .. } => {}
                 }
-                routing_server.poll(timestep)?;
+                let router::RouterMessage::EnergyEvents {
+                    depleted,
+                    recovered,
+                } = routing_server.poll(timestep)?
+                else {
+                    continue;
+                };
+                for name in depleted {
+                    status_server.freeze_node(name)?;
+                }
+                for name in recovered {
+                    // Kill the frozen process and respawn a fresh one
+                    if let status::messages::StatusMessage::Respawned { pid_changes, .. } =
+                        status_server.respawn_node(name)?
+                        && !pid_changes.is_empty()
+                    {
+                        routing_server.remap_pids(pid_changes)?;
+                    }
+                }
             }
             if start.elapsed().is_err() {
                 return Err(KernelError::TimestepError(timestep));

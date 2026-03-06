@@ -541,8 +541,6 @@ impl NexusApp {
             },
             channels: HashMap::new(),
             nodes: HashMap::new(),
-            sinks: HashMap::new(),
-            sources: HashMap::new(),
         };
         self.mode = AppMode::ConfigEditor(ConfigEditorState {
             sim,
@@ -611,18 +609,23 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
     let mut nodes: Vec<_> = sim
         .nodes
         .iter()
-        .map(|(name, node)| NodeState {
-            name: name.clone(),
-            x: node.position.point.x,
-            y: node.position.point.y,
-            z: node.position.point.z,
-            charge_ratio: node.charge.as_ref().map(|c| {
-                if c.max == 0 {
-                    1.0
-                } else {
-                    c.quantity as f32 / c.max as f32
-                }
-            }),
+        .map(|(name, node)| {
+            let max_nj = node.charge.as_ref().map(|c| c.unit.to_nj(c.max));
+            NodeState {
+                name: name.clone(),
+                x: node.position.point.x,
+                y: node.position.point.y,
+                z: node.position.point.z,
+                charge_ratio: node.charge.as_ref().map(|c| {
+                    if c.max == 0 {
+                        1.0
+                    } else {
+                        c.quantity as f32 / c.max as f32
+                    }
+                }),
+                max_nj,
+                is_dead: false,
+            }
         })
         .collect();
     nodes.sort_by(|a, b| a.name.cmp(&b.name));
@@ -699,11 +702,12 @@ fn process_gui_event(
                     }
                 }
                 TraceEvent::EnergyUpdate { node, energy_nj } => {
-                    if let Some(state) = node_states.get_mut(*node as usize)
-                        && state.charge_ratio.is_some()
-                    {
-                        let ratio = (*energy_nj as f32) / 1.0e9;
-                        state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                    if let Some(state) = node_states.get_mut(*node as usize) {
+                        if let Some(max) = state.max_nj {
+                            let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
+                            state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                            state.is_dead = *energy_nj == 0 && max > 0;
+                        }
                     }
                 }
             }
@@ -772,12 +776,22 @@ fn create_sim_from_trace_header(
                     },
                     ..Default::default()
                 },
-                charge: None,
+                charge: controller.node_max_nj().get(i).and_then(|opt| {
+                    opt.map(|max_nj| Charge {
+                        max: max_nj,
+                        quantity: max_nj,
+                        unit: EnergyUnit::NanoJoule,
+                    })
+                }),
                 protocols: HashMap::new(),
                 internal_names: Vec::new(),
                 resources: Resources::default(),
-                sinks: Default::default(),
-                sources: Default::default(),
+                power_states: HashMap::new(),
+                power_sources: HashMap::new(),
+                power_sinks: HashMap::new(),
+                channel_energy: HashMap::new(),
+                initial_state: None,
+                restart_threshold: None,
                 start: SystemTime::now(),
             },
         );
@@ -797,8 +811,6 @@ fn create_sim_from_trace_header(
         },
         channels: HashMap::new(),
         nodes,
-        sinks: HashMap::new(),
-        sources: HashMap::new(),
     }
 }
 

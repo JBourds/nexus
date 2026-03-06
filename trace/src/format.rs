@@ -2,13 +2,15 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"NXTR";
-pub const VERSION: u16 = 1;
+pub const VERSION: u16 = 2;
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone)]
 pub struct TraceHeader {
     pub node_names: Vec<String>,
     pub channel_names: Vec<String>,
     pub timestep_count: u64,
+    /// Max energy (in nanojoules) per node. None = no charge tracking.
+    pub node_max_nj: Vec<Option<u64>>,
 }
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone, PartialEq)]
@@ -44,7 +46,7 @@ pub enum TraceEvent {
     },
     EnergyUpdate {
         node: u32,
-        energy_nj: i64,
+        energy_nj: u64,
     },
 }
 
