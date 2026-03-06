@@ -45,6 +45,11 @@ impl SimController {
         self.pause.store(paused, Ordering::Relaxed);
     }
 
+    /// Check if there are buffered events waiting to be polled.
+    pub fn has_pending_events(&self) -> bool {
+        !self.rx.is_empty()
+    }
+
     /// Check if the simulation thread has finished.
     pub fn is_finished(&self) -> bool {
         self.handle.as_ref().is_some_and(|h| h.is_finished())

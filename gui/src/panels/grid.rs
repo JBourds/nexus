@@ -2,7 +2,7 @@ use egui::{Pos2, Rect, Sense, Ui};
 
 use crate::render;
 use crate::render::grid::GridView;
-use crate::state::NodeState;
+use crate::state::{ArrowAnimation, NodeState};
 
 /// Draw the central canvas with grid and nodes.
 /// Returns (clicked_node, hovered_node).
@@ -11,12 +11,27 @@ pub fn show_grid_panel(
     grid: &mut GridView,
     nodes: &[NodeState],
     selected_node: &Option<String>,
+    arrows: &[ArrowAnimation],
 ) -> (Option<String>, Option<String>) {
     let available = ui.available_size();
     let (canvas_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
 
+    // Track whether drag started on a node (persisted across frames via egui temp data).
+    let drag_on_node_id = ui.id().with("drag_on_node");
+    let mut drag_started_on_node: bool = ui.data(|d| d.get_temp(drag_on_node_id)).unwrap_or(false);
+    if response.drag_started() {
+        drag_started_on_node = response
+            .interact_pointer_pos()
+            .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes))
+            .is_some();
+        ui.data_mut(|d| d.insert_temp(drag_on_node_id, drag_started_on_node));
+    }
+    if response.drag_stopped() {
+        ui.data_mut(|d| d.insert_temp(drag_on_node_id, false));
+    }
+
     // Handle pan/zoom
-    grid.handle_input(&response);
+    grid.handle_input(&response, drag_started_on_node);
 
     // Draw grid
     grid.draw(ui, canvas_rect);
@@ -27,9 +42,25 @@ pub fn show_grid_panel(
         render::node::draw_node(ui, canvas_rect, grid, node, is_selected);
     }
 
+    // Draw active message arrows
+    let egui_time = ui.ctx().input(|i| i.time);
+    for arrow in arrows {
+        if let (Some(src), Some(dst)) = (nodes.get(arrow.src_node), nodes.get(arrow.dst_node)) {
+            let progress =
+                ((egui_time - arrow.start_time) / arrow.duration as f64).clamp(0.0, 1.0) as f32;
+            render::message::draw_message_arc(
+                ui,
+                canvas_rect,
+                grid,
+                src,
+                dst,
+                progress,
+                arrow.kind,
+            );
+        }
+    }
+
     // Detect clicked and hovered nodes using the canvas response and pointer position.
-    // We use the canvas response for clicks (not raw input) because the canvas widget
-    // with Sense::click_and_drag() consumes pointer events — raw any_click() is unreliable.
     let clicked_node = if response.clicked() {
         response
             .interact_pointer_pos()

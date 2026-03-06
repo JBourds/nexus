@@ -10,7 +10,7 @@
 //! dilation.
 
 use std::{
-    sync::mpsc,
+    sync::{Arc, atomic::AtomicU64, mpsc},
     thread::{self, JoinHandle},
 };
 
@@ -79,7 +79,7 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
 pub struct StatusServer {
     /// Scalar value to try and speed up or slow down requested cycles with.
     #[allow(dead_code)]
-    time_dilation: f64,
+    time_dilation: Arc<AtomicU64>,
     /// Controller for different aspects of the running simulation.
     runc: RunController,
     /// Struct containing information about each core's frequency
@@ -160,7 +160,7 @@ impl StatusServer {
     }
 
     pub fn serve(
-        time_dilation: f64,
+        time_dilation: Arc<AtomicU64>,
         mut runc: RunController,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, StatusMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();

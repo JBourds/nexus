@@ -132,18 +132,22 @@ fn apply_state_updates(states: &mut [NodeState], records: &[TraceRecord]) {
         match &record.event {
             TraceEvent::PositionUpdate { node, x, y, z } => {
                 if let Some(state) = states.get_mut(*node as usize) {
+                    state.prev_x = state.x;
+                    state.prev_y = state.y;
+                    state.prev_z = state.z;
                     state.x = *x;
                     state.y = *y;
                     state.z = *z;
+                    state.last_move_ts = record.timestep;
                 }
             }
             TraceEvent::EnergyUpdate { node, energy_nj } => {
-                if let Some(state) = states.get_mut(*node as usize) {
-                    if let Some(max) = state.max_nj {
-                        let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
-                        state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
-                        state.is_dead = *energy_nj == 0 && max > 0;
-                    }
+                if let Some(state) = states.get_mut(*node as usize)
+                    && let Some(max) = state.max_nj
+                {
+                    let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
+                    state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                    state.is_dead = *energy_nj == 0 && max > 0;
                 }
             }
             _ => {}

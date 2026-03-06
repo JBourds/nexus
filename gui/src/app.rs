@@ -133,7 +133,7 @@ impl NexusApp {
                 state.needs_fit = false;
             }
             let (clicked, _hovered) =
-                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node);
+                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[]);
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
@@ -146,7 +146,13 @@ impl NexusApp {
         };
 
         // Process events from simulation (only when not paused)
+        let egui_time = ctx.input(|i| i.time);
         if !state.paused {
+            // Expire finished arrow animations
+            state
+                .active_arrows
+                .retain(|a| (egui_time - a.start_time) < a.duration as f64);
+
             for event in state.controller.poll_events() {
                 process_gui_event(
                     event,
@@ -154,6 +160,10 @@ impl NexusApp {
                     &mut state.messages,
                     &mut state.node_states,
                     &state.sim,
+                    &mut state.active_arrows,
+                    &state.channel_subscribers,
+                    &mut state.last_sender,
+                    egui_time,
                 );
             }
         }
@@ -202,6 +212,26 @@ impl NexusApp {
                 state.paused = !state.paused;
                 state.controller.set_paused(state.paused);
             }
+            // Time dilation slider
+            ui.horizontal(|ui| {
+                ui.label("Dilation:");
+                let mut td = f64::from_bits(
+                    state.time_dilation.load(std::sync::atomic::Ordering::Relaxed),
+                ) as f32;
+                if ui
+                    .add(
+                        egui::Slider::new(&mut td, 0.1..=10.0)
+                            .logarithmic(true)
+                            .suffix("x"),
+                    )
+                    .changed()
+                {
+                    state.time_dilation.store(
+                        (td as f64).to_bits(),
+                        std::sync::atomic::Ordering::Relaxed,
+                    );
+                }
+            });
             if finished {
                 ui.horizontal(|ui| {
                     ui.label("Simulation complete.");
@@ -223,6 +253,7 @@ impl NexusApp {
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
+                &state.active_arrows,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -235,25 +266,26 @@ impl NexusApp {
                 }
             }
             state.hovered_node = hovered;
-            if let Some(ref name) = state.hovered_node {
-                if let Some(n) = state.node_states.iter().find(|n| &n.name == name) {
-                    egui::containers::popup::show_tooltip_at_pointer(
-                        ui.ctx(),
-                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
-                        ui.id().with("node_tip"),
-                        |ui| {
-                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
-                            if let Some(r) = n.charge_ratio {
-                                ui.label(format!("Charge: {:.0}%", r * 100.0));
-                            }
-                        },
-                    );
-                }
+            if let Some(ref name) = state.hovered_node
+                && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+            {
+                egui::containers::popup::show_tooltip_at_pointer(
+                    ui.ctx(),
+                    egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                    ui.id().with("node_tip"),
+                    |ui| {
+                        ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                        if let Some(r) = n.charge_ratio {
+                            ui.label(format!("Charge: {:.0}%", r * 100.0));
+                        }
+                    },
+                );
             }
         });
 
-        // Keep requesting repaints during live sim
-        if !finished {
+        // Keep requesting repaints during live sim, during active animations,
+        // and one extra frame after completion for remaining buffered events.
+        if !finished || state.controller.has_pending_events() || !state.active_arrows.is_empty() {
             ctx.request_repaint();
         }
 
@@ -271,7 +303,9 @@ impl NexusApp {
             let sim = state.sim.clone();
             let initial_states = nodes_from_sim(&sim);
             let total_timesteps = controller.total_timesteps;
-            self.mode = AppMode::Replay(ReplayState {
+            let channel_subscribers = build_channel_subscribers(&sim);
+            let num_channels = sim.channels.len();
+            self.mode = AppMode::Replay(Box::new(ReplayState {
                 sim,
                 controller,
                 grid: GridView::default(),
@@ -287,7 +321,11 @@ impl NexusApp {
                 expanded_nodes: HashSet::new(),
                 hovered_node: None,
                 panels: PanelVisibility::default(),
-            });
+                active_arrows: Vec::new(),
+                channel_subscribers,
+                last_sender: vec![None; num_channels],
+                time_accumulator: 0.0,
+            }));
         }
     }
 
@@ -296,18 +334,35 @@ impl NexusApp {
             return;
         };
 
-        // Advance timestep if playing — append messages (don't replace)
+        // Advance timesteps proportional to real time and playback speed
         if state.playing && state.current_timestep < state.total_timesteps.saturating_sub(1) {
-            state.current_timestep += 1;
-            state.node_states = state
-                .controller
-                .reconstruct_states(state.current_timestep, &state.initial_states);
-            gather_messages_at(
-                &state.controller,
-                state.current_timestep,
-                &state.sim,
-                &mut state.messages,
-            );
+            let dt = ctx.input(|i| i.stable_dt) as f64;
+            use config::ast::TimeUnit;
+            let unit_seconds = match state.sim.params.timestep.unit {
+                TimeUnit::Hours => 3600.0,
+                TimeUnit::Minutes => 60.0,
+                TimeUnit::Seconds => 1.0,
+                TimeUnit::Milliseconds => 1e-3,
+                TimeUnit::Microseconds => 1e-6,
+                TimeUnit::Nanoseconds => 1e-9,
+            };
+            let ts_duration = state.sim.params.timestep.length.get() as f64 * unit_seconds;
+            state.time_accumulator += dt * state.playback_speed as f64;
+            let steps = (state.time_accumulator / ts_duration).floor() as u64;
+            state.time_accumulator -= steps as f64 * ts_duration;
+
+            let max_ts = state.total_timesteps.saturating_sub(1);
+            let target_ts = (state.current_timestep + steps).min(max_ts);
+            if target_ts > state.current_timestep {
+                // Gather messages for each stepped timestep
+                for ts in (state.current_timestep + 1)..=target_ts {
+                    gather_messages_at(&state.controller, ts, &state.sim, &mut state.messages);
+                }
+                state.current_timestep = target_ts;
+                state.node_states = state
+                    .controller
+                    .reconstruct_states(state.current_timestep, &state.initial_states);
+            }
         }
 
         // Inspector panel (only rendered when visible)
@@ -398,6 +453,7 @@ impl NexusApp {
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
+                &state.active_arrows,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -410,24 +466,24 @@ impl NexusApp {
                 }
             }
             state.hovered_node = hovered;
-            if let Some(ref name) = state.hovered_node {
-                if let Some(n) = state.node_states.iter().find(|n| &n.name == name) {
-                    egui::containers::popup::show_tooltip_at_pointer(
-                        ui.ctx(),
-                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
-                        ui.id().with("node_tip"),
-                        |ui| {
-                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
-                            if let Some(r) = n.charge_ratio {
-                                ui.label(format!("Charge: {:.0}%", r * 100.0));
-                            }
-                        },
-                    );
-                }
+            if let Some(ref name) = state.hovered_node
+                && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+            {
+                egui::containers::popup::show_tooltip_at_pointer(
+                    ui.ctx(),
+                    egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                    ui.id().with("node_tip"),
+                    |ui| {
+                        ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                        if let Some(r) = n.charge_ratio {
+                            ui.label(format!("Charge: {:.0}%", r * 100.0));
+                        }
+                    },
+                );
             }
         });
 
-        if state.playing {
+        if state.playing || !state.active_arrows.is_empty() {
             ctx.request_repaint();
         }
     }
@@ -438,9 +494,11 @@ impl NexusApp {
         };
 
         match crate::sim::launch::launch_simulation(state.sim.clone(), None) {
-            Ok((controller, sim_dir)) => {
+            Ok((controller, sim_dir, td)) => {
                 let node_states = nodes_from_sim(&state.sim);
-                self.mode = AppMode::LiveSimulation(LiveSimState {
+                let channel_subscribers = build_channel_subscribers(&state.sim);
+                let num_channels = state.sim.channels.len();
+                self.mode = AppMode::LiveSimulation(Box::new(LiveSimState {
                     sim: state.sim.clone(),
                     controller,
                     grid: GridView::default(),
@@ -454,7 +512,11 @@ impl NexusApp {
                     expanded_nodes: HashSet::new(),
                     hovered_node: None,
                     panels: PanelVisibility::default(),
-                });
+                    active_arrows: Vec::new(),
+                    channel_subscribers,
+                    last_sender: vec![None; num_channels],
+                    time_dilation: td,
+                }));
             }
             Err(e) => {
                 state.validation_error = Some(format!("Launch failed: {e:#}"));
@@ -469,9 +531,11 @@ impl NexusApp {
         let sim = state.sim.clone();
 
         match crate::sim::launch::launch_simulation(sim.clone(), None) {
-            Ok((controller, sim_dir)) => {
+            Ok((controller, sim_dir, td)) => {
                 let node_states = nodes_from_sim(&sim);
-                self.mode = AppMode::LiveSimulation(LiveSimState {
+                let channel_subscribers = build_channel_subscribers(&sim);
+                let num_channels = sim.channels.len();
+                self.mode = AppMode::LiveSimulation(Box::new(LiveSimState {
                     sim,
                     controller,
                     grid: GridView::default(),
@@ -485,7 +549,11 @@ impl NexusApp {
                     expanded_nodes: HashSet::new(),
                     hovered_node: None,
                     panels: PanelVisibility::default(),
-                });
+                    active_arrows: Vec::new(),
+                    channel_subscribers,
+                    last_sender: vec![None; num_channels],
+                    time_dilation: td,
+                }));
             }
             Err(e) => {
                 eprintln!("Rerun failed: {e:#}");
@@ -502,7 +570,7 @@ impl NexusApp {
             let sim = config::parse(path.clone()).or_else(|_| config::deserialize_config(&path));
             match sim {
                 Ok(sim) => {
-                    self.mode = AppMode::ConfigEditor(ConfigEditorState {
+                    self.mode = AppMode::ConfigEditor(Box::new(ConfigEditorState {
                         sim,
                         file_path: Some(path),
                         grid: GridView::default(),
@@ -512,7 +580,7 @@ impl NexusApp {
                         dirty: false,
                         add_item_buf: String::new(),
                         needs_fit: true,
-                    });
+                    }));
                 }
                 Err(e) => {
                     eprintln!("Failed to parse config: {e:#}");
@@ -542,7 +610,7 @@ impl NexusApp {
             channels: HashMap::new(),
             nodes: HashMap::new(),
         };
-        self.mode = AppMode::ConfigEditor(ConfigEditorState {
+        self.mode = AppMode::ConfigEditor(Box::new(ConfigEditorState {
             sim,
             file_path: None,
             grid: GridView::default(),
@@ -552,7 +620,7 @@ impl NexusApp {
             dirty: true,
             add_item_buf: String::new(),
             needs_fit: true,
-        });
+        }));
     }
 
     fn open_trace(&mut self) {
@@ -577,8 +645,10 @@ impl NexusApp {
 
                     let initial_states = nodes_from_sim(&sim);
                     let total_timesteps = controller.total_timesteps;
+                    let channel_subscribers = build_channel_subscribers(&sim);
+                    let num_channels = sim.channels.len();
 
-                    self.mode = AppMode::Replay(ReplayState {
+                    self.mode = AppMode::Replay(Box::new(ReplayState {
                         sim,
                         controller,
                         grid: GridView::default(),
@@ -594,7 +664,11 @@ impl NexusApp {
                         expanded_nodes: HashSet::new(),
                         hovered_node: None,
                         panels: PanelVisibility::default(),
-                    });
+                        active_arrows: Vec::new(),
+                        channel_subscribers,
+                        last_sender: vec![None; num_channels],
+                        time_accumulator: 0.0,
+                    }));
                 }
                 Err(e) => {
                     eprintln!("Failed to open trace: {e}");
@@ -625,6 +699,10 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
                 }),
                 max_nj,
                 is_dead: false,
+                prev_x: node.position.point.x,
+                prev_y: node.position.point.y,
+                prev_z: node.position.point.z,
+                last_move_ts: 0,
             }
         })
         .collect();
@@ -632,12 +710,41 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
     nodes
 }
 
+/// Build a channel_index → Vec<subscriber node_index> lookup from the simulation config.
+fn build_channel_subscribers(sim: &config::ast::Simulation) -> Vec<Vec<usize>> {
+    let mut ch_names: Vec<_> = sim.channels.keys().cloned().collect();
+    ch_names.sort();
+    let mut node_names: Vec<_> = sim.nodes.keys().cloned().collect();
+    node_names.sort();
+
+    let mut subs = vec![Vec::new(); ch_names.len()];
+    for (node_idx, node_name) in node_names.iter().enumerate() {
+        if let Some(node) = sim.nodes.get(node_name) {
+            for proto in node.protocols.values() {
+                for ch in &proto.subscribers {
+                    if let Some(ch_idx) = ch_names.iter().position(|c| c == ch)
+                        && !subs[ch_idx].contains(&node_idx)
+                    {
+                        subs[ch_idx].push(node_idx);
+                    }
+                }
+            }
+        }
+    }
+    subs
+}
+
+#[allow(clippy::too_many_arguments)]
 fn process_gui_event(
     event: GuiEvent,
     current_timestep: &mut u64,
     message_list: &mut Vec<MessageEntry>,
     node_states: &mut [NodeState],
     sim: &config::ast::Simulation,
+    active_arrows: &mut Vec<ArrowAnimation>,
+    channel_subscribers: &[Vec<usize>],
+    last_sender: &mut [Option<usize>],
+    egui_time: f64,
 ) {
     match event {
         GuiEvent::Trace(record) => {
@@ -648,8 +755,10 @@ fn process_gui_event(
                     channel,
                     data,
                 } => {
-                    let src_name = node_name_by_index(sim, *src_node as usize);
-                    let ch_name = channel_name_by_index(sim, *channel as usize);
+                    let src_idx = *src_node as usize;
+                    let ch_idx = *channel as usize;
+                    let src_name = node_name_by_index(sim, src_idx);
+                    let ch_name = channel_name_by_index(sim, ch_idx);
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Sent,
@@ -659,14 +768,34 @@ fn process_gui_event(
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
                     });
+                    // Track last sender for this channel
+                    if let Some(slot) = last_sender.get_mut(ch_idx) {
+                        *slot = Some(src_idx);
+                    }
+                    // Create TX arrows to all subscribers
+                    if let Some(subs) = channel_subscribers.get(ch_idx) {
+                        for &dst_idx in subs {
+                            if dst_idx != src_idx {
+                                active_arrows.push(ArrowAnimation {
+                                    src_node: src_idx,
+                                    dst_node: dst_idx,
+                                    kind: ArrowKind::Sent,
+                                    start_time: egui_time,
+                                    duration: 0.25,
+                                });
+                            }
+                        }
+                    }
                 }
                 TraceEvent::MessageRecv {
                     dst_node,
                     channel,
                     data,
                 } => {
-                    let dst_name = node_name_by_index(sim, *dst_node as usize);
-                    let ch_name = channel_name_by_index(sim, *channel as usize);
+                    let dst_idx = *dst_node as usize;
+                    let ch_idx = *channel as usize;
+                    let dst_name = node_name_by_index(sim, dst_idx);
+                    let ch_name = channel_name_by_index(sim, ch_idx);
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Received,
@@ -676,14 +805,26 @@ fn process_gui_event(
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
                     });
+                    // Create RX arrow from last known sender
+                    if let Some(Some(src_idx)) = last_sender.get(ch_idx) {
+                        active_arrows.push(ArrowAnimation {
+                            src_node: *src_idx,
+                            dst_node: dst_idx,
+                            kind: ArrowKind::Received,
+                            start_time: egui_time,
+                            duration: 0.25,
+                        });
+                    }
                 }
                 TraceEvent::MessageDropped {
                     src_node,
                     channel,
                     reason,
                 } => {
-                    let src_name = node_name_by_index(sim, *src_node as usize);
-                    let ch_name = channel_name_by_index(sim, *channel as usize);
+                    let src_idx = *src_node as usize;
+                    let ch_idx = *channel as usize;
+                    let src_name = node_name_by_index(sim, src_idx);
+                    let ch_name = channel_name_by_index(sim, ch_idx);
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Dropped(format!("{reason:?}")),
@@ -693,21 +834,39 @@ fn process_gui_event(
                         data_preview: String::new(),
                         data_raw: Vec::new(),
                     });
+                    // Create drop arrows to all subscribers
+                    if let Some(subs) = channel_subscribers.get(ch_idx) {
+                        for &dst_idx in subs {
+                            if dst_idx != src_idx {
+                                active_arrows.push(ArrowAnimation {
+                                    src_node: src_idx,
+                                    dst_node: dst_idx,
+                                    kind: ArrowKind::Dropped,
+                                    start_time: egui_time,
+                                    duration: 0.25,
+                                });
+                            }
+                        }
+                    }
                 }
                 TraceEvent::PositionUpdate { node, x, y, z } => {
                     if let Some(state) = node_states.get_mut(*node as usize) {
+                        state.prev_x = state.x;
+                        state.prev_y = state.y;
+                        state.prev_z = state.z;
                         state.x = *x;
                         state.y = *y;
                         state.z = *z;
+                        state.last_move_ts = *current_timestep;
                     }
                 }
                 TraceEvent::EnergyUpdate { node, energy_nj } => {
-                    if let Some(state) = node_states.get_mut(*node as usize) {
-                        if let Some(max) = state.max_nj {
-                            let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
-                            state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
-                            state.is_dead = *energy_nj == 0 && max > 0;
-                        }
+                    if let Some(state) = node_states.get_mut(*node as usize)
+                        && let Some(max) = state.max_nj
+                    {
+                        let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
+                        state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                        state.is_dead = *energy_nj == 0 && max > 0;
                     }
                 }
             }
@@ -738,14 +897,14 @@ fn channel_name_by_index(sim: &config::ast::Simulation, index: usize) -> String 
 }
 
 fn format_data_preview(data: &[u8]) -> String {
-    if let Ok(s) = std::str::from_utf8(data) {
-        if s.chars().all(|c| !c.is_control() || c == '\n') {
-            return if s.len() <= 64 {
-                s.to_string()
-            } else {
-                format!("{}... ({} bytes)", &s[..64], data.len())
-            };
-        }
+    if let Ok(s) = std::str::from_utf8(data)
+        && s.chars().all(|c| !c.is_control() || c == '\n')
+    {
+        return if s.len() <= 64 {
+            s.to_string()
+        } else {
+            format!("{}... ({} bytes)", &s[..64], data.len())
+        };
     }
     // Fallback to hex
     if data.len() <= 32 {

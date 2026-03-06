@@ -370,6 +370,12 @@ impl RoutingServer {
         }
     }
 
+    /// Microseconds per simulation step (derived from `ts_config`).
+    fn us_per_step(&self) -> u64 {
+        let ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
+        ns / 1000
+    }
+
     /// Take a single step in the simulation, moving all queued messages to
     /// their destination. Check for whether a channel's queue is full before
     /// placing it in the mailbox.

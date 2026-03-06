@@ -1,7 +1,7 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use config::ast::{self, Charge, Cmd, NodeProtocol, PowerFlow, PowerRate};
+use config::ast::{self, ChannelEnergy, Charge, Cmd, Energy, NodeProtocol, PowerFlow, PowerRate};
 use egui::Ui;
 
 use super::widgets::{
@@ -173,6 +173,10 @@ fn show_node(
     ui.separator();
     show_power_flow_map(ui, name, "power_sink", &mut node.power_sinks);
 
+    // --- Channel Energy ---
+    ui.separator();
+    show_channel_energy(ui, name, &mut node.channel_energy, available_channels);
+
     // --- Initial State ---
     if !node.power_states.is_empty() {
         ui.separator();
@@ -301,6 +305,92 @@ fn show_power_flow_map(
     for n in to_remove {
         map.remove(&n);
     }
+}
+
+fn show_channel_energy(
+    ui: &mut Ui,
+    node_name: &str,
+    channel_energy: &mut HashMap<String, ChannelEnergy>,
+    available_channels: &[String],
+) {
+    ui.label("Channel Energy:");
+
+    // Add channel energy entry — show channels that don't already have an entry
+    let unset: Vec<_> = available_channels
+        .iter()
+        .filter(|ch| !channel_energy.contains_key(*ch))
+        .cloned()
+        .collect();
+    if !unset.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label("+");
+            let add_id = format!("chenergy_add_{node_name}");
+            let selected_id = egui::Id::new(&add_id);
+            let mut selected: String =
+                ui.data(|d| d.get_temp(selected_id)).unwrap_or_default();
+            egui::ComboBox::from_id_salt(&add_id)
+                .selected_text(if selected.is_empty() { "Select channel" } else { &selected })
+                .show_ui(ui, |ui| {
+                    for ch in &unset {
+                        ui.selectable_value(&mut selected, ch.clone(), ch);
+                    }
+                });
+            if ui.button("Add").clicked() && !selected.is_empty() {
+                channel_energy.insert(
+                    selected.clone(),
+                    ChannelEnergy { tx: None, rx: None },
+                );
+                selected.clear();
+            }
+            ui.data_mut(|d| d.insert_temp(selected_id, selected));
+        });
+    }
+
+    let mut to_remove = Vec::new();
+    let names: Vec<String> = {
+        let mut n: Vec<_> = channel_energy.keys().cloned().collect();
+        n.sort();
+        n
+    };
+    for ch_name in &names {
+        if let Some(ce) = channel_energy.get_mut(ch_name) {
+            let id = ui.make_persistent_id(format!("chenergy_{node_name}_{ch_name}"));
+            egui::collapsing_header::CollapsingState::load_with_default_open(ui.ctx(), id, false)
+                .show_header(ui, |ui| {
+                    ui.label(ch_name);
+                    if remove_button(ui) {
+                        to_remove.push(ch_name.clone());
+                    }
+                })
+                .body(|ui| {
+                    energy_cost_editor(ui, &format!("chenergy_tx_{node_name}_{ch_name}"), "TX cost", &mut ce.tx);
+                    energy_cost_editor(ui, &format!("chenergy_rx_{node_name}_{ch_name}"), "RX cost", &mut ce.rx);
+                });
+        }
+    }
+    for n in to_remove {
+        channel_energy.remove(&n);
+    }
+}
+
+fn energy_cost_editor(ui: &mut Ui, id: &str, label: &str, energy: &mut Option<Energy>) {
+    ui.horizontal(|ui| {
+        let mut has = energy.is_some();
+        if ui.checkbox(&mut has, label).changed() {
+            *energy = if has {
+                Some(Energy {
+                    quantity: 0,
+                    unit: Default::default(),
+                })
+            } else {
+                None
+            };
+        }
+        if let Some(e) = energy {
+            ui.add(egui::DragValue::new(&mut e.quantity));
+            enum_combo(ui, id, &mut e.unit, ENERGY_UNIT_PAIRS);
+        }
+    });
 }
 
 fn show_protocols(

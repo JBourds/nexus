@@ -17,7 +17,7 @@ use std::{
     path::PathBuf,
     sync::{
         Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
     time::{Duration, SystemTime},
@@ -68,7 +68,7 @@ pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
     timestep: TimestepConfig,
-    time_dilation: f64,
+    time_dilation: Arc<AtomicU64>,
     channels: ResolvedChannels,
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
@@ -100,6 +100,7 @@ impl Kernel {
     }
 
     /// Create the kernel instance with optional abort and pause flags.
+    #[allow(clippy::too_many_arguments)]
     pub fn new_with_flags(
         sim: ast::Simulation,
         runc: RunController,
@@ -109,6 +110,22 @@ impl Kernel {
         pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
         abort: Option<Arc<AtomicBool>>,
         pause: Option<Arc<AtomicBool>>,
+    ) -> Result<Self, KernelError> {
+        Self::new_with_all_flags(sim, runc, file_handles, rx, tx, pending_remaps, abort, pause, None)
+    }
+
+    /// Create the kernel instance with all optional flags including shared time dilation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn new_with_all_flags(
+        sim: ast::Simulation,
+        runc: RunController,
+        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+        rx: mpsc::Receiver<fuse::FsMessage>,
+        tx: mpsc::Sender<fuse::KernelMessage>,
+        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        abort: Option<Arc<AtomicBool>>,
+        pause: Option<Arc<AtomicBool>>,
+        time_dilation_override: Option<Arc<AtomicU64>>,
     ) -> Result<Self, KernelError> {
         // CRUCIAL: Sort nodes by their name lexicographically since we are
         // not guaranteed a consistent ordering by hash maps
@@ -128,7 +145,9 @@ impl Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
-            time_dilation: sim.params.time_dilation,
+            time_dilation: time_dilation_override.unwrap_or_else(|| {
+                Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))
+            }),
             channels,
             runc,
             rx,

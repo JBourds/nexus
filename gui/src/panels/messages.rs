@@ -14,7 +14,7 @@ pub fn show_messages(ui: &mut Ui, messages: &[MessageEntry], max_display: usize)
     }
 
     let start = messages.len().saturating_sub(max_display);
-    egui::ScrollArea::vertical().show(ui, |ui| {
+    egui::ScrollArea::vertical().stick_to_bottom(true).show(ui, |ui| {
         for msg in &messages[start..] {
             let icon = match &msg.kind {
                 MessageKind::Sent => "TX",
@@ -35,10 +35,10 @@ pub fn show_messages(ui: &mut Ui, messages: &[MessageEntry], max_display: usize)
                     ui.label(format!("-> {dst}"));
                 }
                 ui.label(&msg.channel);
-                if !msg.data_raw.is_empty() {
-                    if ui.small_button("\u{2398}").on_hover_text("Copy to clipboard").clicked() {
-                        ui.ctx().copy_text(msg.data_preview.clone());
-                    }
+                if !msg.data_raw.is_empty()
+                    && ui.small_button("\u{2398}").on_hover_text("Copy to clipboard").clicked()
+                {
+                    ui.ctx().copy_text(msg.data_preview.clone());
                 }
             });
 

@@ -59,11 +59,18 @@ impl GridView {
     }
 
     /// Handle pan (drag) and zoom (scroll) input on the canvas.
-    pub fn handle_input(&mut self, response: &Response) {
-        if response.dragged_by(egui::PointerButton::Middle)
-            || (response.dragged_by(egui::PointerButton::Primary)
-                && response.ctx.input(|i| i.modifiers.shift))
-        {
+    ///
+    /// `drag_started_on_node` should be `true` when the pointer was over a node
+    /// at drag start — in that case primary-drag is suppressed to avoid panning
+    /// when the user meant to click a node.
+    pub fn handle_input(&mut self, response: &Response, drag_started_on_node: bool) {
+        let middle_drag = response.dragged_by(egui::PointerButton::Middle);
+        let shift_drag = response.dragged_by(egui::PointerButton::Primary)
+            && response.ctx.input(|i| i.modifiers.shift);
+        let primary_pan = response.dragged_by(egui::PointerButton::Primary)
+            && !drag_started_on_node;
+
+        if middle_drag || shift_drag || primary_pan {
             self.offset += response.drag_delta();
         }
 

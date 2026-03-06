@@ -42,8 +42,9 @@ impl RoutingServer {
     /// `position.point` to reflect the current timestep.  No-op for `Static`.
     pub(super) fn apply_motion(&mut self, node_index: usize) {
         let timestep = self.timestep;
+        let us_per_step = self.us_per_step();
         let node = &mut self.channels.nodes[node_index];
-        if let Some(new_point) = node.motion.current_point(timestep) {
+        if let Some(new_point) = node.motion.current_point(timestep, us_per_step) {
             node.position.point = new_point;
         }
     }
@@ -53,8 +54,9 @@ impl RoutingServer {
     /// start of each simulation step.
     pub(super) fn apply_all_motions_and_log(&mut self) {
         let timestep = self.timestep;
+        let us_per_step = self.us_per_step();
         for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
-            let Some(new_point) = node.motion.current_point(timestep) else {
+            let Some(new_point) = node.motion.current_point(timestep, us_per_step) else {
                 continue;
             };
             node.position.point = new_point;
@@ -467,8 +469,8 @@ mod tests {
         // parse_motion_spec uses the supplied current_point as initial
         let parsed = RoutingServer::parse_motion_spec(&spec, current, 50).unwrap();
         // Both should produce the same position at timestep 150
-        let p1 = original.current_point(150).unwrap();
-        let p2 = parsed.current_point(150).unwrap();
+        let p1 = original.current_point(150, 1).unwrap();
+        let p2 = parsed.current_point(150, 1).unwrap();
         assert_point_near(p1, p2, 1e-9);
     }
 
@@ -484,8 +486,8 @@ mod tests {
         let spec = original.to_spec();
         let parsed = RoutingServer::parse_motion_spec(&spec, current, 0).unwrap();
         for ts in [0, 250, 500, 750, 1000, 2000] {
-            let p1 = original.current_point(ts).unwrap();
-            let p2 = parsed.current_point(ts).unwrap();
+            let p1 = original.current_point(ts, 1).unwrap();
+            let p2 = parsed.current_point(ts, 1).unwrap();
             assert_point_near(p1, p2, 1e-9);
         }
     }

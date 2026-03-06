@@ -78,6 +78,20 @@ fn show_node_details(
     // Position
     if let Some(rt) = runtime {
         ui.label(format!("x: {:.2}  y: {:.2}  z: {:.2}", rt.x, rt.y, rt.z));
+
+        // Velocity (computed from delta between last two position updates)
+        if rt.last_move_ts > 0 {
+            let dx = rt.x - rt.prev_x;
+            let dy = rt.y - rt.prev_y;
+            let dz = rt.z - rt.prev_z;
+            let speed = (dx * dx + dy * dy + dz * dz).sqrt();
+            if speed > 1e-9 {
+                ui.label(format!(
+                    "v: ({:.2}, {:.2}, {:.2})  |v|={:.2}",
+                    dx, dy, dz, speed
+                ));
+            }
+        }
     }
 
     // Charge
@@ -91,21 +105,21 @@ fn show_node_details(
     }
 
     // Protocols (from AST if available)
-    if let Some(ast_node) = sim.nodes.get(name) {
-        if !ast_node.protocols.is_empty() {
-            ui.separator();
-            ui.label("Protocols:");
-            for (proto_name, proto) in &ast_node.protocols {
-                ui.collapsing(proto_name, |ui| {
-                    ui.label(format!("Root: {}", proto.root.display()));
-                    if !proto.publishers.is_empty() {
-                        ui.label(format!("Pub: {:?}", proto.publishers));
-                    }
-                    if !proto.subscribers.is_empty() {
-                        ui.label(format!("Sub: {:?}", proto.subscribers));
-                    }
-                });
-            }
+    if let Some(ast_node) = sim.nodes.get(name)
+        && !ast_node.protocols.is_empty()
+    {
+        ui.separator();
+        ui.label("Protocols:");
+        for (proto_name, proto) in &ast_node.protocols {
+            ui.collapsing(proto_name, |ui| {
+                ui.label(format!("Root: {}", proto.root.display()));
+                if !proto.publishers.is_empty() {
+                    ui.label(format!("Pub: {:?}", proto.publishers));
+                }
+                if !proto.subscribers.is_empty() {
+                    ui.label(format!("Sub: {:?}", proto.subscribers));
+                }
+            });
         }
     }
 }

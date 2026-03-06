@@ -1,4 +1,6 @@
 use std::collections::HashSet;
+use std::sync::Arc;
+use std::sync::atomic::AtomicU64;
 
 use config::ast;
 
@@ -11,9 +13,9 @@ use crate::sim::replay::ReplayController;
 pub enum AppMode {
     #[default]
     Home,
-    ConfigEditor(ConfigEditorState),
-    LiveSimulation(LiveSimState),
-    Replay(ReplayState),
+    ConfigEditor(Box<ConfigEditorState>),
+    LiveSimulation(Box<LiveSimState>),
+    Replay(Box<ReplayState>),
 }
 
 /// State for the configuration editor mode.
@@ -52,6 +54,14 @@ pub struct LiveSimState {
     pub hovered_node: Option<String>,
     /// Panel visibility.
     pub panels: PanelVisibility,
+    /// Active arrow animations on the grid.
+    pub active_arrows: Vec<ArrowAnimation>,
+    /// channel_index → Vec<node_index> for drawing arrows to subscribers.
+    pub channel_subscribers: Vec<Vec<usize>>,
+    /// channel_index → last sender node_index (for linking RX arrows back to TX).
+    pub last_sender: Vec<Option<usize>>,
+    /// Shared time dilation value (f64 bits in AtomicU64) for live kernel adjustment.
+    pub time_dilation: Arc<AtomicU64>,
 }
 
 /// State for replay mode.
@@ -76,6 +86,14 @@ pub struct ReplayState {
     pub hovered_node: Option<String>,
     /// Panel visibility.
     pub panels: PanelVisibility,
+    /// Active arrow animations on the grid.
+    pub active_arrows: Vec<ArrowAnimation>,
+    /// channel_index → Vec<node_index> for drawing arrows to subscribers.
+    pub channel_subscribers: Vec<Vec<usize>>,
+    /// channel_index → last sender node_index (for linking RX arrows back to TX).
+    pub last_sender: Vec<Option<usize>>,
+    /// Fractional timestep accumulator for real-time replay.
+    pub time_accumulator: f64,
 }
 
 /// Per-node runtime state for visualization.
@@ -88,6 +106,12 @@ pub struct NodeState {
     pub charge_ratio: Option<f32>,
     pub max_nj: Option<u64>,
     pub is_dead: bool,
+    /// Previous position for velocity computation.
+    pub prev_x: f64,
+    pub prev_y: f64,
+    pub prev_z: f64,
+    /// Timestep of last position update (0 = never moved).
+    pub last_move_ts: u64,
 }
 
 /// A message event for display in the message panel.
@@ -123,4 +147,21 @@ pub enum MessageKind {
     Sent,
     Received,
     Dropped(String),
+}
+
+/// An in-flight message arrow animation on the grid.
+#[derive(Clone, Debug)]
+pub struct ArrowAnimation {
+    pub src_node: usize,
+    pub dst_node: usize,
+    pub kind: ArrowKind,
+    pub start_time: f64,
+    pub duration: f32,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ArrowKind {
+    Sent,
+    Received,
+    Dropped,
 }

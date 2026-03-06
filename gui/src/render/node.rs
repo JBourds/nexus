@@ -60,7 +60,7 @@ pub fn draw_node(
 fn charge_color(charge_ratio: Option<f32>) -> Color32 {
     match charge_ratio {
         None => Color32::from_rgb(80, 140, 220),
-        Some(r) if r == 0.0 => Color32::from_rgba_premultiplied(80, 80, 80, 128),
+        Some(0.0) => Color32::from_rgba_premultiplied(80, 80, 80, 128),
         Some(r) => {
             let r = r.clamp(0.0, 1.0);
             if r > 0.5 {

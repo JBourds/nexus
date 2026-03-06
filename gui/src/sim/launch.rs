@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -63,13 +63,14 @@ fn ensure_global_subscriber() -> SimSinks {
 pub fn launch_simulation(
     sim: ast::Simulation,
     fs_root: Option<PathBuf>,
-) -> Result<(SimController, PathBuf)> {
+) -> Result<(SimController, PathBuf, Arc<AtomicU64>)> {
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join("nexus.toml"))?;
 
     let (gui_tx, gui_rx) = crossbeam_channel::unbounded();
     let abort = Arc::new(AtomicBool::new(false));
     let pause = Arc::new(AtomicBool::new(false));
+    let time_dilation = Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()));
 
     let sinks = ensure_global_subscriber();
 
@@ -78,12 +79,13 @@ pub fn launch_simulation(
     let gui_tx_clone = gui_tx.clone();
     let abort_clone = abort.clone();
     let pause_clone = pause.clone();
+    let td_clone = time_dilation.clone();
 
     let handle = std::thread::Builder::new()
         .name("nexus-sim".into())
         .spawn(move || {
             if let Err(e) =
-                run_simulation(sim_clone, root_clone, fs_root, gui_tx_clone.clone(), sinks.clone(), abort_clone, pause_clone)
+                run_simulation(sim_clone, root_clone, fs_root, gui_tx_clone.clone(), sinks.clone(), abort_clone, pause_clone, td_clone)
             {
                 let _ = gui_tx_clone.send(GuiEvent::SimulationError(format!("{e:#}")));
             } else {
@@ -95,9 +97,10 @@ pub fn launch_simulation(
         })
         .context("failed to spawn simulation thread")?;
 
-    Ok((SimController::new(gui_rx, abort, pause, handle), root))
+    Ok((SimController::new(gui_rx, abort, pause, handle), root, time_dilation))
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_simulation(
     sim: ast::Simulation,
     root: PathBuf,
@@ -106,6 +109,7 @@ fn run_simulation(
     sinks: SimSinks,
     abort: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
+    time_dilation: Arc<AtomicU64>,
 ) -> Result<()> {
     let trace_path = root.join("trace.nxs");
     let header = TraceHeader {
@@ -135,10 +139,10 @@ fn run_simulation(
     // Install sinks for this simulation run.
     sinks.install(gui_tx, writer);
 
-    run_inner(sim, fs_root, abort, pause)
+    run_inner(sim, fs_root, abort, pause, time_dilation)
 }
 
-fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBool>, pause: Arc<AtomicBool>) -> Result<()> {
+fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBool>, pause: Arc<AtomicBool>, time_dilation: Arc<AtomicU64>) -> Result<()> {
     let _ = ctrlc::set_handler(|| {});
 
     runner::build(&sim)?;
@@ -158,7 +162,7 @@ fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBo
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new_with_flags(sim, runc, file_handles, rx, tx, pending_remaps, Some(abort), Some(pause))?;
+    let kernel = Kernel::new_with_all_flags(sim, runc, file_handles, rx, tx, pending_remaps, Some(abort), Some(pause), Some(time_dilation))?;
     let _protocol_handles = kernel.run(RunCmd::Simulate)?;
 
     drop(sess);
