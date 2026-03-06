@@ -268,6 +268,8 @@ pub struct Node {
     pub(super) power_sources: Option<HashMap<String, PowerFlowDef>>,
     /// Named passive power sinks (e.g. MCU baseline, sensor).
     pub(super) power_sinks: Option<HashMap<String, PowerFlowDef>>,
+    /// Per-channel TX/RX energy costs (keyed by channel name).
+    pub(super) channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -281,6 +283,4 @@ pub struct NodeProtocol {
     pub(super) build_args: Option<Vec<String>>,
     pub(super) publishers: Option<Vec<ChannelName>>,
     pub(super) subscribers: Option<Vec<ChannelName>>,
-    /// Per-channel energy costs keyed by channel name.
-    pub(super) channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }

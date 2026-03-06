@@ -331,6 +331,8 @@ pub struct Node {
     pub motion: MotionPattern,
     pub start: SystemTime,
     pub protocols: Vec<NodeProtocol>,
+    /// Per-channel energy costs keyed by integer channel handle.
+    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
 }
 
 #[derive(Clone, Debug)]
@@ -339,8 +341,6 @@ pub struct NodeProtocol {
     pub runner: Cmd,
     pub subscribers: HashSet<ChannelHandle>,
     pub publishers: HashSet<ChannelHandle>,
-    /// Per-channel energy costs keyed by integer channel handle.
-    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
 }
 
 impl Node {
@@ -377,6 +377,18 @@ impl Node {
             channel_handles
         };
 
+        let channel_energy = node
+            .channel_energy
+            .into_iter()
+            .map(|(name, energy)| {
+                channel_handles
+                    .get(&name)
+                    .copied()
+                    .ok_or(ConversionError::ChannelHandleConversion(name))
+                    .map(|ch| (ch, energy))
+            })
+            .collect::<Result<_, ConversionError>>()?;
+
         let (_, protocols) = unzip(node.protocols);
         let protocols = protocols
             .into_iter()
@@ -386,6 +398,7 @@ impl Node {
             Self {
                 protocols,
                 energy,
+                channel_energy,
                 start: node.start,
                 position: node.position,
                 motion: MotionPattern::Static,
@@ -634,23 +647,11 @@ impl NodeProtocol {
             };
         let subscribers = map_channel_handles(node.subscribers)?;
         let publishers = map_channel_handles(node.publishers)?;
-        let channel_energy = node
-            .channel_energy
-            .into_iter()
-            .map(|(name, energy)| {
-                channel_handles
-                    .get(&name)
-                    .copied()
-                    .ok_or(ConversionError::ChannelHandleConversion(name))
-                    .map(|ch| (ch, energy))
-            })
-            .collect::<Result<_, ConversionError>>()?;
         Ok(Self {
             root: node.root,
             runner: node.runner,
             subscribers,
             publishers,
-            channel_energy,
         })
     }
 }

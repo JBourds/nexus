@@ -929,6 +929,22 @@ impl Node {
             })
             .collect::<Result<HashMap<_, _>>>()?;
 
+        // Validate per-node channel energy costs
+        let channel_energy = val
+            .channel_energy
+            .unwrap_or_default()
+            .into_iter()
+            .map(|(ch, energy)| {
+                ensure!(
+                    valid_channels.contains(&ch),
+                    "channel_energy references unknown channel \"{ch}\""
+                );
+                ChannelEnergy::validate(energy)
+                    .context(format!("Failed to validate channel_energy for \"{ch}\""))
+                    .map(|e| (ch, e))
+            })
+            .collect::<Result<HashMap<_, _>>>()?;
+
         // Check that all internal names were used
         let internal_names_used = protocols
             .values()
@@ -1024,6 +1040,7 @@ impl Node {
                 power_states: power_states.clone(),
                 power_sources: power_sources.clone(),
                 power_sinks: power_sinks.clone(),
+                channel_energy: channel_energy.clone(),
                 initial_state,
                 restart_threshold,
                 start,
@@ -1103,30 +1120,12 @@ impl NodeProtocol {
             })
             .collect::<Result<_>>()?;
 
-        // Validate channel_energy - each referenced channel must be a valid publisher/subscriber
-        let channel_energy = val
-            .channel_energy
-            .unwrap_or_default()
-            .into_iter()
-            .map(|(ch, energy)| {
-                ensure!(
-                    channel_handles.contains(&ch),
-                    "channel_energy references unknown channel \"{ch}\" in protocol \"{}\"",
-                    val.name
-                );
-                ChannelEnergy::validate(energy)
-                    .context(format!("Failed to validate channel_energy for \"{ch}\""))
-                    .map(|e| (ch, e))
-            })
-            .collect::<Result<HashMap<_, _>>>()?;
-
         Ok(Self {
             root,
             runner,
             build,
             publishers,
             subscribers,
-            channel_energy,
         })
     }
 }

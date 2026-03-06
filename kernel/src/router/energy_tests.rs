@@ -35,6 +35,7 @@ mod tests {
             motion: types::MotionPattern::Static,
             start: SystemTime::UNIX_EPOCH,
             protocols: vec![],
+            channel_energy: HashMap::new(),
         }
     }
 
@@ -50,6 +51,7 @@ mod tests {
             position: Position::default(),
             motion: types::MotionPattern::Static,
             start: SystemTime::UNIX_EPOCH,
+            channel_energy,
             protocols: vec![types::NodeProtocol {
                 root: PathBuf::from("/tmp"),
                 runner: config::ast::Cmd {
@@ -58,7 +60,6 @@ mod tests {
                 },
                 subscribers,
                 publishers,
-                channel_energy,
             }],
         }
     }
@@ -659,6 +660,7 @@ mod tests {
                 }),
             )]),
             power_sinks: HashMap::new(),
+            channel_energy: HashMap::new(),
             initial_state: Some("active".into()),
             restart_threshold: Some(0.5),
             start: SystemTime::UNIX_EPOCH,
@@ -694,6 +696,7 @@ mod tests {
             power_states: HashMap::new(),
             power_sources: HashMap::new(),
             power_sinks: HashMap::new(),
+            channel_energy: HashMap::new(),
             initial_state: None,
             restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,
@@ -716,6 +719,7 @@ mod tests {
             power_states: HashMap::new(),
             power_sources: HashMap::new(),
             power_sinks: HashMap::new(),
+            channel_energy: HashMap::new(),
             initial_state: None,
             restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,

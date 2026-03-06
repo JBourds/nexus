@@ -190,23 +190,18 @@ and `restart_threshold` values outside `[0.0, 1.0]`.
 
 ### Per-Channel Energy Costs
 
-Channel operations can carry a one-time energy cost configured per protocol:
+Channel operations can carry a one-time energy cost configured per node:
 
 ```toml
-[[nodes.sensor.protocols]]
-name        = "firmware"
-runner      = "python3"
-runner_args = ["sensor.py"]
-publishers  = ["lora"]
-subscribers = ["lora"]
-channel_energy.lora.tx = { quantity = 150, unit = "uj" }
-channel_energy.lora.rx = { quantity = 50,  unit = "uj" }
+[nodes.sensor.channel_energy.lora]
+tx = { quantity = 150, unit = "uj" }
+rx = { quantity = 50,  unit = "uj" }
 ```
 
 `tx` and `rx` are both optional. Either can be omitted if there is no cost for
 that direction. Each uses the same energy unit table as `charge`. Channel
 energy references are validated: the channel name must appear in either
-`publishers` or `subscribers` for the same protocol.
+`publishers` or `subscribers` for one of the node's protocols.
 
 ### Complete Example
 
@@ -250,14 +245,16 @@ schedule = [
 ]
 repeat = "24h"
 
+[nodes.sensor.channel_energy.lora]
+tx = { quantity = 150, unit = "uj" }
+rx = { quantity = 50,  unit = "uj" }
+
 [[nodes.sensor.protocols]]
 name        = "firmware"
 runner      = "python3"
 runner_args = ["sensor.py"]
 publishers  = ["lora"]
 subscribers = ["lora"]
-channel_energy.lora.tx = { quantity = 150, unit = "uj" }
-channel_energy.lora.rx = { quantity = 50,  unit = "uj" }
 ```
 
 ```toml
@@ -439,12 +436,11 @@ channel file, before the message is queued for delivery:
 
 ```rust
 // In write_channel_file():
-let tx_cost_nj: u64 = node.protocols.iter()
-    .filter(|p| p.publishers.contains(&channel_handle))
-    .filter_map(|p| p.channel_energy.get(&channel_handle))
-    .filter_map(|ce| ce.tx.as_ref())
+let tx_cost_nj: u64 = node.channel_energy
+    .get(&channel_handle)
+    .and_then(|ce| ce.tx.as_ref())
     .map(|e| e.unit.to_nj(e.quantity))
-    .sum();
+    .unwrap_or(0);
 if tx_cost_nj > 0 {
     if let Some(energy) = &mut node.energy {
         energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
@@ -467,12 +463,11 @@ placed into that node's mailbox during delivery:
 
 ```rust
 // In step(), during message delivery:
-let rx_cost_nj: u64 = dst_node.protocols.iter()
-    .filter(|p| p.subscribers.contains(&channel_handle))
-    .filter_map(|p| p.channel_energy.get(&channel_handle))
-    .filter_map(|ce| ce.rx.as_ref())
+let rx_cost_nj: u64 = dst_node.channel_energy
+    .get(&channel_handle)
+    .and_then(|ce| ce.rx.as_ref())
     .map(|e| e.unit.to_nj(e.quantity))
-    .sum();
+    .unwrap_or(0);
 if rx_cost_nj > 0 {
     if let Some(energy) = &mut node.energy {
         energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);

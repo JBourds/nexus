@@ -269,13 +269,11 @@ impl RoutingServer {
 
         // Deduct TX channel energy cost before queuing
         let tx_cost_nj: u64 = self.channels.nodes[src_node]
-            .protocols
-            .iter()
-            .filter(|p| p.publishers.contains(&channel_handle))
-            .filter_map(|p| p.channel_energy.get(&channel_handle))
-            .filter_map(|ce| ce.tx.as_ref())
+            .channel_energy
+            .get(&channel_handle)
+            .and_then(|ce| ce.tx.as_ref())
             .map(|e| e.unit.to_nj(e.quantity))
-            .sum();
+            .unwrap_or(0);
         if tx_cost_nj > 0
             && let Some(energy) = &mut self.channels.nodes[src_node].energy
         {
@@ -470,13 +468,11 @@ impl RoutingServer {
 
                 // Deduct RX channel energy cost on delivery
                 let rx_cost_nj: u64 = self.channels.nodes[dst_node]
-                    .protocols
-                    .iter()
-                    .filter(|p| p.subscribers.contains(&channel_handle))
-                    .filter_map(|p| p.channel_energy.get(&channel_handle))
-                    .filter_map(|ce| ce.rx.as_ref())
+                    .channel_energy
+                    .get(&channel_handle)
+                    .and_then(|ce| ce.rx.as_ref())
                     .map(|e| e.unit.to_nj(e.quantity))
-                    .sum();
+                    .unwrap_or(0);
                 if rx_cost_nj > 0
                     && let Some(energy) = &mut self.channels.nodes[dst_node].energy
                 {

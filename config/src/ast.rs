@@ -78,6 +78,8 @@ pub struct Node {
     /// Named passive power sinks (e.g. MCU baseline, sensor draw).
     /// Applied every timestep regardless of alive/dead state.
     pub power_sinks: HashMap<String, PowerFlow>,
+    /// Per-channel TX/RX energy costs (keyed by channel name).
+    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
     /// Which power state to start in (must be a key in `power_states`).
     pub initial_state: Option<String>,
     /// Fraction of max charge (0..=1) at which a dead node restarts.
@@ -134,8 +136,6 @@ pub struct NodeProtocol {
     pub runner: Cmd,
     pub publishers: HashSet<ChannelHandle>,
     pub subscribers: HashSet<ChannelHandle>,
-    /// Per-channel energy costs for this protocol.
-    pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
