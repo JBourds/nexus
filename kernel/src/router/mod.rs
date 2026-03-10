@@ -248,7 +248,9 @@ impl RoutingServer {
             ["pos", "motion"] => self.write_pos_motion(node_index.0, msg),
             ["pos", ..] => self.write_pos(node_index.0, msg),
             ["power_flows"] => self.write_power_flows(node_index.0, msg),
-            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
+            _ => Err(RouterError::UnknownFile(format!(
+                "{CONTROL_PREFIX}{remaining}"
+            ))),
         }
     }
 
@@ -340,7 +342,9 @@ impl RoutingServer {
             ["pos", "motion"] => self.read_pos_motion(node_index.0, msg),
             ["pos", ..] => self.read_pos(node_index.0, msg),
             ["power_flows"] => self.read_power_flows(node_index.0, msg),
-            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
+            _ => Err(RouterError::UnknownFile(format!(
+                "{CONTROL_PREFIX}{remaining}"
+            ))),
         }
     }
 
