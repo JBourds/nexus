@@ -646,6 +646,373 @@ mod tests {
     }
 
     #[test]
+    fn multi_profile_first_wins_resources() {
+        // When two profiles both set the same resource field, the first
+        // profile applied wins (it's already set, so later ones don't
+        // override).
+        let p1 = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let p2 = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(80),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(256),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &p1);
+        apply_profile(&mut node, &p2);
+
+        let res = node.resources.unwrap();
+        // p1's clock_rate wins over p2's.
+        assert_eq!(res.clock_rate, NonZeroU64::new(240));
+        // p2's ram fills the gap left by p1.
+        assert_eq!(res.ram, NonZeroU64::new(256));
+    }
+
+    #[test]
+    fn multi_profile_first_wins_map_keys() {
+        // When two profiles define the same map key, the first profile's
+        // value wins because merge uses `or_insert`.
+        let p1 = parse::NodeProfile {
+            power_states: Some(HashMap::from([(
+                "active".to_string(),
+                parse::PowerRate {
+                    rate: 100,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+        let p2 = parse::NodeProfile {
+            power_states: Some(HashMap::from([
+                (
+                    "active".to_string(),
+                    parse::PowerRate {
+                        rate: 999,
+                        unit: parse::Unit("mw".to_string()),
+                        time: parse::Unit("s".to_string()),
+                    },
+                ),
+                (
+                    "deep_sleep".to_string(),
+                    parse::PowerRate {
+                        rate: 1,
+                        unit: parse::Unit("uw".to_string()),
+                        time: parse::Unit("s".to_string()),
+                    },
+                ),
+            ])),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &p1);
+        apply_profile(&mut node, &p2);
+
+        let states = node.power_states.unwrap();
+        // p1's "active" value wins.
+        assert_eq!(states["active"].rate, 100);
+        // p2's "deep_sleep" fills in.
+        assert_eq!(states["deep_sleep"].rate, 1);
+    }
+
+    #[test]
+    fn multi_profile_user_overrides_all() {
+        // User-defined fields win over all profiles, regardless of order.
+        let p1 = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(520),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            power_sinks: Some(HashMap::from([(
+                "mcu".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 30,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+        let p2 = parse::NodeProfile {
+            power_sources: Some(HashMap::from([(
+                "solar".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 80,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(160),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ..Default::default()
+            }),
+            power_sinks: Some(HashMap::from([(
+                "mcu".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 50,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+
+        apply_profile(&mut node, &p1);
+        apply_profile(&mut node, &p2);
+
+        let res = node.resources.unwrap();
+        // User's clock_rate wins over p1.
+        assert_eq!(res.clock_rate, NonZeroU64::new(160));
+        // p1's ram fills the gap.
+        assert_eq!(res.ram, NonZeroU64::new(520));
+        // User's mcu sink wins over p1's.
+        match &node.power_sinks.as_ref().unwrap()["mcu"] {
+            parse::PowerFlowDef::Constant { rate, .. } => assert_eq!(*rate, 50),
+            other => panic!("expected Constant, got {other:?}"),
+        }
+        // p2's solar source still applies.
+        assert!(node.power_sources.as_ref().unwrap().contains_key("solar"));
+    }
+
+    #[test]
+    fn multi_profile_channel_energy_layers() {
+        let p1 = parse::NodeProfile {
+            channel_energy: Some(HashMap::from([(
+                "lora".to_string(),
+                parse::ChannelEnergy {
+                    tx: Some(parse::Energy {
+                        quantity: 50,
+                        unit: parse::Unit("uj".to_string()),
+                    }),
+                    rx: None,
+                },
+            )])),
+            ..Default::default()
+        };
+        let p2 = parse::NodeProfile {
+            channel_energy: Some(HashMap::from([
+                (
+                    "lora".to_string(),
+                    parse::ChannelEnergy {
+                        tx: Some(parse::Energy {
+                            quantity: 999,
+                            unit: parse::Unit("uj".to_string()),
+                        }),
+                        rx: Some(parse::Energy {
+                            quantity: 10,
+                            unit: parse::Unit("uj".to_string()),
+                        }),
+                    },
+                ),
+                (
+                    "wifi".to_string(),
+                    parse::ChannelEnergy {
+                        tx: Some(parse::Energy {
+                            quantity: 200,
+                            unit: parse::Unit("uj".to_string()),
+                        }),
+                        rx: None,
+                    },
+                ),
+            ])),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &p1);
+        apply_profile(&mut node, &p2);
+
+        let ce = node.channel_energy.unwrap();
+        // p1's "lora" wins over p2's (whole entry, not per-field).
+        assert_eq!(ce["lora"].tx.as_ref().unwrap().quantity, 50);
+        assert!(ce["lora"].rx.is_none());
+        // p2's "wifi" fills the gap.
+        assert_eq!(ce["wifi"].tx.as_ref().unwrap().quantity, 200);
+    }
+
+    #[test]
+    fn multi_profile_empty_profile_is_noop() {
+        let p1 = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let empty = parse::NodeProfile::default();
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &p1);
+        apply_profile(&mut node, &empty);
+
+        let res = node.resources.unwrap();
+        assert_eq!(res.clock_rate, NonZeroU64::new(240));
+    }
+
+    #[test]
+    fn multi_profile_three_profiles_layer() {
+        // Three profiles each contributing to disjoint maps.
+        let board = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(520),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            power_states: Some(HashMap::from([(
+                "active".to_string(),
+                parse::PowerRate {
+                    rate: 100,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+        let solar = parse::NodeProfile {
+            power_sources: Some(HashMap::from([(
+                "solar".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 80,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+        let radio = parse::NodeProfile {
+            channel_energy: Some(HashMap::from([(
+                "lora".to_string(),
+                parse::ChannelEnergy {
+                    tx: Some(parse::Energy {
+                        quantity: 50,
+                        unit: parse::Unit("uj".to_string()),
+                    }),
+                    rx: Some(parse::Energy {
+                        quantity: 10,
+                        unit: parse::Unit("uj".to_string()),
+                    }),
+                },
+            )])),
+            power_sinks: Some(HashMap::from([(
+                "radio".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 20,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &board);
+        apply_profile(&mut node, &solar);
+        apply_profile(&mut node, &radio);
+
+        assert_eq!(node.resources.unwrap().clock_rate, NonZeroU64::new(240));
+        assert!(node.power_states.as_ref().unwrap().contains_key("active"));
+        assert!(node.power_sources.as_ref().unwrap().contains_key("solar"));
+        assert!(node.power_sinks.as_ref().unwrap().contains_key("radio"));
+        assert_eq!(
+            node.channel_energy.as_ref().unwrap()["lora"]
+                .tx
+                .as_ref()
+                .unwrap()
+                .quantity,
+            50
+        );
+    }
+
+    #[test]
+    fn multi_profile_resolve_and_merge_integration() {
+        // End-to-end: two module files each providing a profile; a node
+        // references both via `profile = ["board", "energy"]`.
+        let dir = setup_temp_modules(&[
+            (
+                "hw.toml",
+                "[profiles.board]\n\
+                 [profiles.board.resources]\n\
+                 clock_rate = 240\nclock_units = \"mhz\"\n\
+                 ram = 520\nram_units = \"kb\"\n\
+                 [profiles.board.power_states.active]\n\
+                 rate = 100\nunit = \"mw\"\ntime = \"s\"\n",
+            ),
+            (
+                "pwr.toml",
+                "[profiles.energy.power_sources.solar]\n\
+                 type = \"constant\"\nrate = 80\nunit = \"mw\"\ntime = \"s\"\n",
+            ),
+        ]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./hw".to_string(), "./pwr".to_string()]);
+        resolve_and_merge(dir.path(), &mut sim).unwrap();
+
+        let profiles = sim.profiles.as_ref().unwrap();
+        assert!(profiles.contains_key("board"));
+        assert!(profiles.contains_key("energy"));
+
+        // Simulate profile application as validate() would.
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &profiles["board"]);
+        apply_profile(&mut node, &profiles["energy"]);
+
+        assert_eq!(node.resources.unwrap().clock_rate, NonZeroU64::new(240));
+        assert!(node.power_states.as_ref().unwrap().contains_key("active"));
+        assert!(node.power_sources.as_ref().unwrap().contains_key("solar"));
+    }
+
+    #[test]
+    fn multi_profile_duplicate_profile_name_across_modules() {
+        // Two modules both define a profile named "board" -- should error.
+        let dir = setup_temp_modules(&[
+            (
+                "a.toml",
+                "[profiles.board]\n\
+                 [profiles.board.resources]\n\
+                 clock_rate = 240\nclock_units = \"mhz\"\n",
+            ),
+            (
+                "b.toml",
+                "[profiles.board]\n\
+                 [profiles.board.resources]\n\
+                 clock_rate = 80\nclock_units = \"mhz\"\n",
+            ),
+        ]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./a".to_string(), "./b".to_string()]);
+        let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Duplicate profile"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
     fn multi_profile_layers_compose() {
         // First profile: board resources + power states + sink
         let board = parse::NodeProfile {
