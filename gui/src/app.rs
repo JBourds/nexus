@@ -632,6 +632,7 @@ impl NexusApp {
             dirty: true,
             add_item_buf: String::new(),
             needs_fit: true,
+            modules: crate::state::ModuleState::default(),
         }));
     }
 

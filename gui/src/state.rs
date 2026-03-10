@@ -1,10 +1,11 @@
 use anyhow::{Context, Result};
-use std::collections::HashSet;
-use std::path::PathBuf;
+use std::collections::{HashMap, HashSet};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
 use config::ast;
+use config::parse::NodeProfile;
 
 use crate::render::grid::GridView;
 use crate::sim::controller::SimController;
@@ -20,6 +21,173 @@ pub enum AppMode {
     Replay(Box<ReplayState>),
 }
 
+/// A profile resolved from an imported module.
+pub struct ResolvedProfile {
+    pub source_module: String,
+    pub profile: NodeProfile,
+}
+
+/// What a module provides (for the browser display).
+pub struct ModuleProvides {
+    pub links: Vec<String>,
+    pub channels: Vec<String>,
+    pub profiles: Vec<String>,
+}
+
+/// A stdlib module entry for the browser.
+pub struct StdlibEntry {
+    pub spec: String,
+    pub description: String,
+    pub provides: ModuleProvides,
+}
+
+/// Module-related state tracked alongside the AST.
+pub struct ModuleState {
+    /// The `use = [...]` list from the original config.
+    pub use_list: Vec<String>,
+    /// Per-node profile assignments: node_name -> Vec<profile_name>.
+    pub node_profiles: HashMap<String, Vec<String>>,
+    /// Profiles available from imported modules, keyed by profile name.
+    pub available_profiles: HashMap<String, ResolvedProfile>,
+    /// Cached catalog of stdlib modules for the browser.
+    pub stdlib_catalog: Vec<StdlibEntry>,
+    /// Whether the module browser window is open.
+    pub browser_open: bool,
+    /// Currently selected module in the browser.
+    pub browser_selected: Option<String>,
+    /// Search query for fuzzy-filtering in the browser.
+    pub browser_search: String,
+    /// Set of expanded categories in the browser tree.
+    pub browser_expanded: HashSet<String>,
+}
+
+impl Default for ModuleState {
+    fn default() -> Self {
+        Self {
+            use_list: Vec::new(),
+            node_profiles: HashMap::new(),
+            available_profiles: HashMap::new(),
+            stdlib_catalog: build_stdlib_catalog(),
+            browser_open: false,
+            browser_selected: None,
+            browser_search: String::new(),
+            browser_expanded: HashSet::new(),
+        }
+    }
+}
+
+impl ModuleState {
+    /// Resolve all modules in `use_list` and populate `available_profiles`.
+    pub fn resolve_profiles(&mut self, config_dir: Option<&Path>) {
+        self.available_profiles.clear();
+        for spec in &self.use_list {
+            let path = match config::module::resolve_module_path(spec, config_dir) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let module = match config::parse_module_file(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if let Some(profiles) = module.profiles {
+                for (name, profile) in profiles {
+                    self.available_profiles
+                        .entry(name.to_ascii_lowercase())
+                        .or_insert(ResolvedProfile {
+                            source_module: spec.clone(),
+                            profile,
+                        });
+                }
+            }
+        }
+    }
+}
+
+/// Build the stdlib catalog by walking the stdlib directory.
+fn build_stdlib_catalog() -> Vec<StdlibEntry> {
+    let stdlib = config::module::stdlib_path();
+    if !stdlib.is_dir() {
+        return Vec::new();
+    }
+    let mut entries = Vec::new();
+    walk_stdlib(stdlib, "", &mut entries);
+    entries.sort_by(|a, b| a.spec.cmp(&b.spec));
+    entries
+}
+
+fn walk_stdlib(dir: &Path, prefix: &str, entries: &mut Vec<StdlibEntry>) {
+    let Ok(read_dir) = std::fs::read_dir(dir) else {
+        return;
+    };
+    let mut dir_entries: Vec<_> = read_dir.filter_map(|e| e.ok()).collect();
+    dir_entries.sort_by_key(|e| e.file_name());
+
+    for entry in dir_entries {
+        let Ok(ft) = entry.file_type() else {
+            continue;
+        };
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if ft.is_dir() {
+            let sub_prefix = if prefix.is_empty() {
+                name_str.to_string()
+            } else {
+                format!("{prefix}/{name_str}")
+            };
+            walk_stdlib(&entry.path(), &sub_prefix, entries);
+        } else if ft.is_file() && name_str.ends_with(".toml") {
+            let stem = name_str.trim_end_matches(".toml");
+            let spec = if prefix.is_empty() {
+                stem.to_string()
+            } else {
+                format!("{prefix}/{stem}")
+            };
+
+            let (description, provides) = match std::fs::read_to_string(entry.path()) {
+                Ok(text) => {
+                    let desc = text
+                        .lines()
+                        .find(|l| l.starts_with("# "))
+                        .map(|l| l.trim_start_matches("# ").to_string())
+                        .unwrap_or_default();
+                    let provides = match toml::from_str::<config::parse::ModuleFile>(&text) {
+                        Ok(m) => ModuleProvides {
+                            links: m.links.keys().cloned().collect(),
+                            channels: m.channels.keys().cloned().collect(),
+                            profiles: m
+                                .profiles
+                                .as_ref()
+                                .map(|p| p.keys().cloned().collect())
+                                .unwrap_or_default(),
+                        },
+                        Err(_) => ModuleProvides {
+                            links: Vec::new(),
+                            channels: Vec::new(),
+                            profiles: Vec::new(),
+                        },
+                    };
+                    (desc, provides)
+                }
+                Err(_) => (
+                    String::new(),
+                    ModuleProvides {
+                        links: Vec::new(),
+                        channels: Vec::new(),
+                        profiles: Vec::new(),
+                    },
+                ),
+            };
+
+            entries.push(StdlibEntry {
+                spec,
+                description,
+                provides,
+            });
+        }
+    }
+}
+
 /// State for the configuration editor mode.
 pub struct ConfigEditorState {
     pub sim: ast::Simulation,
@@ -33,13 +201,28 @@ pub struct ConfigEditorState {
     pub add_item_buf: String,
     /// When true, auto-fit the grid viewport on next frame.
     pub needs_fit: bool,
+    /// Module system state (use list, profiles, browser).
+    pub modules: ModuleState,
 }
 
 impl ConfigEditorState {
     pub fn new(path: PathBuf) -> Result<Self> {
+        // Extract module info from raw TOML before config::parse() consumes it.
+        let raw_text = std::fs::read_to_string(&path).unwrap_or_default();
+        let (use_list, node_profiles) = config::extract_module_info(&raw_text);
+
         let sim = config::parse(path.clone())
             .or_else(|_| config::deserialize_config(&path))
             .with_context(|| format!("Failed to parse config at path: {path:#?}"))?;
+
+        let config_dir = path.parent().map(Path::to_path_buf);
+        let mut modules = ModuleState {
+            use_list,
+            node_profiles,
+            ..Default::default()
+        };
+        modules.resolve_profiles(config_dir.as_deref());
+
         Ok(Self {
             sim,
             file_path: Some(path),
@@ -50,6 +233,7 @@ impl ConfigEditorState {
             dirty: false,
             add_item_buf: String::new(),
             needs_fit: true,
+            modules,
         })
     }
 }

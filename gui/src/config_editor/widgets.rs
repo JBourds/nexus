@@ -22,9 +22,12 @@ pub fn add_item_ui(ui: &mut Ui, label: &str, buf: &mut String) -> Option<String>
     result
 }
 
-/// Small red "X" remove button. Returns `true` when clicked.
+/// Small red "X" remove button with hover tooltip. Returns `true` when clicked.
 pub fn remove_button(ui: &mut Ui) -> bool {
-    ui.add(egui::Button::new("✕").small())
+    let text = egui::RichText::new("\u{2716}")
+        .color(egui::Color32::from_rgb(200, 60, 60))
+        .size(12.0);
+    ui.add(egui::Button::new(text).small().frame(false))
         .on_hover_text("Remove")
         .clicked()
 }

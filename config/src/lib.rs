@@ -8,7 +8,7 @@ mod helpers;
 mod medium;
 pub mod module;
 mod namespace;
-pub(crate) mod parse;
+pub mod parse;
 mod position;
 mod resources;
 mod time;
@@ -86,6 +86,53 @@ pub fn serialize_config(sim: &ast::Simulation, dest: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Extract the raw `use` list and per-node profile assignments from TOML text
+/// before module resolution consumes them.
+pub fn extract_module_info(toml_text: &str) -> (Vec<String>, std::collections::HashMap<String, Vec<String>>) {
+    let mut use_list = Vec::new();
+    let mut node_profiles = std::collections::HashMap::new();
+
+    if let Ok(val) = toml_text.parse::<toml::Table>() {
+        if let Some(toml::Value::Array(arr)) = val.get("use") {
+            for v in arr {
+                if let toml::Value::String(s) = v {
+                    use_list.push(s.clone());
+                }
+            }
+        }
+        if let Some(toml::Value::Table(nodes)) = val.get("nodes") {
+            for (name, node_val) in nodes {
+                if let toml::Value::Table(node_tbl) = node_val {
+                    if let Some(profile_val) = node_tbl.get("profile") {
+                        let profiles = match profile_val {
+                            toml::Value::String(s) => vec![s.clone()],
+                            toml::Value::Array(arr) => arr
+                                .iter()
+                                .filter_map(|v| v.as_str().map(String::from))
+                                .collect(),
+                            _ => Vec::new(),
+                        };
+                        if !profiles.is_empty() {
+                            node_profiles.insert(name.clone(), profiles);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    (use_list, node_profiles)
+}
+
+/// Parse a module file from a path, returning its structured contents.
+pub fn parse_module_file(path: &Path) -> Result<parse::ModuleFile> {
+    let text = std::fs::read_to_string(path)
+        .with_context(|| format!("Unable to read module file at \"{}\"", path.display()))?;
+    let module: parse::ModuleFile = toml::from_str(&text)
+        .with_context(|| format!("Failed to parse module file at \"{}\"", path.display()))?;
+    Ok(module)
+}
+
 pub fn deserialize_config(src: &Path) -> Result<ast::Simulation> {
     let snapshot = ConfigSnapshot::try_read(src)?;
     if let Ok(res) = toml::from_str(snapshot.cfg.as_str()) {
@@ -132,5 +179,48 @@ mod tests {
                 "Expected {path:?} to be accepted but got result:\n{res:#?}"
             );
         }
+    }
+
+    #[test]
+    fn extract_module_info_with_use_and_profiles() {
+        let toml = r#"
+use = ["lora/sx1276_915mhz", "boards/esp32_devkit"]
+
+[params]
+seed = 42
+
+[nodes.sensor]
+profile = ["esp32", "solar_small"]
+
+[nodes.gateway]
+profile = "esp32"
+
+[nodes.plain]
+"#;
+        let (use_list, node_profiles) = extract_module_info(toml);
+        assert_eq!(use_list, vec!["lora/sx1276_915mhz", "boards/esp32_devkit"]);
+        assert_eq!(
+            node_profiles.get("sensor").unwrap(),
+            &vec!["esp32".to_string(), "solar_small".to_string()]
+        );
+        assert_eq!(
+            node_profiles.get("gateway").unwrap(),
+            &vec!["esp32".to_string()]
+        );
+        assert!(node_profiles.get("plain").is_none());
+    }
+
+    #[test]
+    fn extract_module_info_empty() {
+        let (use_list, node_profiles) = extract_module_info("[params]\nseed = 1\n");
+        assert!(use_list.is_empty());
+        assert!(node_profiles.is_empty());
+    }
+
+    #[test]
+    fn extract_module_info_invalid_toml() {
+        let (use_list, node_profiles) = extract_module_info("not valid { toml");
+        assert!(use_list.is_empty());
+        assert!(node_profiles.is_empty());
     }
 }

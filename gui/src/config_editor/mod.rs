@@ -1,5 +1,6 @@
 pub mod channels;
 pub mod links;
+pub mod modules;
 pub mod nodes;
 pub mod params;
 pub mod widgets;
@@ -11,6 +12,15 @@ use crate::state::ConfigEditorState;
 
 /// Show the full configuration editor UI.
 pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
+    let config_dir = state
+        .file_path
+        .as_ref()
+        .and_then(|p| p.parent())
+        .map(|p| p.to_path_buf());
+
+    // Module browser window (floating, rendered before panels)
+    modules::show_module_browser(ui.ctx(), &mut state.modules, config_dir.as_deref());
+
     egui::SidePanel::left("config_sections")
         .default_width(300.0)
         .show_inside(ui, |ui| {
@@ -18,12 +28,21 @@ pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
                 ui.heading("Configuration");
                 ui.separator();
 
+                ui.collapsing("Modules", |ui| {
+                    modules::show_modules(ui, &mut state.modules, config_dir.as_deref());
+                });
+
                 ui.collapsing("Parameters", |ui| {
                     params::show_params(ui, &mut state.sim.params);
                 });
 
                 ui.collapsing("Nodes", |ui| {
-                    nodes::show_nodes(ui, &mut state.sim, &mut state.add_item_buf);
+                    nodes::show_nodes(
+                        ui,
+                        &mut state.sim,
+                        &mut state.add_item_buf,
+                        &mut state.modules,
+                    );
                 });
 
                 ui.collapsing("Channels", |ui| {
@@ -80,3 +99,4 @@ fn validate_config(sim: &ast::Simulation) -> Option<String> {
         Err(e) => Some(format!("{e:#}")),
     }
 }
+

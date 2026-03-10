@@ -4,13 +4,15 @@ use std::time::SystemTime;
 use config::ast::{self, ChannelEnergy, Charge, Cmd, Energy, NodeProtocol, PowerFlow, PowerRate};
 use egui::Ui;
 
+use super::modules::show_profile_preview;
 use super::widgets::{
     CLOCK_UNIT_PAIRS, DATA_UNIT_PAIRS, DISTANCE_UNIT_PAIRS, ENERGY_UNIT_PAIRS, add_item_ui,
     channel_multi_select, cmd_editor, enum_combo, optional_nonzero_u64, power_flow_editor,
     power_rate_editor, remove_button,
 };
+use crate::state::ModuleState;
 
-pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
+pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String, modules: &mut ModuleState) {
     if let Some(name) = add_item_ui(ui, "+ Node:", buf) {
         sim.nodes.entry(name).or_insert_with(|| ast::Node {
             position: ast::Position::default(),
@@ -52,7 +54,7 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
             })
             .body(|ui| {
                 if let Some(node) = sim.nodes.get_mut(name) {
-                    show_node(ui, name, node, &available_channels);
+                    show_node(ui, name, node, &available_channels, modules);
                 }
             });
     }
@@ -62,7 +64,102 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
     }
 }
 
-fn show_node(ui: &mut Ui, name: &str, node: &mut ast::Node, available_channels: &[String]) {
+fn show_node(
+    ui: &mut Ui,
+    name: &str,
+    node: &mut ast::Node,
+    available_channels: &[String],
+    modules: &mut ModuleState,
+) {
+    // --- Profiles ---
+    if !modules.available_profiles.is_empty() {
+        ui.label("Profiles:");
+
+        // Show current assignments with remove buttons
+        let current = modules
+            .node_profiles
+            .get(name)
+            .cloned()
+            .unwrap_or_default();
+        let mut profile_removed = None;
+        for (i, pname) in current.iter().enumerate() {
+            ui.horizontal(|ui| {
+                ui.label(format!("[{pname}]"));
+                if remove_button(ui) {
+                    profile_removed = Some(i);
+                }
+            });
+
+            // Expandable profile preview
+            let key = pname.to_ascii_lowercase();
+            if let Some(resolved) = modules.available_profiles.get(&key) {
+                let pid = ui.make_persistent_id(format!("profile_preview_{name}_{pname}"));
+                egui::collapsing_header::CollapsingState::load_with_default_open(
+                    ui.ctx(),
+                    pid,
+                    false,
+                )
+                .show_header(ui, |ui| {
+                    ui.weak(format!("{pname} ({})", resolved.source_module));
+                })
+                .body(|ui| {
+                    show_profile_preview(ui, &resolved.profile);
+                });
+            }
+        }
+        if let Some(i) = profile_removed {
+            if let Some(profiles) = modules.node_profiles.get_mut(name) {
+                profiles.remove(i);
+                if profiles.is_empty() {
+                    modules.node_profiles.remove(name);
+                }
+            }
+        }
+
+        // Add profile dropdown
+        let assigned: HashSet<String> = current
+            .iter()
+            .map(|s| s.to_ascii_lowercase())
+            .collect();
+        let mut unassigned: Vec<_> = modules
+            .available_profiles
+            .keys()
+            .filter(|k| !assigned.contains(*k))
+            .cloned()
+            .collect();
+        unassigned.sort();
+
+        if !unassigned.is_empty() {
+            let add_id = egui::Id::new(format!("profile_add_{name}"));
+            let mut selected: String = ui.data(|d| d.get_temp(add_id)).unwrap_or_default();
+            ui.horizontal(|ui| {
+                ui.label("+");
+                egui::ComboBox::from_id_salt(format!("profile_sel_{name}"))
+                    .selected_text(if selected.is_empty() {
+                        "Add profile..."
+                    } else {
+                        &selected
+                    })
+                    .show_ui(ui, |ui| {
+                        for p in &unassigned {
+                            ui.selectable_value(&mut selected, p.clone(), p);
+                        }
+                    });
+                if ui.button("Add").clicked() && !selected.is_empty() {
+                    modules
+                        .node_profiles
+                        .entry(name.to_string())
+                        .or_default()
+                        .push(selected.clone());
+                    selected.clear();
+                }
+            });
+            ui.data_mut(|d| d.insert_temp(add_id, selected));
+        }
+
+        ui.separator();
+    }
+
     // --- Position ---
     ui.label("Position:");
     ui.horizontal(|ui| {

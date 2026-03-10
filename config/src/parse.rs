@@ -19,22 +19,22 @@ pub struct Simulation {
 /// `deny_unknown_fields` ensures params/nodes are rejected by serde.
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
-pub(crate) struct ModuleFile {
-    pub(crate) r#use: Option<Vec<String>>,
-    pub(crate) links: HashMap<String, Link>,
-    pub(crate) channels: HashMap<String, Channel>,
-    pub(crate) profiles: Option<HashMap<String, NodeProfile>>,
+pub struct ModuleFile {
+    pub r#use: Option<Vec<String>>,
+    pub links: HashMap<String, Link>,
+    pub channels: HashMap<String, Channel>,
+    pub profiles: Option<HashMap<String, NodeProfile>>,
 }
 
 /// A reusable partial node template (hardware characteristics).
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct NodeProfile {
-    pub(super) resources: Option<Resources>,
-    pub(super) power_states: Option<HashMap<String, PowerRate>>,
-    pub(super) power_sources: Option<HashMap<String, PowerFlowDef>>,
-    pub(super) power_sinks: Option<HashMap<String, PowerFlowDef>>,
-    pub(super) channel_energy: Option<HashMap<String, ChannelEnergy>>,
+    pub resources: Option<Resources>,
+    pub power_states: Option<HashMap<String, PowerRate>>,
+    pub power_sources: Option<HashMap<String, PowerFlowDef>>,
+    pub power_sinks: Option<HashMap<String, PowerFlowDef>>,
+    pub channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -95,9 +95,9 @@ pub struct Charge {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PowerRate {
-    pub(super) rate: u64,
-    pub(super) unit: Unit,
-    pub(super) time: Unit,
+    pub rate: u64,
+    pub unit: Unit,
+    pub time: Unit,
 }
 
 /// A single breakpoint in a piecewise-linear power schedule.
@@ -271,11 +271,11 @@ pub struct Coordinate {
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Resources {
-    pub(super) clock_rate: Option<NonZeroU64>,
-    pub(super) cores: Option<NonZeroU64>,
-    pub(super) clock_units: Option<Unit>,
-    pub(super) ram: Option<NonZeroU64>,
-    pub(super) ram_units: Option<Unit>,
+    pub clock_rate: Option<NonZeroU64>,
+    pub cores: Option<NonZeroU64>,
+    pub clock_units: Option<Unit>,
+    pub ram: Option<NonZeroU64>,
+    pub ram_units: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
