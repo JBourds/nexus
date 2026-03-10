@@ -95,6 +95,9 @@ impl PowerFlowState {
                 breakpoints,
                 repeat_us,
             } => {
+                if breakpoints.is_empty() {
+                    return 0;
+                }
                 let t = match repeat_us {
                     Some(period) if *period > 0 => current_time_us % period,
                     _ => current_time_us,
@@ -585,6 +588,47 @@ mod tests {
         let start = m.current_point(0, 1).unwrap();
         let after_360 = m.current_point(360, 1).unwrap();
         assert_point_near(after_360, start, 1e-9);
+    }
+
+    // PowerFlowState
+
+    #[test]
+    fn piecewise_empty_breakpoints_returns_zero() {
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![],
+            repeat_us: None,
+        };
+        assert_eq!(flow.nj_per_timestep(0), 0);
+        assert_eq!(flow.nj_per_timestep(1000), 0);
+    }
+
+    #[test]
+    fn piecewise_single_breakpoint() {
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(0, 42)],
+            repeat_us: None,
+        };
+        assert_eq!(flow.nj_per_timestep(0), 42);
+        assert_eq!(flow.nj_per_timestep(9999), 42);
+    }
+
+    #[test]
+    fn piecewise_interpolates() {
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(0, 100), (100, 200)],
+            repeat_us: None,
+        };
+        assert_eq!(flow.nj_per_timestep(50), 150);
+    }
+
+    #[test]
+    fn piecewise_repeats() {
+        let flow = PowerFlowState::PiecewiseLinear {
+            breakpoints: vec![(0, 0), (100, 100)],
+            repeat_us: Some(100),
+        };
+        // t=150 → 150 % 100 = 50 → interpolate to 50
+        assert_eq!(flow.nj_per_timestep(150), 50);
     }
 
     // to_spec

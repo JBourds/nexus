@@ -105,10 +105,15 @@ fn handle_modules(action: &ModulesCmd) -> Result<()> {
         }
         ModulesCmd::Verify { config } => {
             match config::parse(config.clone()) {
-                Ok(_) => println!("OK: all modules resolved, no conflicts."),
-                Err(e) => println!("ERROR: {e:#}"),
+                Ok(_) => {
+                    println!("OK: all modules resolved, no conflicts.");
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {e:#}");
+                    Err(e)
+                }
             }
-            Ok(())
         }
     }
 }

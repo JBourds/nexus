@@ -210,8 +210,9 @@ impl RoutingServer {
         // Rebuild fuse_mapping from scratch
         self.fuse_mapping = self.channels.make_fuse_mapping();
         // Push remaps to shared FUSE queue
-        if let Ok(mut queue) = self.pending_remaps.lock() {
-            queue.extend_from_slice(pairs);
+        match self.pending_remaps.lock() {
+            Ok(mut queue) => queue.extend_from_slice(pairs),
+            Err(e) => eprintln!("warning: pending_remaps mutex poisoned, PID remaps lost: {e}"),
         }
     }
 
@@ -247,7 +248,7 @@ impl RoutingServer {
             ["pos", "motion"] => self.write_pos_motion(node_index, msg),
             ["pos", ..] => self.write_pos(node_index, msg),
             ["power_flows"] => self.write_power_flows(node_index, msg),
-            _ => unimplemented!("Unimplemented control file: {remaining}"),
+            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
         }
     }
 
@@ -339,7 +340,7 @@ impl RoutingServer {
             ["pos", "motion"] => self.read_pos_motion(node_index, msg),
             ["pos", ..] => self.read_pos(node_index, msg),
             ["power_flows"] => self.read_power_flows(node_index, msg),
-            _ => unimplemented!("Unimplemented control file: {remaining}"),
+            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
         }
     }
 
