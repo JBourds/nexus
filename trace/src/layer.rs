@@ -61,44 +61,72 @@ impl<S: Subscriber> Layer<S> for TraceLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
         let target = event.metadata().target();
 
-        // Handle drop events
-        if target == "drop" {
-            let mut visitor = DropVisitor::default();
-            event.record(&mut visitor);
-            let record = TraceRecord {
-                timestep: visitor.timestep,
-                event: visitor.into_event(),
-            };
-            let mut writer = self.writer.lock().unwrap();
-            let _ = writer.write_record(&record);
-            return;
-        }
-
-        // Only handle tx/rx events
-        if !matches!(target, "tx" | "rx") {
-            return;
-        }
-
-        let mut visitor = TraceVisitor::default();
-        event.record(&mut visitor);
-
-        let trace_event = if visitor.is_tx {
-            TraceEvent::MessageSent {
-                src_node: visitor.node,
-                channel: visitor.channel,
-                data: visitor.data,
+        let record = match target {
+            "drop" => {
+                let mut visitor = DropVisitor::default();
+                event.record(&mut visitor);
+                TraceRecord {
+                    timestep: visitor.timestep,
+                    event: visitor.into_event(),
+                }
             }
-        } else {
-            TraceEvent::MessageRecv {
-                dst_node: visitor.node,
-                channel: visitor.channel,
-                data: visitor.data,
+            "tx" | "rx" => {
+                let mut visitor = TraceVisitor::default();
+                event.record(&mut visitor);
+                let trace_event = if visitor.is_tx {
+                    TraceEvent::MessageSent {
+                        src_node: visitor.node,
+                        channel: visitor.channel,
+                        data: visitor.data,
+                    }
+                } else {
+                    TraceEvent::MessageRecv {
+                        dst_node: visitor.node,
+                        channel: visitor.channel,
+                        data: visitor.data,
+                    }
+                };
+                TraceRecord {
+                    timestep: visitor.timestep,
+                    event: trace_event,
+                }
             }
-        };
-
-        let record = TraceRecord {
-            timestep: visitor.timestep,
-            event: trace_event,
+            "battery" => {
+                let mut visitor = BatteryVisitor::default();
+                event.record(&mut visitor);
+                TraceRecord {
+                    timestep: visitor.timestep,
+                    event: TraceEvent::EnergyUpdate {
+                        node: visitor.node,
+                        energy_nj: visitor.charge_nj,
+                    },
+                }
+            }
+            "movement" => {
+                let mut visitor = MovementVisitor::default();
+                event.record(&mut visitor);
+                TraceRecord {
+                    timestep: visitor.timestep,
+                    event: TraceEvent::PositionUpdate {
+                        node: visitor.node,
+                        x: visitor.x,
+                        y: visitor.y,
+                        z: visitor.z,
+                    },
+                }
+            }
+            "motion" => {
+                let mut visitor = MotionVisitor::default();
+                event.record(&mut visitor);
+                TraceRecord {
+                    timestep: visitor.timestep,
+                    event: TraceEvent::MotionUpdate {
+                        node: visitor.node,
+                        spec: visitor.spec,
+                    },
+                }
+            }
+            _ => return,
         };
 
         let mut writer = self.writer.lock().unwrap();
@@ -146,6 +174,81 @@ impl DropVisitor {
             src_node: self.node,
             channel: self.channel,
             reason,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct BatteryVisitor {
+    timestep: u64,
+    node: u32,
+    charge_nj: u64,
+}
+
+impl Visit for BatteryVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            "charge_nj" => self.charge_nj = value,
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct MovementVisitor {
+    timestep: u64,
+    node: u32,
+    x: f64,
+    y: f64,
+    z: f64,
+}
+
+impl Visit for MovementVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            _ => {}
+        }
+    }
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        match field.name() {
+            "x" => self.x = value,
+            "y" => self.y = value,
+            "z" => self.z = value,
+            _ => {}
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct MotionVisitor {
+    timestep: u64,
+    node: u32,
+    spec: String,
+}
+
+impl Visit for MotionVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            _ => {}
+        }
+    }
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "spec" {
+            self.spec = value.to_string();
         }
     }
 }
