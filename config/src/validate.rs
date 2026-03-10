@@ -318,7 +318,9 @@ impl Simulation {
         for (node_name, node) in val.nodes.iter_mut() {
             let profile_names = std::mem::take(&mut node.profile);
             for profile_name in &profile_names {
-                let profile = profiles.get(profile_name).with_context(|| {
+                // Case-insensitive profile lookup: module keys are stored lowercased.
+                let key = profile_name.to_ascii_lowercase();
+                let profile = profiles.get(&key).with_context(|| {
                     format!("Node \"{node_name}\" references unknown profile \"{profile_name}\"")
                 })?;
                 crate::module::apply_profile(node, profile);

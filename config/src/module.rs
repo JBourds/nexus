@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
-use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -17,11 +16,13 @@ struct Origin {
 }
 
 /// Accumulated module definitions before merge into the main simulation.
+/// Keys are lowercased for case-insensitive duplicate detection.
+/// The `original_name` field preserves the author's original casing.
 #[derive(Debug, Default)]
 struct ResolvedModules {
-    links: HashMap<String, (parse::Link, Origin)>,
-    channels: HashMap<String, (parse::Channel, Origin)>,
-    profiles: HashMap<String, (parse::NodeProfile, Origin)>,
+    links: HashMap<String, (parse::Link, Origin, String)>,
+    channels: HashMap<String, (parse::Channel, Origin, String)>,
+    profiles: HashMap<String, (parse::NodeProfile, Origin, String)>,
 }
 
 /// Resolve all modules referenced by `use_list` and merge them into `sim`.
@@ -90,7 +91,7 @@ fn resolve_recursive(
     // Merge links.
     for (name, link) in module.links {
         let key = name.to_ascii_lowercase();
-        if let Some((_, existing)) = result.links.get(&key) {
+        if let Some((_, existing, _)) = result.links.get(&key) {
             bail!(
                 "Duplicate link \"{}\" defined in both \"{}\" and \"{}\"",
                 name,
@@ -98,13 +99,13 @@ fn resolve_recursive(
                 origin.path.display()
             );
         }
-        result.links.insert(key, (link, origin.clone()));
+        result.links.insert(key, (link, origin.clone(), name));
     }
 
     // Merge channels.
     for (name, channel) in module.channels {
         let key = name.to_ascii_lowercase();
-        if let Some((_, existing)) = result.channels.get(&key) {
+        if let Some((_, existing, _)) = result.channels.get(&key) {
             bail!(
                 "Duplicate channel \"{}\" defined in both \"{}\" and \"{}\"",
                 name,
@@ -112,14 +113,14 @@ fn resolve_recursive(
                 origin.path.display()
             );
         }
-        result.channels.insert(key, (channel, origin.clone()));
+        result.channels.insert(key, (channel, origin.clone(), name));
     }
 
     // Merge profiles.
     if let Some(profiles) = module.profiles {
         for (name, profile) in profiles {
             let key = name.to_ascii_lowercase();
-            if let Some((_, existing)) = result.profiles.get(&key) {
+            if let Some((_, existing, _)) = result.profiles.get(&key) {
                 bail!(
                     "Duplicate profile \"{}\" defined in both \"{}\" and \"{}\"",
                     name,
@@ -127,7 +128,7 @@ fn resolve_recursive(
                     origin.path.display()
                 );
             }
-            result.profiles.insert(key, (profile, origin.clone()));
+            result.profiles.insert(key, (profile, origin.clone(), name));
         }
     }
 
@@ -186,47 +187,42 @@ fn resolve_path(base_dir: &Path, spec: &str) -> Result<PathBuf> {
 
 /// Merge resolved module definitions into the parse-level simulation.
 /// User definitions take precedence (with a warning).
+/// Comparison is case-insensitive: a user-defined `[links.LoRa]` overrides
+/// a module-defined `[links.lora]`.
 fn merge_into_simulation(sim: &mut parse::Simulation, modules: ResolvedModules) -> Result<()> {
-    for (name, (link, _origin)) in modules.links {
-        match sim.links.entry(name) {
-            Entry::Occupied(e) => {
-                warn!(
-                    "Link \"{}\" in nexus.toml overrides module definition",
-                    e.key()
-                );
-            }
-            Entry::Vacant(e) => {
-                e.insert(link);
-            }
+    // Build a set of lowercased user-defined keys for case-insensitive override detection.
+    let user_link_keys: HashSet<String> = sim.links.keys().map(|k| k.to_ascii_lowercase()).collect();
+    for (_key, (link, _origin, original_name)) in modules.links {
+        if user_link_keys.contains(&original_name.to_ascii_lowercase()) {
+            warn!(
+                "Link \"{original_name}\" in nexus.toml overrides module definition",
+            );
+        } else {
+            sim.links.insert(original_name, link);
         }
     }
 
-    for (name, (channel, _origin)) in modules.channels {
-        match sim.channels.entry(name) {
-            Entry::Occupied(e) => {
-                warn!(
-                    "Channel \"{}\" in nexus.toml overrides module definition",
-                    e.key()
-                );
-            }
-            Entry::Vacant(e) => {
-                e.insert(channel);
-            }
+    let user_channel_keys: HashSet<String> = sim.channels.keys().map(|k| k.to_ascii_lowercase()).collect();
+    for (_key, (channel, _origin, original_name)) in modules.channels {
+        if user_channel_keys.contains(&original_name.to_ascii_lowercase()) {
+            warn!(
+                "Channel \"{original_name}\" in nexus.toml overrides module definition",
+            );
+        } else {
+            sim.channels.insert(original_name, channel);
         }
     }
 
     let profiles = sim.profiles.get_or_insert_with(HashMap::new);
-    for (name, (profile, _origin)) in modules.profiles {
-        match profiles.entry(name) {
-            Entry::Occupied(e) => {
-                warn!(
-                    "Profile \"{}\" in nexus.toml overrides module definition",
-                    e.key()
-                );
-            }
-            Entry::Vacant(e) => {
-                e.insert(profile);
-            }
+    let user_profile_keys: HashSet<String> = profiles.keys().map(|k| k.to_ascii_lowercase()).collect();
+    for (_key, (profile, _origin, original_name)) in modules.profiles {
+        if user_profile_keys.contains(&original_name.to_ascii_lowercase()) {
+            warn!(
+                "Profile \"{original_name}\" in nexus.toml overrides module definition",
+            );
+        } else {
+            // Store under the lowercased name so profile lookups are case-insensitive.
+            profiles.insert(original_name.to_ascii_lowercase(), profile);
         }
     }
 
