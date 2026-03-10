@@ -61,19 +61,23 @@ impl ClockUnit {
     }
 }
 
-impl PowerUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
+/// Trait for unit types that scale by powers of 10.
+/// Provides a shared `ratio()` implementation.
+pub trait DecimalScaled: Copy {
+    /// Log10 exponent relative to the smallest unit in this family.
+    fn power(self) -> usize;
 
-    pub fn power(&self) -> usize {
+    /// Return `(left_is_larger, exponent_difference)` between two units.
+    /// The caller computes `10^exponent_difference` to get the scaling factor.
+    fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let l = left.power();
+        let r = right.power();
+        (l > r, l.abs_diff(r))
+    }
+}
+
+impl DecimalScaled for PowerUnit {
+    fn power(self) -> usize {
         match self {
             Self::NanoWatt => 0,
             Self::MicroWatt => 3,
@@ -86,42 +90,20 @@ impl PowerUnit {
     }
 }
 
-impl TimeUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
+impl DecimalScaled for TimeUnit {
+    fn power(self) -> usize {
         match self {
             Self::Seconds => 0,
             Self::Milliseconds => 3,
             Self::Microseconds => 6,
             Self::Nanoseconds => 9,
-            _ => unimplemented!("power() only supported on time intervals with SI prefices."),
+            _ => unimplemented!("power() only supported on time intervals with SI prefixes."),
         }
     }
 }
 
-impl DistanceUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
+impl DecimalScaled for DistanceUnit {
+    fn power(self) -> usize {
         match self {
             Self::Millimeters => 0,
             Self::Centimeters => 1,

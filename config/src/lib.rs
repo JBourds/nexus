@@ -12,7 +12,7 @@ pub mod parse;
 mod position;
 mod resources;
 mod time;
-mod units;
+pub mod units;
 mod validate;
 
 pub mod ast;

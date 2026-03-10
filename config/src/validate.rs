@@ -5,7 +5,7 @@ use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
-use crate::units::parse_duration_to_us;
+use crate::units::{DecimalScaled, parse_duration_to_us};
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;

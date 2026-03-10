@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 use rand::Rng;
 
 use crate::ast::{DistanceUnit, Medium, RssiProbExpr};
+use crate::units::DecimalScaled;
 
 impl Medium {
     pub fn noise_floor_dbm(&self) -> f64 {
