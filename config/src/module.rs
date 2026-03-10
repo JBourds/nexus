@@ -638,4 +638,62 @@ mod tests {
         }
         walk(stdlib);
     }
+
+    #[test]
+    fn multi_profile_layers_compose() {
+        // First profile: board resources + power states + sink
+        let board = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(520),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            power_states: Some(HashMap::from([(
+                "active".to_string(),
+                parse::PowerRate {
+                    rate: 100,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            power_sinks: Some(HashMap::from([(
+                "mcu".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 30,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+        // Second profile: solar power source
+        let solar = parse::NodeProfile {
+            power_sources: Some(HashMap::from([(
+                "solar".to_string(),
+                parse::PowerFlowDef::Constant {
+                    rate: 80,
+                    unit: parse::Unit("mw".to_string()),
+                    time: parse::Unit("s".to_string()),
+                },
+            )])),
+            ..Default::default()
+        };
+
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &board);
+        apply_profile(&mut node, &solar);
+
+        // Board resources applied.
+        let res = node.resources.unwrap();
+        assert_eq!(res.clock_rate, NonZeroU64::new(240));
+        assert_eq!(res.ram, NonZeroU64::new(520));
+        // Board power states applied.
+        assert!(node.power_states.as_ref().unwrap().contains_key("active"));
+        // Board sink applied.
+        assert!(node.power_sinks.as_ref().unwrap().contains_key("mcu"));
+        // Solar source layered on top.
+        assert!(node.power_sources.as_ref().unwrap().contains_key("solar"));
+    }
 }

@@ -312,10 +312,12 @@ impl Simulation {
     }
 
     pub(crate) fn validate(config_root: &PathBuf, mut val: parse::Simulation) -> Result<Self> {
-        // Apply profiles to nodes before validation.
+        // Apply profiles to nodes before validation (in order, so later
+        // profiles layer on top of earlier ones).
         let profiles = val.profiles.take().unwrap_or_default();
         for (node_name, node) in val.nodes.iter_mut() {
-            if let Some(ref profile_name) = node.profile {
+            let profile_names = std::mem::take(&mut node.profile);
+            for profile_name in &profile_names {
                 let profile = profiles.get(profile_name).with_context(|| {
                     format!(
                         "Node \"{node_name}\" references unknown profile \"{profile_name}\""

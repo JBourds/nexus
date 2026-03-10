@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     collections::HashMap,
     num::{NonZeroU64, NonZeroUsize},
@@ -281,7 +281,8 @@ pub struct Resources {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Node {
-    pub(super) profile: Option<String>,
+    #[serde(default, deserialize_with = "string_or_list")]
+    pub(super) profile: Vec<String>,
     pub(super) resources: Option<Resources>,
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
@@ -308,4 +309,22 @@ pub struct NodeProtocol {
     pub(super) build_args: Option<Vec<String>>,
     pub(super) publishers: Option<Vec<ChannelName>>,
     pub(super) subscribers: Option<Vec<ChannelName>>,
+}
+
+/// Deserialize a field that accepts either a single string or a list of strings.
+/// Missing/null values produce an empty Vec (via `#[serde(default)]`).
+fn string_or_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrList {
+        Single(String),
+        List(Vec<String>),
+    }
+    match StringOrList::deserialize(deserializer)? {
+        StringOrList::Single(s) => Ok(vec![s]),
+        StringOrList::List(v) => Ok(v),
+    }
 }
