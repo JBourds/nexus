@@ -1,6 +1,6 @@
 use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
-use crate::file::NexusFile;
+use crate::file::{NexusFile, default_attr};
 use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
 use config::ast::{self};
 use fuser::ReplyWrite;
@@ -110,24 +110,7 @@ impl NexusFs {
     }
 
     fn root_attr() -> FileAttr {
-        let now = SystemTime::now();
-        FileAttr {
-            ino: FUSE_ROOT_ID,
-            size: 0,
-            blocks: 0,
-            atime: now,
-            mtime: now,
-            ctime: now,
-            crtime: now,
-            kind: FileType::Directory,
-            perm: 0o755,
-            nlink: 2,
-            uid: unsafe { libc::getuid() },
-            gid: unsafe { libc::getgid() },
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        }
+        default_attr(FUSE_ROOT_ID, FileType::Directory, 0o755, 0, 0)
     }
 
     pub fn root(&self) -> &PathBuf {

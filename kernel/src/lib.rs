@@ -6,6 +6,7 @@ mod resolver;
 pub(crate) mod router;
 pub mod sources;
 mod status;
+mod test_utils;
 pub mod types;
 
 use fuse::PID;

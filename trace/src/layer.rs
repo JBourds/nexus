@@ -8,6 +8,32 @@ use tracing_subscriber::layer::{Context, Layer};
 use crate::format::{TraceEvent, TraceHeader, TraceRecord};
 use crate::writer::TraceWriter;
 
+/// Generate a `Visit` impl with a `record_u64` method that matches field names
+/// to struct fields. Each arm is specified as `"field_name" => self.field: type`.
+/// A no-op `record_debug` is always included. Additional visitor methods (e.g.
+/// `record_str`, `record_bool`, `record_bytes`, `record_f64`) can be provided
+/// in an `extras` block.
+macro_rules! impl_visitor {
+    (
+        $ty:ty,
+        u64_fields: { $( $name:literal => $field:ident : $cast:ty ),* $(,)? }
+        $(, extras: { $($extra:tt)* })?
+    ) => {
+        impl Visit for $ty {
+            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+                match field.name() {
+                    $( $name => self.$field = value as $cast, )*
+                    _ => {}
+                }
+            }
+
+            $( $($extra)* )?
+        }
+    };
+}
+
 /// A `tracing_subscriber::Layer` that captures `tx` and `rx` target events
 /// and writes them as `TraceRecord`s to a unified trace file.
 pub struct TraceLayer {
@@ -32,30 +58,26 @@ struct TraceVisitor {
     data: Vec<u8>,
 }
 
-impl Visit for TraceVisitor {
-    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+impl_visitor!(TraceVisitor,
+    u64_fields: {
+        "timestep" => timestep: u64,
+        "channel" => channel: u32,
+        "node" => node: u32,
+    },
+    extras: {
+        fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+            if field.name() == "tx" {
+                self.is_tx = value;
+            }
+        }
 
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "timestep" => self.timestep = value,
-            "channel" => self.channel = value as u32,
-            "node" => self.node = value as u32,
-            _ => {}
+        fn record_bytes(&mut self, field: &tracing::field::Field, value: &[u8]) {
+            if field.name() == "data" {
+                self.data = value.to_vec();
+            }
         }
     }
-
-    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        if field.name() == "tx" {
-            self.is_tx = value;
-        }
-    }
-
-    fn record_bytes(&mut self, field: &tracing::field::Field, value: &[u8]) {
-        if field.name() == "data" {
-            self.data = value.to_vec();
-        }
-    }
-}
+);
 
 impl<S: Subscriber> Layer<S> for TraceLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
@@ -142,24 +164,20 @@ struct DropVisitor {
     reason: String,
 }
 
-impl Visit for DropVisitor {
-    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
-
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "timestep" => self.timestep = value,
-            "channel" => self.channel = value as u32,
-            "node" => self.node = value as u32,
-            _ => {}
+impl_visitor!(DropVisitor,
+    u64_fields: {
+        "timestep" => timestep: u64,
+        "channel" => channel: u32,
+        "node" => node: u32,
+    },
+    extras: {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "reason" {
+                self.reason = value.to_string();
+            }
         }
     }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "reason" {
-            self.reason = value.to_string();
-        }
-    }
-}
+);
 
 impl DropVisitor {
     fn into_event(self) -> TraceEvent {
@@ -185,18 +203,13 @@ struct BatteryVisitor {
     charge_nj: u64,
 }
 
-impl Visit for BatteryVisitor {
-    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
-
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "timestep" => self.timestep = value,
-            "node" => self.node = value as u32,
-            "charge_nj" => self.charge_nj = value,
-            _ => {}
-        }
+impl_visitor!(BatteryVisitor,
+    u64_fields: {
+        "timestep" => timestep: u64,
+        "node" => node: u32,
+        "charge_nj" => charge_nj: u64,
     }
-}
+);
 
 #[derive(Debug, Default)]
 struct MovementVisitor {
@@ -207,26 +220,22 @@ struct MovementVisitor {
     z: f64,
 }
 
-impl Visit for MovementVisitor {
-    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
-
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "timestep" => self.timestep = value,
-            "node" => self.node = value as u32,
-            _ => {}
+impl_visitor!(MovementVisitor,
+    u64_fields: {
+        "timestep" => timestep: u64,
+        "node" => node: u32,
+    },
+    extras: {
+        fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+            match field.name() {
+                "x" => self.x = value,
+                "y" => self.y = value,
+                "z" => self.z = value,
+                _ => {}
+            }
         }
     }
-
-    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
-        match field.name() {
-            "x" => self.x = value,
-            "y" => self.y = value,
-            "z" => self.z = value,
-            _ => {}
-        }
-    }
-}
+);
 
 #[derive(Debug, Default)]
 struct MotionVisitor {
@@ -235,20 +244,16 @@ struct MotionVisitor {
     spec: String,
 }
 
-impl Visit for MotionVisitor {
-    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
-
-    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-        match field.name() {
-            "timestep" => self.timestep = value,
-            "node" => self.node = value as u32,
-            _ => {}
+impl_visitor!(MotionVisitor,
+    u64_fields: {
+        "timestep" => timestep: u64,
+        "node" => node: u32,
+    },
+    extras: {
+        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+            if field.name() == "spec" {
+                self.spec = value.to_string();
+            }
         }
     }
-
-    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-        if field.name() == "spec" {
-            self.spec = value.to_string();
-        }
-    }
-}
+);

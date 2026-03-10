@@ -13,7 +13,8 @@ impl RoutingServer {
         node_index: usize,
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
+        let unit = Self::suffix_to_time(msg.id.1.as_str())
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let s = String::from_utf8_lossy(&msg.data);
         let val: u64 = s
             .parse()
@@ -37,7 +38,8 @@ impl RoutingServer {
         mut msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let node_start = &self.channels.nodes[node_index].start;
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
+        let unit = Self::suffix_to_time(msg.id.1.as_str())
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let s = self
             .ts_config
             .time_from(self.timestep, unit, node_start)
@@ -49,7 +51,8 @@ impl RoutingServer {
     }
 
     pub fn send_elapsed(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str()).expect("invalid time unit");
+        let unit = Self::suffix_to_time(msg.id.1.as_str())
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let s = self.ts_config.elapsed(self.timestep, unit).to_string();
         msg.data = s.bytes().collect();
         self.tx
