@@ -147,6 +147,7 @@ impl RoutingServer {
                     newly_recovered: Vec::new(),
                     pending_remaps,
                 };
+                let mut last_polled_ts: u64 = u64::MAX;
                 loop {
                     match kernel_rx.recv() {
                         Ok(KernelMessage::Shutdown) => {
@@ -159,8 +160,9 @@ impl RoutingServer {
                             }
                         }
                         Ok(KernelMessage::Poll(timestep)) => {
-                            router.timestep = timestep;
-                            if let Err(e) = source.poll(&mut router, timestep) {
+                            let ts_advanced = timestep != last_polled_ts;
+                            last_polled_ts = timestep;
+                            if let Err(e) = source.poll(&mut router, timestep, ts_advanced) {
                                 break Err(KernelError::SourceError(e));
                             }
                             let depleted = router

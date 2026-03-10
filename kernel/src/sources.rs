@@ -81,6 +81,7 @@ impl Source {
     fn poll_simulated(
         rx: &mut mpsc::Receiver<fuse::FsMessage>,
         router: &mut RoutingServer,
+        ts_advanced: bool,
     ) -> Result<(), SourceError> {
         // Receive all write requests from FS then let router ingest them
         for msg in rx.try_iter() {
@@ -95,7 +96,12 @@ impl Source {
                 }
             }
         }
-        router.step().map_err(SourceError::RouterError)?;
+        // Only advance the simulation (energy drain, message delivery) once
+        // per timestep. The kernel polls multiple times per timestep to
+        // collect FUSE messages, but step() must run exactly once.
+        if ts_advanced {
+            router.step().map_err(SourceError::RouterError)?;
+        }
         Ok(())
     }
 
@@ -104,7 +110,11 @@ impl Source {
         ts: Timestep,
         router: &mut RoutingServer,
         next_log: &mut Option<MessageRecord>,
+        ts_advanced: bool,
     ) -> Result<(), SourceError> {
+        if !ts_advanced {
+            return Ok(());
+        }
         // Only do this I/O if we either don't know when the next log
         // is or if we know there are logs ready to be sent.
         if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
@@ -158,7 +168,11 @@ impl Source {
         ts: Timestep,
         router: &mut RoutingServer,
         next_record: &mut Option<TraceRecord>,
+        ts_advanced: bool,
     ) -> Result<(), SourceError> {
+        if !ts_advanced {
+            return Ok(());
+        }
         // Deliver buffered record if ready
         if next_record.as_ref().is_none_or(|rec| rec.timestep <= ts) {
             if let Some(rec) = next_record.take()
@@ -212,15 +226,18 @@ impl Source {
         &mut self,
         router: &mut RoutingServer,
         ts: Timestep,
+        ts_advanced: bool,
     ) -> Result<(), SourceError> {
         match self {
             Self::Empty => Ok(()),
-            Self::Simulated { rx } => Self::poll_simulated(rx, router),
-            Self::Replay { src, next_log } => Self::poll_log(src, ts, router, next_log),
+            Self::Simulated { rx } => Self::poll_simulated(rx, router, ts_advanced),
+            Self::Replay { src, next_log } => {
+                Self::poll_log(src, ts, router, next_log, ts_advanced)
+            }
             Self::ReplayTrace {
                 reader,
                 next_record,
-            } => Self::poll_trace(reader, ts, router, next_record),
+            } => Self::poll_trace(reader, ts, router, next_record, ts_advanced),
         }
     }
 }
