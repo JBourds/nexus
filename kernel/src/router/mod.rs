@@ -212,7 +212,7 @@ impl RoutingServer {
         // Push remaps to shared FUSE queue
         match self.pending_remaps.lock() {
             Ok(mut queue) => queue.extend_from_slice(pairs),
-            Err(e) => eprintln!("warning: pending_remaps mutex poisoned, PID remaps lost: {e}"),
+            Err(e) => warn!("pending_remaps mutex poisoned, PID remaps lost: {e}"),
         }
     }
 

@@ -9,7 +9,7 @@ lora = os.path.expanduser("~/nexus/lora")
 
 while True:
     with open(lora, "r+") as f:
-        msg = f.read()
+        msg = f.read(4096)
         if msg:
             print(f"Relay rx: {msg}")
             f.write(f"{msg}|RELAYED")

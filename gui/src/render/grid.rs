@@ -322,14 +322,14 @@ impl GridView {
                 }
             }
 
-            // Apply drag delta: dragging scrollbar right/down moves viewport right/down
+            // Apply drag delta
             if is_this_dragging {
                 if is_horizontal && drag_delta.x != 0.0 {
                     let frac_dx = drag_delta.x / canvas_rect.width();
-                    self.offset.x += frac_dx * content_w * self.zoom;
+                    self.offset.x -= frac_dx * content_w * self.zoom;
                 } else if !is_horizontal && drag_delta.y != 0.0 {
                     let frac_dy = drag_delta.y / canvas_rect.height();
-                    self.offset.y += frac_dy * content_h * self.zoom;
+                    self.offset.y -= frac_dy * content_h * self.zoom;
                 }
                 any_dragging = true;
             }

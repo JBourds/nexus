@@ -140,7 +140,10 @@ impl PowerFlowState {
                 let breakpoints = breakpoints
                     .iter()
                     .map(|&(t_us, rate)| {
-                        let nj = rate * nw_factor * timestep_ns / time_ns;
+                        let nj = (rate as u128) * (nw_factor as u128)
+                            * (timestep_ns as u128)
+                            / (time_ns as u128);
+                        let nj = nj as u64;
                         (t_us, nj)
                     })
                     .collect();

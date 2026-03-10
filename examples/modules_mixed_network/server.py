@@ -10,12 +10,12 @@ wifi = os.path.expanduser("~/nexus/wifi")
 
 while True:
     with open(uart, "r") as f:
-        msg = f.read()
+        msg = f.read(4096)
         if msg:
             print(f"Server rx (UART): {msg}")
 
     with open(wifi, "r") as f:
-        msg = f.read()
+        msg = f.read(4096)
         if msg:
             print(f"Server rx (Wi-Fi): {msg}")
 

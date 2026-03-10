@@ -135,9 +135,11 @@ fn list_modules(dir: &Path, category: Option<&str>, prefix: &str) -> Result<()> 
             };
             // If category filter is set, only recurse into matching dirs.
             if let Some(cat) = category
-                && !name_str.eq_ignore_ascii_case(cat) && !sub_prefix.starts_with(cat) {
-                    continue;
-                }
+                && !name_str.eq_ignore_ascii_case(cat)
+                && !sub_prefix.to_ascii_lowercase().starts_with(&cat.to_ascii_lowercase())
+            {
+                continue;
+            }
             list_modules(&entry.path(), category, &sub_prefix)?;
         } else if ft.is_file() && name_str.ends_with(".toml") {
             let stem = name_str.trim_end_matches(".toml");

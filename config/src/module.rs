@@ -641,6 +641,29 @@ mod tests {
         walk(stdlib);
     }
 
+    #[test]
+    fn case_insensitive_profile_lookup_in_merge() {
+        // A module defines [profiles.ESP32] with uppercase; a node references
+        // profile = "esp32" with lowercase. The lookup should still match.
+        let dir = setup_temp_modules(&[(
+            "board.toml",
+            "[profiles.ESP32]\n\
+             [profiles.ESP32.resources]\n\
+             clock_rate = 240\nclock_units = \"mhz\"\n",
+        )]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./board".to_string()]);
+        resolve_and_merge(dir.path(), &mut sim).unwrap();
+
+        // Profile should be stored under lowercase key.
+        let profiles = sim.profiles.as_ref().unwrap();
+        assert!(
+            profiles.contains_key("esp32"),
+            "profile should be stored lowercased, keys: {:?}",
+            profiles.keys().collect::<Vec<_>>()
+        );
+    }
+
     /// Verify that stdlib board modules have correct power values (V * I, not raw current).
     #[test]
     fn stdlib_board_power_values_are_watts_not_amps() {

@@ -124,7 +124,7 @@ impl RoutingServer {
         };
         // Use u128 to avoid overflow for large rates (e.g., kW with long timesteps).
         let nj = (rate as u128) * (nw_factor as u128) * (timestep_ns as u128) / (time_ns as u128);
-        Some(nj as u64)
+        u64::try_from(nj).ok()
     }
 }
 

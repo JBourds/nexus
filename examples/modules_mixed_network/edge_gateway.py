@@ -13,7 +13,7 @@ uart = os.path.expanduser("~/nexus/uart")
 
 while True:
     with open(lora, "r") as f:
-        msg = f.read()
+        msg = f.read(4096)
     if msg:
         print(f"Edge GW rx (LoRa): {msg}")
         with open(uart, "w") as f:

@@ -187,14 +187,14 @@ ram         = 520
 ram_units   = "kb"
 
 [profiles.esp32.power_states]
-deep_sleep  = { rate = 10,  unit = "uw", time = "s" }
-light_sleep = { rate = 800, unit = "uw", time = "s" }
-modem_sleep = { rate = 20,  unit = "mw", time = "s" }
-active      = { rate = 100, unit = "mw", time = "s" }
-wifi_active = { rate = 180, unit = "mw", time = "s" }
+deep_sleep  = { rate = 33,   unit = "uw", time = "s" }
+light_sleep = { rate = 2640, unit = "uw", time = "s" }
+modem_sleep = { rate = 66,   unit = "mw", time = "s" }
+active      = { rate = 330,  unit = "mw", time = "s" }
+wifi_active = { rate = 600,  unit = "mw", time = "s" }
 
 [profiles.esp32.power_sinks]
-mcu = { rate = 30, unit = "mw", time = "s" }
+mcu = { rate = 99, unit = "mw", time = "s" }
 ```
 
 A node references a profile with the `profile` key, which accepts either a
