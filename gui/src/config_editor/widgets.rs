@@ -178,8 +178,39 @@ pub fn rssi_prob_expr_editor(ui: &mut Ui, id: &str, expr: &mut RssiProbExpr) {
                 .desired_width(120.0),
         );
         ui.label("noise floor (dBm):");
-        ui.add(egui::DragValue::new(&mut expr.noise_floor_dbm).speed(0.1));
+        dbm_drag_value(ui, &mut expr.noise_floor_dbm);
     });
+}
+
+/// DragValue for dBm fields that displays extreme values as +/- infinity.
+pub fn dbm_drag_value(ui: &mut Ui, val: &mut f64) {
+    let display = format_dbm(*val);
+    let mut text = display.clone();
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .desired_width(60.0)
+            .horizontal_align(egui::Align::RIGHT),
+    );
+    if response.changed() {
+        let trimmed = text.trim();
+        if trimmed == "+inf" || trimmed == "inf" {
+            *val = f64::MAX;
+        } else if trimmed == "-inf" {
+            *val = f64::MIN;
+        } else if let Ok(v) = trimmed.parse::<f64>() {
+            *val = v;
+        }
+    }
+}
+
+fn format_dbm(val: f64) -> String {
+    if val >= f64::MAX / 2.0 {
+        "+inf".to_string()
+    } else if val <= f64::MIN / 2.0 {
+        "-inf".to_string()
+    } else {
+        format!("{val:.3}")
+    }
 }
 
 // --- Constant lookup tables for enum combos ---
