@@ -5,6 +5,8 @@ use std::path::PathBuf;
 use eframe::App;
 use egui::Context;
 
+use config::ast::DistanceUnit;
+
 use crate::config_editor;
 use crate::panels::{grid, inspector, messages, timeline, toolbar};
 use crate::render::grid::GridView;
@@ -143,8 +145,9 @@ impl NexusApp {
                 state.grid.fit_to_nodes(&nodes, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, _hovered) =
-                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[]);
+                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[], dist_unit);
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
@@ -262,12 +265,14 @@ impl NexusApp {
                     .fit_to_nodes(&state.node_states, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
                 &state.active_arrows,
+                dist_unit,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -469,12 +474,14 @@ impl NexusApp {
                     .fit_to_nodes(&state.node_states, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
                 &state.active_arrows,
+                dist_unit,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -724,7 +731,16 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
     nodes
 }
 
-/// Build a channel_index → Vec<subscriber node_index> lookup from the simulation config.
+/// Get the distance unit from the first node, falling back to Kilometers.
+fn sim_distance_unit(sim: &config::ast::Simulation) -> DistanceUnit {
+    sim.nodes
+        .values()
+        .next()
+        .map(|n| n.position.unit)
+        .unwrap_or(DistanceUnit::Kilometers)
+}
+
+/// Build a channel_index -> Vec<subscriber node_index> lookup from the simulation config.
 fn build_channel_subscribers(sim: &config::ast::Simulation) -> Vec<Vec<usize>> {
     let mut ch_names: Vec<_> = sim.channels.keys().cloned().collect();
     ch_names.sort();

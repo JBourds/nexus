@@ -83,8 +83,8 @@ impl GridView {
         }
     }
 
-    /// Draw the grid lines on the given canvas rect.
-    pub fn draw(&self, ui: &mut Ui, canvas_rect: Rect) {
+    /// Draw the grid lines and axis labels on the given canvas rect.
+    pub fn draw(&self, ui: &mut Ui, canvas_rect: Rect, unit_label: &str) {
         let painter = ui.painter_at(canvas_rect);
 
         // Determine grid spacing based on zoom
@@ -102,6 +102,7 @@ impl GridView {
         let grid_color = Color32::from_gray(60);
         let axis_color = Color32::from_gray(120);
         let text_color = Color32::from_gray(160);
+        let label_color = Color32::from_gray(200);
 
         for ix in x_start..=x_end {
             let wx = ix as f32 * base_spacing;
@@ -143,6 +144,30 @@ impl GridView {
                 );
             }
         }
+
+        // Axis labels in the bottom-right corner
+        if !unit_label.is_empty() {
+            let margin = 8.0;
+            let font = egui::FontId::proportional(12.0);
+            // X-axis label
+            painter.text(
+                Pos2::new(canvas_rect.right() - margin, canvas_rect.bottom() - margin),
+                egui::Align2::RIGHT_BOTTOM,
+                format!("X ({unit_label})"),
+                font.clone(),
+                label_color,
+            );
+            // Y-axis label
+            painter.text(
+                Pos2::new(canvas_rect.left() + margin, canvas_rect.top() + margin),
+                egui::Align2::LEFT_TOP,
+                format!("Y ({unit_label})"),
+                font,
+                label_color,
+            );
+        }
+    }
+
     }
 }
 

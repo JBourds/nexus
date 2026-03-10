@@ -1,3 +1,4 @@
+use config::ast::DistanceUnit;
 use egui::{Pos2, Rect, Sense, Ui};
 
 use crate::render;
@@ -12,7 +13,9 @@ pub fn show_grid_panel(
     nodes: &[NodeState],
     selected_node: &Option<String>,
     arrows: &[ArrowAnimation],
+    distance_unit: DistanceUnit,
 ) -> (Option<String>, Option<String>) {
+    let unit_label = distance_unit_abbrev(distance_unit);
     let available = ui.available_size();
     let (canvas_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
 
@@ -34,7 +37,7 @@ pub fn show_grid_panel(
     grid.handle_input(&response, drag_started_on_node);
 
     // Draw grid
-    grid.draw(ui, canvas_rect);
+    grid.draw(ui, canvas_rect, unit_label);
 
     // Draw nodes (rendering only)
     for node in nodes {
@@ -94,4 +97,13 @@ fn hit_test_node(
         }
     }
     None
+}
+
+fn distance_unit_abbrev(unit: DistanceUnit) -> &'static str {
+    match unit {
+        DistanceUnit::Millimeters => "mm",
+        DistanceUnit::Centimeters => "cm",
+        DistanceUnit::Meters => "m",
+        DistanceUnit::Kilometers => "km",
+    }
 }
