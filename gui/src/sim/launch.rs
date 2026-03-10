@@ -7,7 +7,6 @@ use std::time::SystemTime;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossbeam_channel::Sender;
-use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, filter, fmt};
 
@@ -270,16 +269,10 @@ fn make_fs_channels(
             .collect::<HashSet<&ast::ChannelHandle>>()
             .into_iter()
         {
-            let file_cmd = match (
+            let mode = ChannelMode::from_permissions(
                 protocol.subscribers.contains(channel),
                 protocol.publishers.contains(channel),
-            ) {
-                (true, true) => O_RDWR,
-                (true, _) => O_RDONLY,
-                (_, true) => O_WRONLY,
-                _ => unreachable!(),
-            };
-            let mode = ChannelMode::try_from(file_cmd)?;
+            );
 
             channels.push(NexusChannel {
                 pid,

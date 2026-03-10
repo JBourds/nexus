@@ -1,7 +1,6 @@
 use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
 use kernel::{self, Kernel, sources::Source};
-use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
@@ -338,18 +337,10 @@ fn make_fs_channels(
             .into_iter()
         {
             let mode = match run_cmd {
-                RunCmd::Simulate { .. } => {
-                    let file_cmd = match (
-                        protocol.subscribers.contains(channel),
-                        protocol.publishers.contains(channel),
-                    ) {
-                        (true, true) => O_RDWR,
-                        (true, _) => O_RDONLY,
-                        (_, true) => O_WRONLY,
-                        _ => unreachable!(),
-                    };
-                    ChannelMode::try_from(file_cmd)?
-                }
+                RunCmd::Simulate { .. } => ChannelMode::from_permissions(
+                    protocol.subscribers.contains(channel),
+                    protocol.publishers.contains(channel),
+                ),
                 RunCmd::Replay { .. } => ChannelMode::ReplayWrites,
                 RunCmd::Fuzz => ChannelMode::FuzzWrites,
                 _ => unreachable!(),

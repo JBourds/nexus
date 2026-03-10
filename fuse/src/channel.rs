@@ -29,6 +29,18 @@ pub struct NexusChannel {
     pub max_msg_size: NonZeroUsize,
 }
 
+impl ChannelMode {
+    /// Determine channel mode from subscriber/publisher permissions.
+    pub fn from_permissions(can_read: bool, can_write: bool) -> Self {
+        match (can_read, can_write) {
+            (true, true) => Self::ReadWrite,
+            (true, false) => Self::ReadOnly,
+            (false, true) => Self::WriteOnly,
+            (false, false) => Self::ReadOnly, // default to read-only
+        }
+    }
+}
+
 impl TryFrom<i32> for ChannelMode {
     type Error = ChannelError;
 
