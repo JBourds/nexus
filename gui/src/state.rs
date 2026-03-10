@@ -1,4 +1,6 @@
+use anyhow::{Context, Result};
 use std::collections::HashSet;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicU64;
 
@@ -31,6 +33,25 @@ pub struct ConfigEditorState {
     pub add_item_buf: String,
     /// When true, auto-fit the grid viewport on next frame.
     pub needs_fit: bool,
+}
+
+impl ConfigEditorState {
+    pub fn new(path: PathBuf) -> Result<Self> {
+        let sim = config::parse(path.clone())
+            .or_else(|_| config::deserialize_config(&path))
+            .with_context(|| format!("Failed to parse config at path: {path:#?}"))?;
+        Ok(Self {
+            sim,
+            file_path: Some(path),
+            grid: GridView::default(),
+            selected_node: None,
+            selected_channel: None,
+            validation_error: None,
+            dirty: false,
+            add_item_buf: String::new(),
+            needs_fit: true,
+        })
+    }
 }
 
 /// State for a live simulation.
