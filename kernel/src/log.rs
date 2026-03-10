@@ -1,6 +1,6 @@
 use bincode::{Decode, Encode, config, encode_into_std_write};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -331,8 +331,12 @@ impl<S: Subscriber> Layer<S> for BinaryLogLayer {
             _ => return,
         };
         let cfg = config::standard();
-        let mut file = lock.lock().unwrap();
-        encode_into_std_write(record, &mut *file, cfg).unwrap();
-        file.flush().unwrap();
+        let Ok(mut file) = lock.lock() else {
+            eprintln!("[nexus] BinaryLogLayer: mutex poisoned, dropping log record");
+            return;
+        };
+        if let Err(e) = encode_into_std_write(record, &mut *file, cfg) {
+            eprintln!("[nexus] BinaryLogLayer: encode error: {e}");
+        }
     }
 }
