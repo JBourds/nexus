@@ -1,6 +1,7 @@
 # Semtech SX1262 LoRa transceiver at 915 MHz
 #
-# Source: Semtech SX1261/2 datasheet (DS_SX1261-2_V2.1)
+# Source: Semtech SX1261/2 datasheet (DS_SX1261-2_V2.1), Table 11-2
+# Ref:    https://semtech.my.salesforce.com/sfc/p/#E0000000JelG/a/RQ000008n3pp/qXjWn19TZmb.1MgqPZ8Vrc5V7U.M_lOAIoTZHcEAeTI
 # - Next-gen LoRa transceiver, lower power than SX1276
 # - Max TX power: +22 dBm
 # - Receiver sensitivity: -148 dBm @ SF12/BW125kHz

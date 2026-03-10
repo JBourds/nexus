@@ -1,9 +1,12 @@
 # Cat-5e Copper Ethernet
 #
-# Source: TIA/EIA-568-B.2 specification
+# Source: TIA/EIA-568-B.2 specification; Belden Cat-5e cable specifications
+# Ref:    https://studylib.net/doc/27182329/tia-eia-568-b.2
+#
 # - Data rate: 1 Gbps (1000BASE-T)
 # - Max segment length: 100 m
-# - RLGC values approximate for Cat-5e at 100 MHz
+# - RLGC values approximate for Cat-5e at 100 MHz:
+#   R ≈ 188 mΩ/m, L ≈ 525 nH/m, C ≈ 52 pF/m, G ≈ 1 nS/m
 #
 # Assumptions:
 # - Full-duplex operation
@@ -17,7 +20,7 @@ medium.tx_min_dbm = -10.0
 medium.tx_max_dbm = 0.0
 medium.r = 0.188
 medium.l = 0.000000525
-medium.c = 0.0000000000052
+medium.c = 0.000000000052
 medium.g = 0.000000001
 medium.f = 100000000.0
 packet_loss = "0"

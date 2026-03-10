@@ -1,11 +1,14 @@
 # Raspberry Pi Pico (RP2040)
 #
-# Source: RP2040 Datasheet (Raspberry Pi Ltd)
+# Source: RP2040 Datasheet (Raspberry Pi Ltd), Section 5.5 "Power Consumption"
+# Ref:    https://datasheets.raspberrypi.com/rp2040/rp2040-datasheet.pdf
+#
 # - Dual-core ARM Cortex-M0+ @ 133 MHz
 # - 264 KB SRAM
-# - Active: ~24 mA @ 3.3V typical (both cores)
-# - Dormant: ~0.18 mA
-# - Sleep: ~1.3 mA
+# - Operating voltage: 3.3V
+# - Active: ~24 mA @ 3.3V → ~79 mW
+# - Sleep: ~1.3 mA @ 3.3V → ~4.3 mW
+# - Dormant: ~0.18 mA @ 3.3V → ~594 uW
 
 [profiles.rpi_pico]
 
@@ -16,9 +19,9 @@ ram = 264
 ram_units = "kb"
 
 [profiles.rpi_pico.power_states]
-dormant = { rate = 180, unit = "uw", time = "s" }
-sleep   = { rate = 1,   unit = "mw", time = "s" }
-active  = { rate = 80,  unit = "mw", time = "s" }
+dormant = { rate = 594, unit = "uw", time = "s" }
+sleep   = { rate = 4,   unit = "mw", time = "s" }
+active  = { rate = 79,  unit = "mw", time = "s" }
 
 [profiles.rpi_pico.power_sinks]
 mcu = { rate = 10, unit = "mw", time = "s" }

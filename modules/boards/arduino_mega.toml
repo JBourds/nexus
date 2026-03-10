@@ -1,15 +1,18 @@
 # Arduino Mega 2560 (ATmega2560)
 #
-# Source: Atmel ATmega2560 datasheet (DS40002211A)
+# Source: Atmel ATmega2560 datasheet (DS40002211A), Table 35-1
+# Ref:    https://ww1.microchip.com/downloads/aemDocuments/documents/OTH/ProductDocuments/DataSheets/ATmega640-1280-1281-2560-2561-Datasheet-DS40002211A.pdf
+#
 # - 8-bit AVR @ 16 MHz
 # - 8 KB SRAM
-# - Active current: ~20 mA @ 5V, 16 MHz
-# - Idle mode: ~7 mA
-# - Power-down: ~5 uA
+# - Operating voltage: 5V
+# - Active current: ~20 mA @ 5V, 16 MHz → ~100 mW
+# - Idle mode: ~7 mA @ 5V → ~35 mW
+# - Power-down: ~5 uA @ 5V → ~25 uW
 #
 # Assumptions:
-# - Power states approximate datasheet typical values at 5V
-# - MCU baseline sink represents board regulator + LED draw (~15 mA)
+# - Power = current * 5V
+# - MCU baseline sink represents board regulator + LED draw (~15 mA → ~75 mW)
 
 [profiles.arduino_mega]
 
@@ -20,7 +23,7 @@ ram = 8
 ram_units = "kb"
 
 [profiles.arduino_mega.power_states]
-power_down = { rate = 5,   unit = "uw", time = "s" }
+power_down = { rate = 25,  unit = "uw", time = "s" }
 idle       = { rate = 35,  unit = "mw", time = "s" }
 active     = { rate = 100, unit = "mw", time = "s" }
 

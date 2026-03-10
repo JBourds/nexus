@@ -1,11 +1,15 @@
 # ESP32-S3 (Espressif ESP32-S3-WROOM-1)
 #
-# Source: ESP32-S3 Datasheet v1.4
+# Source: Espressif ESP32-S3 Datasheet v1.4, Table "Power Consumption"
+# Ref:    https://www.espressif.com/sites/default/files/documentation/esp32-s3_datasheet_en.pdf
+#
 # - Dual-core Xtensa LX7 @ 240 MHz
 # - 512 KB SRAM
-# - Active: ~100 mA typical @ 3.3V
-# - Light sleep: ~0.24 mA
-# - Deep sleep: ~7 uA
+# - Operating voltage: 3.3V
+# - Active: ~100 mA @ 3.3V = ~330 mW
+# - Light sleep: ~0.24 mA @ 3.3V = ~790 uW
+# - Deep sleep: ~7 uA @ 3.3V = ~23 uW
+# - Wi-Fi TX: ~200 mA @ 3.3V = ~660 mW
 
 [profiles.esp32_s3]
 
@@ -16,10 +20,10 @@ ram = 512
 ram_units = "kb"
 
 [profiles.esp32_s3.power_states]
-deep_sleep  = { rate = 7,    unit = "uw", time = "s" }
-light_sleep = { rate = 240,  unit = "uw", time = "s" }
-active      = { rate = 100,  unit = "mw", time = "s" }
-wifi_active = { rate = 200,  unit = "mw", time = "s" }
+deep_sleep  = { rate = 23,   unit = "uw", time = "s" }
+light_sleep = { rate = 790,  unit = "uw", time = "s" }
+active      = { rate = 330,  unit = "mw", time = "s" }
+wifi_active = { rate = 660,  unit = "mw", time = "s" }
 
 [profiles.esp32_s3.power_sinks]
-mcu = { rate = 25, unit = "mw", time = "s" }
+mcu = { rate = 83, unit = "mw", time = "s" }

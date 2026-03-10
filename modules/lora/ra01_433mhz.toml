@@ -1,6 +1,7 @@
 # AI-Thinker Ra-01 LoRa Module at 433 MHz
 #
-# Source: AI-Thinker Ra-01 datasheet (based on SX1278)
+# Source: AI-Thinker Ra-01 datasheet (based on SX1278/SX1276)
+# Ref:    https://semtech.my.salesforce.com/sfc/p/E0000000JelG/a/2R0000001OKs/Bs97dmPXeatnbdoJNVMIDaKDlQz8q1N_gxDcgqi7g2o
 # - Frequency: 433 MHz ISM band
 # - Max TX power: +20 dBm
 # - Receiver sensitivity: -139 dBm @ SF12/BW125kHz

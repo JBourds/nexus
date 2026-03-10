@@ -1,6 +1,7 @@
 # Raspberry Pi Zero W
 #
-# Source: Raspberry Pi Zero W documentation, BCM2835 datasheet
+# Source: Raspberry Pi Zero W documentation, BCM2835 ARM Peripherals datasheet
+# Ref:    https://datasheets.raspberrypi.com/rpizero/raspberry-pi-zero-w-reduced-schematics.pdf
 # - ARM1176JZF-S @ 1 GHz (single-core)
 # - 512 MB LPDDR2 SDRAM
 # - Active (no Wi-Fi): ~120 mA @ 5V (~600 mW)

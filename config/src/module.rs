@@ -641,6 +641,102 @@ mod tests {
         walk(stdlib);
     }
 
+    /// Verify that stdlib board modules have correct power values (V * I, not raw current).
+    #[test]
+    fn stdlib_board_power_values_are_watts_not_amps() {
+        let stdlib = Path::new(STDLIB_DIR);
+        if !stdlib.is_dir() {
+            return;
+        }
+
+        // Helper: parse a board module and return its profile's power_states map.
+        let load_profile = |file: &str, profile_name: &str| -> HashMap<String, parse::PowerRate> {
+            let path = stdlib.join(file);
+            let text = fs::read_to_string(&path)
+                .unwrap_or_else(|e| panic!("failed to read {}: {e}", path.display()));
+            let module: parse::ModuleFile = toml::from_str(&text)
+                .unwrap_or_else(|e| panic!("failed to parse {}: {e}", path.display()));
+            module
+                .profiles
+                .unwrap_or_default()
+                .remove(profile_name)
+                .unwrap_or_else(|| panic!("no profile '{profile_name}' in {file}"))
+                .power_states
+                .unwrap_or_default()
+        };
+
+        // ESP32 DevKit: 3.3V board. Active = 100 mA * 3.3V = 330 mW.
+        let esp32 = load_profile("boards/esp32_devkit.toml", "esp32");
+        assert_eq!(esp32["active"].rate, 330, "esp32 active should be 330 mW");
+        assert_eq!(esp32["deep_sleep"].rate, 33, "esp32 deep_sleep should be 33 uW");
+        assert_eq!(esp32["light_sleep"].rate, 2640, "esp32 light_sleep should be 2640 uW");
+
+        // ESP32-S3: 3.3V board. Active = 100 mA * 3.3V = 330 mW.
+        let esp32s3 = load_profile("boards/esp32_s3.toml", "esp32_s3");
+        assert_eq!(esp32s3["active"].rate, 330, "esp32_s3 active should be 330 mW");
+        assert_eq!(esp32s3["deep_sleep"].rate, 23, "esp32_s3 deep_sleep should be 23 uW");
+
+        // STM32F4: 3.3V board. Stop = 0.4 mA * 3.3V = 1320 uW.
+        let stm32 = load_profile("boards/stm32f4.toml", "stm32f4");
+        assert_eq!(stm32["stop"].rate, 1320, "stm32f4 stop should be 1320 uW");
+        assert_eq!(stm32["standby"].rate, 8, "stm32f4 standby should be 8 uW");
+
+        // RPi Pico: 3.3V board. Dormant = 0.18 mA * 3.3V = 594 uW.
+        let pico = load_profile("boards/rpi_pico.toml", "rpi_pico");
+        assert_eq!(pico["dormant"].rate, 594, "rpi_pico dormant should be 594 uW");
+        assert_eq!(pico["sleep"].rate, 4, "rpi_pico sleep should be 4 mW");
+
+        // Arduino Mega: 5V board. Power-down = 5 uA * 5V = 25 uW.
+        let mega = load_profile("boards/arduino_mega.toml", "arduino_mega");
+        assert_eq!(mega["power_down"].rate, 25, "arduino_mega power_down should be 25 uW");
+
+        // Arduino Uno: 5V board. Power-down = 1 uA * 5V = 5 uW.
+        let uno = load_profile("boards/arduino_uno.toml", "arduino_uno");
+        assert_eq!(uno["power_down"].rate, 5, "arduino_uno power_down should be 5 uW");
+    }
+
+    /// Verify that ethernet modules have correct RLGC capacitance (~50 pF/m, not 5 pF/m).
+    #[test]
+    fn stdlib_ethernet_capacitance_correct() {
+        let stdlib = Path::new(STDLIB_DIR);
+        if !stdlib.is_dir() {
+            return;
+        }
+
+        let load_link = |file: &str, link_name: &str| -> parse::Link {
+            let path = stdlib.join(file);
+            let text = fs::read_to_string(&path).unwrap();
+            let mut module: parse::ModuleFile = toml::from_str(&text).unwrap();
+            module
+                .links
+                .remove(link_name)
+                .unwrap_or_else(|| panic!("no link '{link_name}' in {file}"))
+        };
+
+        let cat5e = load_link("wired/ethernet_cat5e.toml", "ethernet_cat5e");
+        let cat6 = load_link("wired/ethernet_cat6.toml", "ethernet_cat6");
+
+        // Cat-5e: ~52 pF/m = 5.2e-11 F/m
+        if let Some(parse::Medium::Wired { c, .. }) = &cat5e.medium {
+            assert!(
+                *c > 4e-11 && *c < 6e-11,
+                "Cat-5e capacitance should be ~52 pF/m (5.2e-11), got {c}"
+            );
+        } else {
+            panic!("expected wired medium for cat5e");
+        }
+
+        // Cat-6: ~50 pF/m = 5.0e-11 F/m
+        if let Some(parse::Medium::Wired { c, .. }) = &cat6.medium {
+            assert!(
+                *c > 4e-11 && *c < 6e-11,
+                "Cat-6 capacitance should be ~50 pF/m (5.0e-11), got {c}"
+            );
+        } else {
+            panic!("expected wired medium for cat6");
+        }
+    }
+
     #[test]
     fn multi_profile_first_wins_resources() {
         // When two profiles both set the same resource field, the first
