@@ -31,17 +31,17 @@ pub(crate) struct Route {
 impl RoutingTable {
     pub(super) fn new(channels: &ResolvedChannels) -> Self {
         let entries = (0..channels.channels.len())
-            .map(|index| ChannelRoutes::new(channels, index))
+            .map(|index| ChannelRoutes::new(channels, ChannelIdx(index)))
             .collect::<Vec<_>>();
         Self { entries }
     }
 }
 
 impl ChannelRoutes {
-    fn new(channels: &ResolvedChannels, index: usize) -> Self {
+    fn new(channels: &ResolvedChannels, index: ChannelHandle) -> Self {
         // For every channel, map every publishing node to the set of
         // precomputed routes it has with every receiving node
-        let publishers = &channels.channels[index].publishers;
+        let publishers = &channels.channels[index.0].publishers;
         let nodes = publishers
             .iter()
             .map(|src_node| (*src_node, Route::outgoing(channels, index, *src_node)))
@@ -54,8 +54,8 @@ impl Route {
     /// Determine all destination handles reachable by `src_node` on `src_ch`.
     /// Distance is intentionally not stored here; it is computed from live node
     /// positions at queue/deliver time to support mobile nodes.
-    fn outgoing(channels: &ResolvedChannels, src_ch: usize, src_node: usize) -> Vec<Self> {
-        let ch = &channels.channels[src_ch];
+    fn outgoing(channels: &ResolvedChannels, src_ch: ChannelHandle, src_node: NodeHandle) -> Vec<Self> {
+        let ch = &channels.channels[src_ch.0];
         channels
             .handles
             .iter()

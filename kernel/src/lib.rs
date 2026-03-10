@@ -142,7 +142,10 @@ impl Kernel {
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
         let (node_names, nodes) = unzip(sorted_nodes);
-        let node_handles = make_handles(node_names.clone());
+        let node_handles: std::collections::HashMap<String, NodeHandle> = make_handles(node_names.clone())
+            .into_iter()
+            .map(|(name, idx)| (name, NodeIdx(idx)))
+            .collect();
         let channels = ResolvedChannels::try_resolve(
             sim.channels,
             node_names,

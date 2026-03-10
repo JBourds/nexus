@@ -12,8 +12,14 @@ use crate::{errors::ConversionError, helpers::make_handles};
 use config::ast::{self, ChannelEnergy, ChannelType, Cmd, Link, Point, TimestepConfig};
 use tracing::instrument;
 
-pub type ChannelHandle = usize;
-pub type NodeHandle = usize;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeIdx(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChannelIdx(pub usize);
+
+pub type NodeHandle = NodeIdx;
+pub type ChannelHandle = ChannelIdx;
 
 #[derive(Debug)]
 pub struct Channel {
@@ -49,12 +55,13 @@ impl Channel {
             .chain(internal_channels.into_iter())
             .collect::<Vec<_>>();
         for (node_handle, node) in nodes.iter().enumerate() {
+            let node_handle = NodeIdx(node_handle);
             for protocol in node.protocols.iter() {
                 for channel_index in protocol.subscribers.iter().copied() {
-                    channels[channel_index].subscribers.insert(node_handle);
+                    channels[channel_index.0].subscribers.insert(node_handle);
                 }
                 for channel_index in protocol.publishers.iter().copied() {
-                    channels[channel_index].publishers.insert(node_handle);
+                    channels[channel_index.0].publishers.insert(node_handle);
                 }
             }
         }
@@ -357,7 +364,7 @@ impl Node {
         node: ast::Node,
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
-        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, NodeHandle>,
         ts_config: &TimestepConfig,
     ) -> Result<(Self, Vec<(ast::ChannelHandle, Channel)>), ConversionError> {
         // Compute energy state before moving any fields out of node.
@@ -378,7 +385,7 @@ impl Node {
                 .chain(
                     make_handles(node.internal_names)
                         .into_iter()
-                        .map(|(name, handle)| (name, handle + channel_handles.len())),
+                        .map(|(name, handle)| (name, ChannelIdx(handle + channel_handles.len()))),
                 )
                 .collect::<HashMap<ast::ChannelHandle, ChannelHandle>>()
         } else {
@@ -680,7 +687,7 @@ impl NodeProtocol {
         node: ast::NodeProtocol,
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
-        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, NodeHandle>,
     ) -> Result<Self, ConversionError> {
         let map_channel_handles =
             |handles: HashSet<ast::ChannelHandle>| -> Result<_, ConversionError> {

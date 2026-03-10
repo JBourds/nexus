@@ -3,7 +3,7 @@ mod tests {
     use crate::{
         resolver::ResolvedChannels,
         router::{RoutingServer, table::RoutingTable},
-        types::{self, EnergyState, PowerFlowState},
+        types::{self, ChannelIdx, EnergyState, NodeIdx, PowerFlowState},
     };
     use config::ast::{
         ChannelEnergy, ChannelType, Energy, EnergyUnit, Link, Position, TimeUnit, TimestepConfig,
@@ -42,9 +42,9 @@ mod tests {
     /// Build a node with protocols that have channel energy costs.
     fn make_node_with_protocol(
         energy: Option<EnergyState>,
-        subscribers: HashSet<usize>,
-        publishers: HashSet<usize>,
-        channel_energy: HashMap<usize, ChannelEnergy>,
+        subscribers: HashSet<ChannelIdx>,
+        publishers: HashSet<ChannelIdx>,
+        channel_energy: HashMap<ChannelIdx, ChannelEnergy>,
     ) -> types::Node {
         types::Node {
             energy,
@@ -69,7 +69,7 @@ mod tests {
     fn make_router(
         nodes: Vec<types::Node>,
         channels: Vec<types::Channel>,
-        handles: Vec<(u32, usize, usize)>,
+        handles: Vec<(u32, NodeIdx, ChannelIdx)>,
     ) -> (RoutingServer, mpsc::Receiver<fuse::KernelMessage>) {
         let (tx, rx) = mpsc::channel();
         let node_names: Vec<String> = (0..nodes.len()).map(|i| format!("node_{i}")).collect();
@@ -350,7 +350,7 @@ mod tests {
     #[test]
     fn test_tx_energy_deduction() {
         let energy = basic_energy(5000, 10_000);
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
 
         // Create a channel energy cost: 100 µJ per TX
         let channel_energy = HashMap::from([(
@@ -376,11 +376,11 @@ mod tests {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
             subscribers: HashSet::new(),
-            publishers: HashSet::from([0]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
 
         // Handle: PID=1, node=0, channel=0
-        let handles = vec![(1u32, 0usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
 
         // Simulate a write
@@ -400,7 +400,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_rx_energy_deduction() {
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
 
         // Publisher node (node 0) — no energy tracking needed for this test
         let pub_node = make_node_with_protocol(
@@ -432,20 +432,20 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([1]),
-            publishers: HashSet::from([0]),
+            subscribers: HashSet::from([NodeIdx(1)]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
 
         // Handles: (PID, node, channel)
         // handle 0: publisher (pid=1, node=0, ch=0)
         // handle 1: subscriber (pid=2, node=1, ch=0)
-        let handles = vec![(1u32, 0usize, 0usize), (2u32, 1usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         let initial_charge = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
 
         // Queue a message from node 0 to node 1 via channel 0
-        router.queue_message(0, 0, vec![0xAB]).unwrap();
+        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB]).unwrap();
 
         // Step to deliver the queued message (it becomes active at a future timestep)
         // The link default has zero delays, so it should arrive at current timestep
@@ -474,7 +474,7 @@ mod tests {
         let (tx, _rx) = mpsc::channel();
         let node_names = vec!["node_0".to_string()];
         let channel_names = vec!["ctl.energy_state".to_string()];
-        let handles = vec![(1u32, 0usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
             node_names,
@@ -538,7 +538,7 @@ mod tests {
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
         let (tx, _rx) = mpsc::channel();
-        let handles = vec![(1u32, 0usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
             node_names: vec!["node_0".to_string()],
@@ -790,7 +790,7 @@ mod tests {
     #[test]
     fn test_pid_remap_updates_handles_and_fuse_mapping() {
         let energy = basic_energy(5000, 10_000);
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
         let node = make_node_with_protocol(
             Some(energy),
             HashSet::from([ch_handle]),
@@ -800,11 +800,11 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([0]),
-            publishers: HashSet::from([0]),
+            subscribers: HashSet::from([NodeIdx(0)]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
         // Handle: PID=100, node=0, channel=0
-        let handles = vec![(100u32, 0usize, 0usize)];
+        let handles = vec![(100u32, NodeIdx(0), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
 
         // Verify initial state
@@ -827,7 +827,7 @@ mod tests {
     #[test]
     fn test_pid_remap_clears_mailboxes() {
         let energy = basic_energy(10_000, 10_000);
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
 
         // Publisher node 0, subscriber node 1
         let pub_node = make_node_with_protocol(
@@ -845,14 +845,14 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([1]),
-            publishers: HashSet::from([0]),
+            subscribers: HashSet::from([NodeIdx(1)]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
-        let handles = vec![(1u32, 0usize, 0usize), (2u32, 1usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Queue a message and deliver it
-        router.queue_message(0, 0, vec![0xAB]).unwrap();
+        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB]).unwrap();
         router.step().unwrap();
 
         // Subscriber mailbox should have the message
@@ -881,7 +881,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_pid_remap_unrelated_handles_untouched() {
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
         let node_a = make_node_with_protocol(
             Some(basic_energy(5000, 10_000)),
             HashSet::from([ch_handle]),
@@ -897,10 +897,10 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([0, 1]),
+            subscribers: HashSet::from([NodeIdx(0), NodeIdx(1)]),
             publishers: HashSet::new(),
         };
-        let handles = vec![(10u32, 0usize, 0usize), (20u32, 1usize, 0usize)];
+        let handles = vec![(10u32, NodeIdx(0), ChannelIdx(0)), (20u32, NodeIdx(1), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![node_a, node_b], vec![channel], handles);
 
         // Only remap PID 10 → 11
@@ -931,7 +931,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_pid_remap_batch() {
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
         let node = make_node_with_protocol(
             Some(basic_energy(5000, 10_000)),
             HashSet::from([ch_handle]),
@@ -941,11 +941,11 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([0]),
-            publishers: HashSet::from([0]),
+            subscribers: HashSet::from([NodeIdx(0)]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
         // Two handles with different PIDs for the same node (two protocols)
-        let handles = vec![(100u32, 0usize, 0usize), (101u32, 0usize, 0usize)];
+        let handles = vec![(100u32, NodeIdx(0), ChannelIdx(0)), (101u32, NodeIdx(0), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
 
         // Batch remap both
@@ -962,7 +962,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_pid_remap_then_deliver_message() {
-        let ch_handle: usize = 0;
+        let ch_handle: ChannelIdx = ChannelIdx(0);
 
         let pub_node = make_node_with_protocol(
             Some(basic_energy(10_000, 10_000)),
@@ -979,17 +979,17 @@ mod tests {
         let channel = types::Channel {
             link: Link::default(),
             r#type: ChannelType::new_internal(),
-            subscribers: HashSet::from([1]),
-            publishers: HashSet::from([0]),
+            subscribers: HashSet::from([NodeIdx(1)]),
+            publishers: HashSet::from([NodeIdx(0)]),
         };
-        let handles = vec![(1u32, 0usize, 0usize), (2u32, 1usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Remap subscriber's PID before any message delivery
         router.apply_pid_remaps(&[(2, 42)]);
 
         // Queue and deliver a message — should work with new PID in handle
-        router.queue_message(0, 0, vec![0xCD]).unwrap();
+        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xCD]).unwrap();
         router.step().unwrap();
 
         // Subscriber mailbox should have received the message
@@ -1099,7 +1099,7 @@ mod tests {
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
         let (tx, rx) = mpsc::channel();
-        let handles = vec![(1u32, 0usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
             node_names: vec!["node_0".to_string()],
@@ -1193,7 +1193,7 @@ mod tests {
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
         let (tx, _rx) = mpsc::channel();
-        let handles = vec![(1u32, 0usize, 0usize)];
+        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
             node_names: vec!["node_0".to_string()],

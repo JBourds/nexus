@@ -30,7 +30,7 @@ impl RoutingServer {
         msg: Vec<u8>,
     ) -> Result<(), RouterError> {
         let sz: u64 = msg.len().try_into().expect("usize fits u64");
-        let channel = &self.channels.channels[channel_handle];
+        let channel = &self.channels.channels[channel_handle.0];
 
         match channel.r#type {
             ChannelType::Shared { .. } => {
@@ -54,12 +54,12 @@ impl RoutingServer {
         msg: Vec<u8>,
         sz: u64,
     ) -> Result<(), RouterError> {
-        let channel = &self.channels.channels[channel_handle];
+        let channel = &self.channels.channels[channel_handle.0];
         let buf: Rc<[u8]> = msg.into();
         let timestep = self.timestep;
         let ts_config = self.ts_config;
 
-        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
+        for route in self.routes.entries[channel_handle.0].nodes[&src_node].iter() {
             let handle_ptr = route.handle_ptr;
             let dst_node = self.channels.handles[handle_ptr].1;
             if dst_node == src_node && !channel.r#type.delivers_to_self() {
@@ -67,12 +67,12 @@ impl RoutingServer {
             }
             debug!(
                 "Delivering from {} to {}",
-                &self.channels.node_names[src_node], &self.channels.node_names[dst_node]
+                &self.channels.node_names[src_node.0], &self.channels.node_names[dst_node.0]
             );
 
             let (distance, distance_unit) = Position::distance(
-                &self.channels.nodes[src_node].position,
-                &self.channels.nodes[dst_node].position,
+                &self.channels.nodes[src_node.0].position,
+                &self.channels.nodes[dst_node.0].position,
             );
             let (becomes_active_at, expiration) =
                 Self::message_timesteps(channel, sz, ts_config, timestep, distance, distance_unit);
@@ -102,19 +102,19 @@ impl RoutingServer {
         msg: Vec<u8>,
         sz: u64,
     ) -> Result<(), RouterError> {
-        let channel = &self.channels.channels[channel_handle];
+        let channel = &self.channels.channels[channel_handle.0];
         let timestep = self.timestep;
         let ts_config = self.ts_config;
 
-        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
+        for route in self.routes.entries[channel_handle.0].nodes[&src_node].iter() {
             let handle_ptr = route.handle_ptr;
             let dst_node = self.channels.handles[handle_ptr].1;
             if !(dst_node != src_node || channel.r#type.delivers_to_self()) {
                 continue;
             }
             let (distance, distance_unit) = Position::distance(
-                &self.channels.nodes[src_node].position,
-                &self.channels.nodes[dst_node].position,
+                &self.channels.nodes[src_node.0].position,
+                &self.channels.nodes[dst_node.0].position,
             );
             if let Some(buf) = Self::send_through_channel(
                 channel,
@@ -151,7 +151,7 @@ impl RoutingServer {
 
     pub fn deliver_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (_, _, channel_handle) = self.channels.handles[index];
-        let channel = &mut self.channels.channels[channel_handle];
+        let channel = &mut self.channels.channels[channel_handle.0];
         match &channel.r#type {
             ChannelType::Shared { .. } => self.deliver_shared_msg(index),
             ChannelType::Exclusive { .. } => self.deliver_exclusive_msg(index),
@@ -160,9 +160,9 @@ impl RoutingServer {
 
     fn deliver_shared_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
-        let channel = &self.channels.channels[channel_handle];
-        let channel_name = &self.channels.channel_names[channel_handle];
-        let node_name = &self.channels.node_names[node_handle];
+        let channel = &self.channels.channels[channel_handle.0];
+        let channel_name = &self.channels.channel_names[channel_handle.0];
+        let node_name = &self.channels.node_names[node_handle.0];
         let timestep = self.timestep;
 
         let mailbox = &mut self.mailboxes[index];
@@ -179,8 +179,8 @@ impl RoutingServer {
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.pop_front().unwrap();
                 let (distance, unit) = Position::distance(
-                    &self.channels.nodes[msg.src].position,
-                    &self.channels.nodes[node_handle].position,
+                    &self.channels.nodes[msg.src.0].position,
+                    &self.channels.nodes[node_handle.0].position,
                 );
 
                 if let Some(buf) = Self::send_through_channel(
@@ -217,8 +217,8 @@ impl RoutingServer {
 
                 let filtered = mailbox.iter().filter_map(|msg| {
                     let (distance, unit) = Position::distance(
-                        &self.channels.nodes[msg.src].position,
-                        &self.channels.nodes[node_handle].position,
+                        &self.channels.nodes[msg.src.0].position,
+                        &self.channels.nodes[node_handle.0].position,
                     );
                     Self::send_through_channel(
                         channel,
@@ -239,8 +239,8 @@ impl RoutingServer {
                     v
                 });
                 event!(
-                    target: "rx", Level::INFO, timestep, channel = channel_handle,
-                    node = node_handle, tx = false, data = buf.as_slice()
+                    target: "rx", Level::INFO, timestep, channel = channel_handle.0,
+                    node = node_handle.0, tx = false, data = buf.as_slice()
                 );
                 let msg = fuse::Message {
                     id: (pid, node_name.clone()),
@@ -267,14 +267,14 @@ impl RoutingServer {
                 event!(
                     target: "drop", Level::WARN,
                     timestep = self.timestep,
-                    channel = channel_handle,
-                    node = node_handle,
+                    channel = channel_handle.0,
+                    node = node_handle.0,
                     reason = "ttl_expired"
                 );
                 return Ok(false);
             }
-            let node_name = &self.channels.node_names[node_handle];
-            let channel_name = &self.channels.channel_names[channel_handle];
+            let node_name = &self.channels.node_names[node_handle.0];
+            let channel_name = &self.channels.channel_names[channel_handle.0];
             info!(
                 "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
                 format!("{}.{}.{}", node_name, pid, channel_name),
@@ -283,12 +283,12 @@ impl RoutingServer {
                 msg.expiration,
             );
             let msg = fuse::Message {
-                id: (pid, self.channels.node_names[node_handle].clone()),
+                id: (pid, self.channels.node_names[node_handle.0].clone()),
                 data: msg.buf.to_vec(),
             };
             event!(
-                target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle,
-                node = node_handle, tx = false, data = msg.data.as_slice()
+                target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle.0,
+                node = node_handle.0, tx = false, data = msg.data.as_slice()
             );
 
             self.tx

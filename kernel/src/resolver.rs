@@ -6,7 +6,7 @@ use fuse::{PID, fs::CONTROL_FILES};
 use crate::{
     errors::{ConversionError, KernelError},
     helpers::{make_handles, unzip},
-    types::{self, Channel, ChannelHandle, Node, NodeHandle},
+    types::{self, Channel, ChannelHandle, ChannelIdx, Node, NodeHandle, NodeIdx},
 };
 
 /// Struct which resolves all strings within AST structs to integers.
@@ -28,7 +28,7 @@ impl ResolvedChannels {
         channels: HashMap<String, config::ast::Channel>,
         node_names: Vec<String>,
         nodes: Vec<config::ast::Node>,
-        node_handles: &HashMap<String, usize>,
+        node_handles: &HashMap<String, NodeHandle>,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ProtocolHandle)>,
         ts_config: &ast::TimestepConfig,
     ) -> Result<Self, KernelError> {
@@ -36,16 +36,20 @@ impl ResolvedChannels {
         // Inject control files here so that FUSE mappings get made for them too
         let control_files = CONTROL_FILES.into_iter().map(|(name, _)| name.to_string());
         channel_names.extend(control_files);
-        let channel_handles = make_handles(channel_names.clone());
+        let channel_handles: HashMap<_, ChannelHandle> = make_handles(channel_names.clone())
+            .into_iter()
+            .map(|(name, idx)| (name, ChannelIdx(idx)))
+            .collect();
 
         // Validate nodes so they all use indices rather than strings
         let mut new_nodes = vec![];
         // Internal channels created with ideal links
         let mut internal_channels = vec![];
         // Mapping from a node's string name and the channel name to index
-        let mut internal_node_channel_handles = HashMap::new();
+        let mut internal_node_channel_handles: HashMap<(String, String), ChannelHandle> = HashMap::new();
 
         for (handle, (node_name, node)) in node_names.iter().zip(nodes.into_iter()).enumerate() {
+            let handle = NodeIdx(handle);
             // Validate each node and convert to use indices rather than strings
             // Get all (name, object) pairs for internal channels
             let (new_node, new_internals) =
@@ -65,10 +69,10 @@ impl ResolvedChannels {
 
             // Update record mapping (node name, channel name) pairs to vector
             // index where its info can be found
-            for (handle, internal_name) in
+            for (idx, internal_name) in
                 (channel_names.len() - 1..).zip(new_internal_names.into_iter())
             {
-                internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
+                internal_node_channel_handles.insert((node_name.clone(), internal_name), ChannelIdx(idx));
             }
         }
 
@@ -113,7 +117,7 @@ impl ResolvedChannels {
         self.handles
             .iter()
             .enumerate()
-            .map(|(index, (pid, _, channel))| ((*pid, self.channel_names[*channel].clone()), index))
+            .map(|(index, (pid, _, channel))| ((*pid, self.channel_names[channel.0].clone()), index))
             .collect()
     }
 }

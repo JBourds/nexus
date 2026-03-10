@@ -8,16 +8,15 @@ use tracing::field::Visit;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::types::{ChannelHandle, NodeHandle};
-
 /// A message sent or received on a channel.
+/// Fields use raw `usize` for stable bincode serialization.
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct MessageRecord {
     pub timestep: u64,
     /// `true` = transmitted (TX), `false` = received (RX).
     pub tx: bool,
-    pub node: NodeHandle,
-    pub channel: ChannelHandle,
+    pub node: usize,
+    pub channel: usize,
     pub data: Vec<u8>,
 }
 
@@ -25,7 +24,7 @@ pub struct MessageRecord {
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct MovementRecord {
     pub timestep: u64,
-    pub node: NodeHandle,
+    pub node: usize,
     pub x: f64,
     pub y: f64,
     pub z: f64,
@@ -38,7 +37,7 @@ pub struct MovementRecord {
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct BatteryRecord {
     pub timestep: u64,
-    pub node: NodeHandle,
+    pub node: usize,
     pub charge_nj: u64,
 }
 
