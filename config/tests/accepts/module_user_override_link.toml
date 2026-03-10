@@ -1,0 +1,43 @@
+# Test: user defines same link name as module — user wins (with warning).
+
+use = ["lora/sx1276_915mhz"]
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
+
+# Override the module's lora_915 link with custom parameters.
+[links.lora_915]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 5.0
+medium.rx_min_dbm = -130.0
+medium.tx_min_dbm = -4.0
+medium.tx_max_dbm = 14.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 110) / 4))"
+
+[links.lora_915.delays]
+transmission.rate = 300
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora]
+link = "lora_915"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+[nodes.sensor]
+deployments = [{}]
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["main.py"]
+publishers = ["lora"]
+subscribers = ["lora"]

@@ -282,3 +282,360 @@ pub fn resolve_module_path(spec: &str, config_dir: Option<&Path>) -> Result<Path
     let base = config_dir.unwrap_or_else(|| Path::new("."));
     resolve_path(base, spec)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::num::NonZeroU64;
+
+    /// Create a temp dir with module files for testing.
+    fn setup_temp_modules(files: &[(&str, &str)]) -> tempfile::TempDir {
+        let dir = tempfile::tempdir().unwrap();
+        for (name, content) in files {
+            let path = dir.path().join(name);
+            if let Some(parent) = path.parent() {
+                fs::create_dir_all(parent).unwrap();
+            }
+            fs::write(path, content).unwrap();
+        }
+        dir
+    }
+
+    #[test]
+    fn resolve_stdlib_module() {
+        let path = resolve_path(Path::new("/tmp"), "lora/sx1276_915mhz").unwrap();
+        assert!(path.exists());
+        assert!(path.to_string_lossy().ends_with("sx1276_915mhz.toml"));
+    }
+
+    #[test]
+    fn resolve_relative_module() {
+        let dir = setup_temp_modules(&[("my_module.toml", "[links]\n")]);
+        let path = resolve_path(dir.path(), "./my_module").unwrap();
+        assert!(path.exists());
+    }
+
+    #[test]
+    fn resolve_not_found() {
+        let err = resolve_path(Path::new("/tmp"), "nonexistent/module").unwrap_err();
+        let msg = format!("{err}");
+        assert!(msg.contains("not found"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn resolve_appends_toml_extension() {
+        let path = resolve_path(Path::new("/tmp"), "boards/esp32_devkit").unwrap();
+        assert!(path.to_string_lossy().ends_with(".toml"));
+    }
+
+    #[test]
+    fn module_with_params_rejected() {
+        let dir = setup_temp_modules(&[(
+            "bad.toml",
+            "[params]\nseed = 42\n",
+        )]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./bad".to_string()]);
+        let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unknown field `params`"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn module_with_nodes_rejected() {
+        let dir = setup_temp_modules(&[(
+            "bad.toml",
+            "[nodes.x]\ndeployments = [{}]\n",
+        )]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./bad".to_string()]);
+        let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("unknown field `nodes`"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn circular_import_detected() {
+        let dir = setup_temp_modules(&[
+            ("a.toml", "use = [\"./b\"]\n"),
+            ("b.toml", "use = [\"./a\"]\n"),
+        ]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./a".to_string()]);
+        let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Circular module import"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn transitive_import() {
+        let dir = setup_temp_modules(&[
+            (
+                "a.toml",
+                "use = [\"./b\"]\n\n[links.link_a]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.3\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+            (
+                "b.toml",
+                "[links.link_b]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.5\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+        ]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./a".to_string()]);
+        resolve_and_merge(dir.path(), &mut sim).unwrap();
+        assert!(sim.links.contains_key("link_a"));
+        assert!(sim.links.contains_key("link_b"));
+    }
+
+    #[test]
+    fn duplicate_link_across_modules_rejected() {
+        let dir = setup_temp_modules(&[
+            (
+                "a.toml",
+                "[links.shared_name]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.3\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+            (
+                "b.toml",
+                "[links.shared_name]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.5\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+        ]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./a".to_string(), "./b".to_string()]);
+        let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Duplicate link"),
+            "unexpected error: {msg}"
+        );
+    }
+
+    #[test]
+    fn user_definition_overrides_module() {
+        let dir = setup_temp_modules(&[(
+            "m.toml",
+            "[links.mylink]\nmedium.type = \"wireless\"\n\
+             medium.wavelength_meters = 0.3\nmedium.gain_dbi = 2.0\n\
+             medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+             medium.tx_max_dbm = 20.0\n",
+        )]);
+        let mut sim = parse::Simulation::default();
+        sim.r#use = Some(vec!["./m".to_string()]);
+        // User also defines "mylink".
+        sim.links.insert("mylink".to_string(), parse::Link::default());
+        resolve_and_merge(dir.path(), &mut sim).unwrap();
+        // User's link should remain (it's the Default, not the module's wireless one).
+        assert!(sim.links["mylink"].medium.is_none());
+    }
+
+    #[test]
+    fn deduplication_by_path() {
+        // If same module is imported twice (directly and transitively), load only once.
+        let dir = setup_temp_modules(&[
+            (
+                "a.toml",
+                "use = [\"./common\"]\n\n[links.link_a]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.3\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+            (
+                "common.toml",
+                "[links.shared]\nmedium.type = \"wireless\"\n\
+                 medium.wavelength_meters = 0.5\nmedium.gain_dbi = 2.0\n\
+                 medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+                 medium.tx_max_dbm = 20.0\n",
+            ),
+        ]);
+        let mut sim = parse::Simulation::default();
+        // Both ./a (which uses ./common) and ./common directly.
+        sim.r#use = Some(vec!["./a".to_string(), "./common".to_string()]);
+        resolve_and_merge(dir.path(), &mut sim).unwrap();
+        assert!(sim.links.contains_key("link_a"));
+        assert!(sim.links.contains_key("shared"));
+    }
+
+    #[test]
+    fn profile_apply_resources() {
+        let profile = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(512),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &profile);
+        let res = node.resources.unwrap();
+        assert_eq!(res.clock_rate, NonZeroU64::new(240));
+        assert_eq!(res.ram, NonZeroU64::new(512));
+    }
+
+    #[test]
+    fn profile_resources_user_wins() {
+        let profile = parse::NodeProfile {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(240),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ram: NonZeroU64::new(512),
+                ram_units: Some(parse::Unit("kb".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        let mut node = parse::Node {
+            resources: Some(parse::Resources {
+                clock_rate: NonZeroU64::new(160),
+                clock_units: Some(parse::Unit("mhz".to_string())),
+                ..Default::default()
+            }),
+            ..Default::default()
+        };
+        apply_profile(&mut node, &profile);
+        let res = node.resources.unwrap();
+        // User's clock_rate wins.
+        assert_eq!(res.clock_rate, NonZeroU64::new(160));
+        // Profile's ram fills in.
+        assert_eq!(res.ram, NonZeroU64::new(512));
+    }
+
+    #[test]
+    fn profile_map_merge() {
+        let mut profile_states = HashMap::new();
+        profile_states.insert(
+            "active".to_string(),
+            parse::PowerRate {
+                rate: 100,
+                unit: parse::Unit("mw".to_string()),
+                time: parse::Unit("s".to_string()),
+            },
+        );
+        profile_states.insert(
+            "sleep".to_string(),
+            parse::PowerRate {
+                rate: 10,
+                unit: parse::Unit("uw".to_string()),
+                time: parse::Unit("s".to_string()),
+            },
+        );
+        let profile = parse::NodeProfile {
+            power_states: Some(profile_states),
+            ..Default::default()
+        };
+
+        let mut user_states = HashMap::new();
+        user_states.insert(
+            "active".to_string(),
+            parse::PowerRate {
+                rate: 200,
+                unit: parse::Unit("mw".to_string()),
+                time: parse::Unit("s".to_string()),
+            },
+        );
+        let mut node = parse::Node {
+            power_states: Some(user_states),
+            ..Default::default()
+        };
+        apply_profile(&mut node, &profile);
+
+        let states = node.power_states.unwrap();
+        // User's "active" wins.
+        assert_eq!(states["active"].rate, 200);
+        // Profile's "sleep" is added.
+        assert_eq!(states["sleep"].rate, 10);
+    }
+
+    #[test]
+    fn profile_no_overrides() {
+        let mut profile_sinks = HashMap::new();
+        profile_sinks.insert(
+            "mcu".to_string(),
+            parse::PowerFlowDef::Constant {
+                rate: 30,
+                unit: parse::Unit("mw".to_string()),
+                time: parse::Unit("s".to_string()),
+            },
+        );
+        let profile = parse::NodeProfile {
+            power_sinks: Some(profile_sinks),
+            ..Default::default()
+        };
+        let mut node = parse::Node::default();
+        apply_profile(&mut node, &profile);
+        assert!(node.power_sinks.is_some());
+        assert!(node.power_sinks.unwrap().contains_key("mcu"));
+    }
+
+    #[test]
+    fn nexus_module_path_env() {
+        let dir = setup_temp_modules(&[(
+            "custom/my_mod.toml",
+            "[links.custom_link]\nmedium.type = \"wireless\"\n\
+             medium.wavelength_meters = 0.3\nmedium.gain_dbi = 2.0\n\
+             medium.rx_min_dbm = -100.0\nmedium.tx_min_dbm = -4.0\n\
+             medium.tx_max_dbm = 20.0\n",
+        )]);
+
+        // Temporarily set NEXUS_MODULE_PATH.
+        unsafe { std::env::set_var("NEXUS_MODULE_PATH", dir.path().to_str().unwrap()) };
+
+        let path = resolve_path(Path::new("/tmp"), "custom/my_mod");
+        // Clean up env before asserting.
+        unsafe { std::env::remove_var("NEXUS_MODULE_PATH") };
+
+        let path = path.unwrap();
+        assert!(path.exists());
+        assert!(path.to_string_lossy().contains("my_mod.toml"));
+    }
+
+    #[test]
+    fn stdlib_modules_all_parse() {
+        // Verify every .toml file in the stdlib parses as a valid ModuleFile.
+        let stdlib = Path::new(STDLIB_DIR);
+        if !stdlib.is_dir() {
+            return; // skip if not present (e.g., CI without modules/)
+        }
+        fn walk(dir: &Path) {
+            for entry in fs::read_dir(dir).unwrap() {
+                let entry = entry.unwrap();
+                let path = entry.path();
+                if path.is_dir() {
+                    walk(&path);
+                } else if path.extension().is_some_and(|ext| ext == "toml") {
+                    let text = fs::read_to_string(&path).unwrap();
+                    let result: Result<parse::ModuleFile, _> = toml::from_str(&text);
+                    assert!(
+                        result.is_ok(),
+                        "Failed to parse stdlib module at {}: {:?}",
+                        path.display(),
+                        result.err()
+                    );
+                }
+            }
+        }
+        walk(stdlib);
+    }
+}

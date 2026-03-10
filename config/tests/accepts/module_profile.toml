@@ -1,0 +1,23 @@
+# Test: importing a board profile and applying it to a node.
+
+use = ["boards/esp32_devkit", "lora/sx1276_915mhz"]
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
+
+[nodes.sensor]
+profile = "esp32"
+deployments = [
+    { charge = { max = 1000, quantity = 1000, unit = "mwh" }, initial_state = "active" }
+]
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["main.py"]
+publishers = ["lora"]
+subscribers = ["lora"]
