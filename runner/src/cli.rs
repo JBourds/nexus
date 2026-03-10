@@ -77,6 +77,31 @@ pub enum RunCmd {
         logs: PathBuf,
     },
     Fuzz,
+    /// Manage and inspect reusable module files
+    Modules {
+        #[command(subcommand)]
+        action: ModulesCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum ModulesCmd {
+    /// List available modules (stdlib + NEXUS_MODULE_PATH)
+    List {
+        /// Filter by category/directory (e.g. "lora", "boards")
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Print module contents with descriptions
+    Show {
+        /// Module specifier (e.g. "lora/sx1276_915mhz")
+        module: String,
+    },
+    /// Verify all `use` imports resolve and no conflicts exist
+    Verify {
+        /// Path to nexus.toml configuration file
+        config: PathBuf,
+    },
 }
 
 impl Display for RunCmd {
@@ -86,6 +111,7 @@ impl Display for RunCmd {
             RunCmd::Replay { .. } => write!(f, "replay"),
             RunCmd::Logs { .. } => write!(f, "logs"),
             RunCmd::Fuzz => write!(f, "fuzz"),
+            RunCmd::Modules { .. } => write!(f, "modules"),
         }
     }
 }
