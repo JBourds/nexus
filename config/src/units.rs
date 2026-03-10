@@ -114,18 +114,18 @@ impl DecimalScaled for DistanceUnit {
 }
 
 impl EnergyUnit {
-    /// Convert `quantity` in this unit to nanojoules.
+    /// Convert `quantity` in this unit to nanojoules (saturating on overflow).
     pub fn to_nj(self, quantity: u64) -> u64 {
         match self {
             Self::NanoJoule => quantity,
-            Self::MicroJoule => quantity * 1_000,
-            Self::MilliJoule => quantity * 1_000_000,
-            Self::Joule => quantity * 1_000_000_000,
-            Self::KiloJoule => quantity * 1_000_000_000_000,
-            Self::MicroWattHour => quantity * 3_600,
-            Self::MilliWattHour => quantity * 3_600_000,
-            Self::WattHour => quantity * 3_600_000_000,
-            Self::KiloWattHour => quantity * 3_600_000_000_000,
+            Self::MicroJoule => quantity.saturating_mul(1_000),
+            Self::MilliJoule => quantity.saturating_mul(1_000_000),
+            Self::Joule => quantity.saturating_mul(1_000_000_000),
+            Self::KiloJoule => quantity.saturating_mul(1_000_000_000_000),
+            Self::MicroWattHour => quantity.saturating_mul(3_600),
+            Self::MilliWattHour => quantity.saturating_mul(3_600_000),
+            Self::WattHour => quantity.saturating_mul(3_600_000_000),
+            Self::KiloWattHour => quantity.saturating_mul(3_600_000_000_000),
         }
     }
 }
@@ -164,9 +164,9 @@ impl PowerRate {
     ///
     /// Formula: energy_nj = rate_nw × timestep_ns / time_ns
     pub fn nj_per_timestep(&self, timestep_ns: u64) -> u64 {
-        let rate_nw = self.rate as u128 * self.unit.to_nw_factor() as u128;
-        let time_ns = self.time.to_ns_factor() as u128;
-        (rate_nw * timestep_ns as u128 / time_ns) as u64
+        let rate_nw = self.rate.saturating_mul(self.unit.to_nw_factor());
+        let time_ns = self.time.to_ns_factor();
+        rate_nw.saturating_mul(timestep_ns) / time_ns
     }
 }
 
