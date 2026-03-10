@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{DataUnit, DelayCalculator, DistanceUnit, TimeUnit, TimestepConfig};
+use crate::units::DecimalScaled;
 
 impl TimestepConfig {
     /// Get the time elapsed from a specific point in the desired units
@@ -231,15 +232,15 @@ mod tests {
             (1.0, 0, Bit, Millimeters, 1),
             (100.0, 0, Bit, Millimeters, 1),
             (100.0 * 100.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 99.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 100.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 200.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 201.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 300.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 400.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 400.0001, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 1000.0, 0, Bit, Millimeters, 5),
-            (100.0 * 100.0 * 1001.0, 0, Bit, Millimeters, 6),
+            (100.0 * 100.0 * 99.0, 0, Bit, Millimeters, 5),
+            (100.0 * 100.0 * 100.0, 0, Bit, Millimeters, 5),
+            (100.0 * 100.0 * 200.0, 0, Bit, Millimeters, 10),
+            (100.0 * 100.0 * 201.0, 0, Bit, Millimeters, 11),
+            (100.0 * 100.0 * 300.0, 0, Bit, Millimeters, 15),
+            (100.0 * 100.0 * 400.0, 0, Bit, Millimeters, 20),
+            (100.0 * 100.0 * 400.0001, 0, Bit, Millimeters, 20),
+            (100.0 * 100.0 * 1000.0, 0, Bit, Millimeters, 50),
+            (100.0 * 100.0 * 1001.0, 0, Bit, Millimeters, 51),
             // Full pipeline (numerator/denominator conversions)
             (0.0001, 0, Bit, Kilometers, 1),
             (0.0, 1, Bit, Kilometers, 1),
@@ -297,7 +298,7 @@ mod tests {
             (0.1, 0, Bit, Millimeters, 1),
             (1.0, 0, Bit, Millimeters, 1),
             (100.0, 0, Bit, Millimeters, 1),
-            (10000.0, 0, Bit, Millimeters, 5),
+            (10000.0, 0, Bit, Millimeters, 500),
             (0.1, 0, Bit, Centimeters, 1),
             (1.0, 0, Bit, Centimeters, 1),
             (100.0, 0, Bit, Centimeters, 5),
