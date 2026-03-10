@@ -13,19 +13,19 @@ use super::widgets::{
 pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
     if let Some(name) = add_item_ui(ui, "+ Node:", buf) {
         sim.nodes.entry(name).or_insert_with(|| ast::Node {
-                    position: ast::Position::default(),
-                    charge: None,
-                    protocols: Default::default(),
-                    internal_names: Vec::new(),
-                    resources: ast::Resources::default(),
-                    power_states: HashMap::new(),
-                    power_sources: HashMap::new(),
-                    power_sinks: HashMap::new(),
-                    channel_energy: HashMap::new(),
-                    initial_state: None,
-                    restart_threshold: None,
-                    start: SystemTime::now(),
-                });
+            position: ast::Position::default(),
+            charge: None,
+            protocols: Default::default(),
+            internal_names: Vec::new(),
+            resources: ast::Resources::default(),
+            power_states: HashMap::new(),
+            power_sources: HashMap::new(),
+            power_sinks: HashMap::new(),
+            channel_energy: HashMap::new(),
+            initial_state: None,
+            restart_threshold: None,
+            start: SystemTime::now(),
+        });
     }
 
     let mut to_remove = Vec::new();
@@ -62,12 +62,7 @@ pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
     }
 }
 
-fn show_node(
-    ui: &mut Ui,
-    name: &str,
-    node: &mut ast::Node,
-    available_channels: &[String],
-) {
+fn show_node(ui: &mut Ui, name: &str, node: &mut ast::Node, available_channels: &[String]) {
     // --- Position ---
     ui.label("Position:");
     ui.horizontal(|ui| {
@@ -187,11 +182,17 @@ fn show_node(
             egui::ComboBox::from_id_salt(format!("node_init_state_{name}"))
                 .selected_text(&current)
                 .show_ui(ui, |ui| {
-                    if ui.selectable_label(node.initial_state.is_none(), "(none)").clicked() {
+                    if ui
+                        .selectable_label(node.initial_state.is_none(), "(none)")
+                        .clicked()
+                    {
                         node.initial_state = None;
                     }
                     for s in &state_names {
-                        if ui.selectable_label(node.initial_state.as_ref() == Some(s), s).clicked() {
+                        if ui
+                            .selectable_label(node.initial_state.as_ref() == Some(s), s)
+                            .clicked()
+                        {
                             node.initial_state = Some(s.clone());
                         }
                     }
@@ -202,7 +203,10 @@ fn show_node(
     // --- Restart Threshold ---
     ui.separator();
     let mut has_threshold = node.restart_threshold.is_some();
-    if ui.checkbox(&mut has_threshold, "Restart Threshold").changed() {
+    if ui
+        .checkbox(&mut has_threshold, "Restart Threshold")
+        .changed()
+    {
         node.restart_threshold = if has_threshold { Some(0.1) } else { None };
     }
     if let Some(threshold) = &mut node.restart_threshold {
@@ -275,11 +279,13 @@ fn show_power_flow_map(
         ui.text_edit_singleline(&mut add_buf);
         let enter = ui.input(|i| i.key_pressed(egui::Key::Enter));
         if (ui.button("Add").clicked() || enter) && !add_buf.is_empty() {
-            map.entry(add_buf.clone()).or_insert_with(|| PowerFlow::Constant(PowerRate {
-                rate: 0,
-                unit: Default::default(),
-                time: Default::default(),
-            }));
+            map.entry(add_buf.clone()).or_insert_with(|| {
+                PowerFlow::Constant(PowerRate {
+                    rate: 0,
+                    unit: Default::default(),
+                    time: Default::default(),
+                })
+            });
             add_buf.clear();
         }
     });
@@ -326,20 +332,20 @@ fn show_channel_energy(
             ui.label("+");
             let add_id = format!("chenergy_add_{node_name}");
             let selected_id = egui::Id::new(&add_id);
-            let mut selected: String =
-                ui.data(|d| d.get_temp(selected_id)).unwrap_or_default();
+            let mut selected: String = ui.data(|d| d.get_temp(selected_id)).unwrap_or_default();
             egui::ComboBox::from_id_salt(&add_id)
-                .selected_text(if selected.is_empty() { "Select channel" } else { &selected })
+                .selected_text(if selected.is_empty() {
+                    "Select channel"
+                } else {
+                    &selected
+                })
                 .show_ui(ui, |ui| {
                     for ch in &unset {
                         ui.selectable_value(&mut selected, ch.clone(), ch);
                     }
                 });
             if ui.button("Add").clicked() && !selected.is_empty() {
-                channel_energy.insert(
-                    selected.clone(),
-                    ChannelEnergy { tx: None, rx: None },
-                );
+                channel_energy.insert(selected.clone(), ChannelEnergy { tx: None, rx: None });
                 selected.clear();
             }
             ui.data_mut(|d| d.insert_temp(selected_id, selected));
@@ -363,8 +369,18 @@ fn show_channel_energy(
                     }
                 })
                 .body(|ui| {
-                    energy_cost_editor(ui, &format!("chenergy_tx_{node_name}_{ch_name}"), "TX cost", &mut ce.tx);
-                    energy_cost_editor(ui, &format!("chenergy_rx_{node_name}_{ch_name}"), "RX cost", &mut ce.rx);
+                    energy_cost_editor(
+                        ui,
+                        &format!("chenergy_tx_{node_name}_{ch_name}"),
+                        "TX cost",
+                        &mut ce.tx,
+                    );
+                    energy_cost_editor(
+                        ui,
+                        &format!("chenergy_rx_{node_name}_{ch_name}"),
+                        "RX cost",
+                        &mut ce.rx,
+                    );
                 });
         }
     }

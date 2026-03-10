@@ -68,8 +68,7 @@ impl RoutingServer {
                     energy.power_sinks.retain(|(n, _)| *n != name);
                 }
                 ["source", name, rate_str, unit_time] => {
-                    if let Some(nj_per_ts) =
-                        Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
+                    if let Some(nj_per_ts) = Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
                     {
                         let name = name.to_string();
                         energy.power_sources.retain(|(n, _)| *n != name);
@@ -79,8 +78,7 @@ impl RoutingServer {
                     }
                 }
                 ["sink", name, rate_str, unit_time] => {
-                    if let Some(nj_per_ts) =
-                        Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
+                    if let Some(nj_per_ts) = Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
                     {
                         let name = name.to_string();
                         energy.power_sinks.retain(|(n, _)| *n != name);

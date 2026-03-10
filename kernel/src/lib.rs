@@ -111,7 +111,17 @@ impl Kernel {
         abort: Option<Arc<AtomicBool>>,
         pause: Option<Arc<AtomicBool>>,
     ) -> Result<Self, KernelError> {
-        Self::new_with_all_flags(sim, runc, file_handles, rx, tx, pending_remaps, abort, pause, None)
+        Self::new_with_all_flags(
+            sim,
+            runc,
+            file_handles,
+            rx,
+            tx,
+            pending_remaps,
+            abort,
+            pause,
+            None,
+        )
     }
 
     /// Create the kernel instance with all optional flags including shared time dilation.
@@ -145,9 +155,8 @@ impl Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
-            time_dilation: time_dilation_override.unwrap_or_else(|| {
-                Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))
-            }),
+            time_dilation: time_dilation_override
+                .unwrap_or_else(|| Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))),
             channels,
             runc,
             rx,

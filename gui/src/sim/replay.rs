@@ -88,8 +88,7 @@ impl ReplayController {
             if cached_ts < ts {
                 // Apply only records in (cached_ts, ts]
                 let mut states = cached_states.clone();
-                let start_idx = match self.ts_ranges.binary_search_by_key(&cached_ts, |(t, _)| *t)
-                {
+                let start_idx = match self.ts_ranges.binary_search_by_key(&cached_ts, |(t, _)| *t) {
                     Ok(idx) => self.ts_ranges[idx].1.end,
                     Err(idx) => {
                         if idx == 0 {
@@ -145,7 +144,11 @@ fn apply_state_updates(states: &mut [NodeState], records: &[TraceRecord]) {
                 if let Some(state) = states.get_mut(*node as usize)
                     && let Some(max) = state.max_nj
                 {
-                    let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
+                    let ratio = if max == 0 {
+                        1.0
+                    } else {
+                        *energy_nj as f32 / max as f32
+                    };
                     state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
                     state.is_dead = *energy_nj == 0 && max > 0;
                 }

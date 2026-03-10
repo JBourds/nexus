@@ -8,9 +8,7 @@ use crate::ast::{
 /// into microseconds.
 pub fn parse_duration_to_us(s: &str) -> Result<u64> {
     let s = s.trim();
-    let num_end = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
+    let num_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let (num_str, unit_str) = s.split_at(num_end);
     let num: u64 = num_str
         .parse()

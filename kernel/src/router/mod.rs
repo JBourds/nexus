@@ -385,8 +385,7 @@ impl RoutingServer {
         self.timestep += 1;
 
         // Compute current simulation time in microseconds for piecewise flows
-        let timestep_ns =
-            self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
+        let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
         let current_time_us = self.timestep * timestep_ns / 1000;
 
         // Drain per-timestep energy for all nodes with batteries

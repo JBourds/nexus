@@ -113,14 +113,8 @@ fn handle_modules(action: &ModulesCmd) -> Result<()> {
     }
 }
 
-fn list_modules(
-    dir: &Path,
-    category: Option<&str>,
-    prefix: &str,
-) -> Result<()> {
-    let mut entries: Vec<_> = std::fs::read_dir(dir)?
-        .filter_map(|e| e.ok())
-        .collect();
+fn list_modules(dir: &Path, category: Option<&str>, prefix: &str) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
     entries.sort_by_key(|e| e.file_name());
 
     for entry in entries {
@@ -135,11 +129,10 @@ fn list_modules(
                 format!("{prefix}/{name_str}")
             };
             // If category filter is set, only recurse into matching dirs.
-            if let Some(cat) = category {
-                if !name_str.eq_ignore_ascii_case(cat) && !sub_prefix.starts_with(cat) {
+            if let Some(cat) = category
+                && !name_str.eq_ignore_ascii_case(cat) && !sub_prefix.starts_with(cat) {
                     continue;
                 }
-            }
             list_modules(&entry.path(), category, &sub_prefix)?;
         } else if ft.is_file() && name_str.ends_with(".toml") {
             let stem = name_str.trim_end_matches(".toml");

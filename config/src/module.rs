@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
+use std::collections::hash_map::Entry;
 use std::path::{Path, PathBuf};
 
 use anyhow::{Context, Result, bail};
@@ -24,10 +25,7 @@ struct ResolvedModules {
 }
 
 /// Resolve all modules referenced by `use_list` and merge them into `sim`.
-pub(crate) fn resolve_and_merge(
-    config_dir: &Path,
-    sim: &mut parse::Simulation,
-) -> Result<()> {
+pub(crate) fn resolve_and_merge(config_dir: &Path, sim: &mut parse::Simulation) -> Result<()> {
     let use_list = match sim.r#use.take() {
         Some(list) if !list.is_empty() => list,
         _ => return Ok(()),
@@ -76,13 +74,14 @@ fn resolve_recursive(
     let module_dir = path.parent().unwrap_or(base_dir);
     if let Some(ref uses) = module.r#use {
         for child_spec in uses {
-            resolve_recursive(module_dir, child_spec, visited, stack, result)
-                .with_context(|| {
+            resolve_recursive(module_dir, child_spec, visited, stack, result).with_context(
+                || {
                     format!(
                         "While loading transitive dependency \"{child_spec}\" from \"{}\"",
                         path.display()
                     )
-                })?;
+                },
+            )?;
         }
     }
 
@@ -187,32 +186,47 @@ fn resolve_path(base_dir: &Path, spec: &str) -> Result<PathBuf> {
 
 /// Merge resolved module definitions into the parse-level simulation.
 /// User definitions take precedence (with a warning).
-fn merge_into_simulation(
-    sim: &mut parse::Simulation,
-    modules: ResolvedModules,
-) -> Result<()> {
+fn merge_into_simulation(sim: &mut parse::Simulation, modules: ResolvedModules) -> Result<()> {
     for (name, (link, _origin)) in modules.links {
-        if sim.links.contains_key(&name) {
-            warn!("Link \"{name}\" in nexus.toml overrides module definition");
-        } else {
-            sim.links.insert(name, link);
+        match sim.links.entry(name) {
+            Entry::Occupied(e) => {
+                warn!(
+                    "Link \"{}\" in nexus.toml overrides module definition",
+                    e.key()
+                );
+            }
+            Entry::Vacant(e) => {
+                e.insert(link);
+            }
         }
     }
 
     for (name, (channel, _origin)) in modules.channels {
-        if sim.channels.contains_key(&name) {
-            warn!("Channel \"{name}\" in nexus.toml overrides module definition");
-        } else {
-            sim.channels.insert(name, channel);
+        match sim.channels.entry(name) {
+            Entry::Occupied(e) => {
+                warn!(
+                    "Channel \"{}\" in nexus.toml overrides module definition",
+                    e.key()
+                );
+            }
+            Entry::Vacant(e) => {
+                e.insert(channel);
+            }
         }
     }
 
     let profiles = sim.profiles.get_or_insert_with(HashMap::new);
     for (name, (profile, _origin)) in modules.profiles {
-        if profiles.contains_key(&name) {
-            warn!("Profile \"{name}\" in nexus.toml overrides module definition");
-        } else {
-            profiles.insert(name, profile);
+        match profiles.entry(name) {
+            Entry::Occupied(e) => {
+                warn!(
+                    "Profile \"{}\" in nexus.toml overrides module definition",
+                    e.key()
+                );
+            }
+            Entry::Vacant(e) => {
+                e.insert(profile);
+            }
         }
     }
 
@@ -331,10 +345,7 @@ mod tests {
 
     #[test]
     fn module_with_params_rejected() {
-        let dir = setup_temp_modules(&[(
-            "bad.toml",
-            "[params]\nseed = 42\n",
-        )]);
+        let dir = setup_temp_modules(&[("bad.toml", "[params]\nseed = 42\n")]);
         let mut sim = parse::Simulation::default();
         sim.r#use = Some(vec!["./bad".to_string()]);
         let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
@@ -347,10 +358,7 @@ mod tests {
 
     #[test]
     fn module_with_nodes_rejected() {
-        let dir = setup_temp_modules(&[(
-            "bad.toml",
-            "[nodes.x]\ndeployments = [{}]\n",
-        )]);
+        let dir = setup_temp_modules(&[("bad.toml", "[nodes.x]\ndeployments = [{}]\n")]);
         let mut sim = parse::Simulation::default();
         sim.r#use = Some(vec!["./bad".to_string()]);
         let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
@@ -424,10 +432,7 @@ mod tests {
         sim.r#use = Some(vec!["./a".to_string(), "./b".to_string()]);
         let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("Duplicate link"),
-            "unexpected error: {msg}"
-        );
+        assert!(msg.contains("Duplicate link"), "unexpected error: {msg}");
     }
 
     #[test]
@@ -442,7 +447,8 @@ mod tests {
         let mut sim = parse::Simulation::default();
         sim.r#use = Some(vec!["./m".to_string()]);
         // User also defines "mylink".
-        sim.links.insert("mylink".to_string(), parse::Link::default());
+        sim.links
+            .insert("mylink".to_string(), parse::Link::default());
         resolve_and_merge(dir.path(), &mut sim).unwrap();
         // User's link should remain (it's the Default, not the module's wireless one).
         assert!(sim.links["mylink"].medium.is_none());

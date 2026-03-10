@@ -66,9 +66,10 @@ pub fn optional_nonzero_u64(ui: &mut Ui, label: &str, val: &mut Option<NonZeroU6
             if ui
                 .add(egui::DragValue::new(&mut n).range(1..=u64::MAX))
                 .changed()
-                && let Some(nz) = NonZeroU64::new(n) {
-                    *v = nz;
-                }
+                && let Some(nz) = NonZeroU64::new(n)
+            {
+                *v = nz;
+            }
         }
     });
 }
@@ -89,9 +90,10 @@ pub fn optional_nonzero_usize(ui: &mut Ui, label: &str, val: &mut Option<NonZero
             if ui
                 .add(egui::DragValue::new(&mut n).range(1..=usize::MAX))
                 .changed()
-                && let Some(nz) = NonZeroUsize::new(n) {
-                    *v = nz;
-                }
+                && let Some(nz) = NonZeroUsize::new(n)
+            {
+                *v = nz;
+            }
         }
     });
 }
@@ -252,7 +254,11 @@ pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
     ui.horizontal(|ui| {
         ui.label("Mode:");
         egui::ComboBox::from_id_salt(format!("{id}_mode"))
-            .selected_text(if mode == 0 { "Constant" } else { "PiecewiseLinear" })
+            .selected_text(if mode == 0 {
+                "Constant"
+            } else {
+                "PiecewiseLinear"
+            })
             .show_ui(ui, |ui| {
                 if ui.selectable_value(&mut mode, 0, "Constant").changed() {
                     *flow = PowerFlow::Constant(PowerRate {
@@ -261,7 +267,10 @@ pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
                         time: Default::default(),
                     });
                 }
-                if ui.selectable_value(&mut mode, 1, "PiecewiseLinear").changed() {
+                if ui
+                    .selectable_value(&mut mode, 1, "PiecewiseLinear")
+                    .changed()
+                {
                     *flow = PowerFlow::PiecewiseLinear {
                         unit: Default::default(),
                         time: Default::default(),

@@ -67,8 +67,8 @@ impl GridView {
         let middle_drag = response.dragged_by(egui::PointerButton::Middle);
         let shift_drag = response.dragged_by(egui::PointerButton::Primary)
             && response.ctx.input(|i| i.modifiers.shift);
-        let primary_pan = response.dragged_by(egui::PointerButton::Primary)
-            && !drag_started_on_node;
+        let primary_pan =
+            response.dragged_by(egui::PointerButton::Primary) && !drag_started_on_node;
 
         if middle_drag || shift_drag || primary_pan {
             self.offset += response.drag_delta();

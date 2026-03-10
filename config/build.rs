@@ -4,8 +4,5 @@ fn main() {
         .parent()
         .unwrap()
         .join("modules");
-    println!(
-        "cargo:rustc-env=NEXUS_STDLIB_DIR={}",
-        modules_dir.display()
-    );
+    println!("cargo:rustc-env=NEXUS_STDLIB_DIR={}", modules_dir.display());
 }

@@ -38,27 +38,28 @@ pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
                         state.validation_error = validate_config(&state.sim);
                     }
                     if ui.button("Save").clicked()
-                        && let Some(ref path) = state.file_path {
-                            if let Err(e) = config::serialize_config(&state.sim, path) {
-                                state.validation_error = Some(format!("Save error: {e}"));
-                            } else {
-                                state.dirty = false;
-                                state.validation_error = None;
-                            }
+                        && let Some(ref path) = state.file_path
+                    {
+                        if let Err(e) = config::serialize_config(&state.sim, path) {
+                            state.validation_error = Some(format!("Save error: {e}"));
+                        } else {
+                            state.dirty = false;
+                            state.validation_error = None;
                         }
+                    }
                     if ui.button("Save As...").clicked()
                         && let Some(path) = rfd::FileDialog::new()
                             .add_filter("TOML", &["toml"])
                             .save_file()
-                        {
-                            if let Err(e) = config::serialize_config(&state.sim, &path) {
-                                state.validation_error = Some(format!("Save error: {e}"));
-                            } else {
-                                state.file_path = Some(path);
-                                state.dirty = false;
-                                state.validation_error = None;
-                            }
+                    {
+                        if let Err(e) = config::serialize_config(&state.sim, &path) {
+                            state.validation_error = Some(format!("Save error: {e}"));
+                        } else {
+                            state.file_path = Some(path);
+                            state.dirty = false;
+                            state.validation_error = None;
                         }
+                    }
                 });
 
                 if let Some(ref err) = state.validation_error {

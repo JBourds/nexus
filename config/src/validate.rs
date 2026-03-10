@@ -319,9 +319,7 @@ impl Simulation {
             let profile_names = std::mem::take(&mut node.profile);
             for profile_name in &profile_names {
                 let profile = profiles.get(profile_name).with_context(|| {
-                    format!(
-                        "Node \"{node_name}\" references unknown profile \"{profile_name}\""
-                    )
+                    format!("Node \"{node_name}\" references unknown profile \"{profile_name}\"")
                 })?;
                 crate::module::apply_profile(node, profile);
             }
@@ -794,10 +792,8 @@ impl PowerFlow {
     fn validate(def: parse::PowerFlowDef) -> Result<Self> {
         match def {
             parse::PowerFlowDef::Constant { rate, unit, time } => {
-                let unit =
-                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
-                let time =
-                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let unit = PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time = TimeUnit::validate(time).context("Failed to validate time unit")?;
                 Ok(Self::Constant(PowerRate { rate, unit, time }))
             }
             parse::PowerFlowDef::Scheduled {
@@ -810,10 +806,8 @@ impl PowerFlow {
                     schedule.len() >= 2,
                     "Piecewise linear schedule must have at least 2 breakpoints"
                 );
-                let unit =
-                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
-                let time =
-                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let unit = PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time = TimeUnit::validate(time).context("Failed to validate time unit")?;
                 let mut breakpoints = Vec::with_capacity(schedule.len());
                 for bp in schedule {
                     let time_us = parse_duration_to_us(&bp.at)
