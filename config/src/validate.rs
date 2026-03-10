@@ -17,143 +17,179 @@ use std::{
     num::NonZeroU64,
 };
 
-impl ClockUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "hertz" | "hz" => Self::Hertz,
-            "kilohertz" | "khz" => Self::Kilohertz,
-            "megahertz" | "mhz" => Self::Megahertz,
-            "gigahertz" | "ghz" => Self::Gigahertz,
-            s => {
-                bail!("Expected a clock unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+/// Validate a unit string by trying case-sensitive abbreviation first, then
+/// falling back to case-insensitive full-word matching. This avoids the
+/// previous inconsistency where different unit types used three different
+/// case-normalization strategies.
+trait ValidateUnit: Sized {
+    /// Match case-sensitive abbreviations (e.g., "mW" vs "MW").
+    /// Return `None` to fall through to case-insensitive matching.
+    fn from_abbrev(_s: &str) -> Option<Self> {
+        None
     }
+    /// Match fully lowercased name or abbreviation.
+    fn from_lowercase(s: &str) -> Option<Self>;
+    /// Human-readable unit kind for error messages.
+    fn unit_kind() -> &'static str;
+
+    fn validate(val: parse::Unit) -> Result<Self> {
+        if let Some(v) = Self::from_abbrev(&val.0) {
+            return Ok(v);
+        }
+        let lower = val.0.to_ascii_lowercase();
+        Self::from_lowercase(&lower)
+            .ok_or_else(|| anyhow::anyhow!("Expected a valid {} but found \"{}\"", Self::unit_kind(), val.0))
+    }
+}
+
+impl ValidateUnit for ClockUnit {
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "hertz" | "hz" => Some(Self::Hertz),
+            "kilohertz" | "khz" => Some(Self::Kilohertz),
+            "megahertz" | "mhz" => Some(Self::Megahertz),
+            "gigahertz" | "ghz" => Some(Self::Gigahertz),
+            _ => None,
+        }
+    }
+    fn unit_kind() -> &'static str { "clock unit" }
 }
 
 impl DataUnit {
-    fn validate_byte_aligned(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "bytes" | "byte" | "b" => Self::Byte,
-            "kilobytes" | "kilobyte" | "kb" => Self::Kilobyte,
-            "megabytes" | "megabyte" | "mb" => Self::Megabyte,
-            "gigabytes" | "gigabyte" | "gb" => Self::Gigabyte,
-            s => {
-                bail!("Expected a valid data unit aligned to bytes but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "bits" | "bit" | "b" => Self::Bit,
-            "kilobits" | "kilobit" | "kb" => Self::Kilobit,
-            "megabits" | "megabit" | "mb" => Self::Megabit,
-            "gigabits" | "gigabit" | "gb" => Self::Gigabit,
-            "bytes" | "byte" | "B" => Self::Byte,
-            "kilobytes" | "kilobyte" | "kB" => Self::Kilobyte,
-            "megabytes" | "megabyte" | "mB" => Self::Megabyte,
-            "gigabytes" | "gigabyte" | "gB" => Self::Gigabyte,
-            s => {
-                bail!("Expected a valid data unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+    fn validate_byte_aligned(val: parse::Unit) -> Result<Self> {
+        let lower = val.0.to_ascii_lowercase();
+        match lower.as_str() {
+            "bytes" | "byte" => Ok(Self::Byte),
+            "kilobytes" | "kilobyte" | "kb" => Ok(Self::Kilobyte),
+            "megabytes" | "megabyte" | "mb" => Ok(Self::Megabyte),
+            "gigabytes" | "gigabyte" | "gb" => Ok(Self::Gigabyte),
+            // Case-sensitive single-char: "B" = bytes
+            _ if val.0 == "B" => Ok(Self::Byte),
+            _ => bail!("Expected a valid byte-aligned data unit but found \"{}\"", val.0),
+        }
     }
 }
 
-impl EnergyUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "nanojoule" | "nanojoules" | "nj" => Self::NanoJoule,
-            "microjoule" | "microjoules" | "uj" => Self::MicroJoule,
-            "millijoule" | "millijoules" | "mj" => Self::MilliJoule,
-            "joule" | "joules" | "j" => Self::Joule,
-            "kilojoule" | "kilojoules" | "kj" => Self::KiloJoule,
-            "microwatthour" | "microwatthours" | "uwh" => Self::MicroWattHour,
-            "milliwatthour" | "milliwatthours" | "mwh" => Self::MilliWattHour,
-            "watthour" | "watthours" | "wh" => Self::WattHour,
-            "kilowatthour" | "kilowatthours" | "kwh" => Self::KiloWattHour,
-            s => {
-                bail!("Expected a valid energy unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+impl ValidateUnit for DataUnit {
+    fn from_abbrev(s: &str) -> Option<Self> {
+        // Case-sensitive abbreviations to distinguish bits from bytes:
+        // lowercase = bits, uppercase final = bytes
+        match s {
+            "b" => Some(Self::Bit),
+            "B" => Some(Self::Byte),
+            "kb" => Some(Self::Kilobit),
+            "kB" | "KB" => Some(Self::Kilobyte),
+            "mb" => Some(Self::Megabit),
+            "mB" | "MB" => Some(Self::Megabyte),
+            "gb" => Some(Self::Gigabit),
+            "gB" | "GB" => Some(Self::Gigabyte),
+            _ => None,
+        }
     }
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "bits" | "bit" => Some(Self::Bit),
+            "kilobits" | "kilobit" => Some(Self::Kilobit),
+            "megabits" | "megabit" => Some(Self::Megabit),
+            "gigabits" | "gigabit" => Some(Self::Gigabit),
+            "bytes" | "byte" => Some(Self::Byte),
+            "kilobytes" | "kilobyte" => Some(Self::Kilobyte),
+            "megabytes" | "megabyte" => Some(Self::Megabyte),
+            "gigabytes" | "gigabyte" => Some(Self::Gigabyte),
+            _ => None,
+        }
+    }
+    fn unit_kind() -> &'static str { "data unit" }
 }
 
-impl PowerUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0[1..].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "Nanowatt" | "nanowatt" | "nw" | "Nw" => Self::NanoWatt,
-            "Microwatt" | "microwatt" | "uw" | "Uw" => Self::MicroWatt,
-            "Milliwatt" | "milliwatt" | "mw" => Self::MilliWatt,
-            "Watt" | "watt" | "w" => Self::Watt,
-            "Kilowatt" | "kilowatt" | "Kw" | "kw" => Self::KiloWatt,
-            "Megawatt" | "megawatt" | "Mw" => Self::MegaWatt,
-            "Gigawatt" | "gigawatt" | "Gw" | "gw" => Self::GigaWatt,
-            s => {
-                bail!("Expected to find a valid power unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+impl ValidateUnit for EnergyUnit {
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "nanojoule" | "nanojoules" | "nj" => Some(Self::NanoJoule),
+            "microjoule" | "microjoules" | "uj" => Some(Self::MicroJoule),
+            "millijoule" | "millijoules" | "mj" => Some(Self::MilliJoule),
+            "joule" | "joules" | "j" => Some(Self::Joule),
+            "kilojoule" | "kilojoules" | "kj" => Some(Self::KiloJoule),
+            "microwatthour" | "microwatthours" | "uwh" => Some(Self::MicroWattHour),
+            "milliwatthour" | "milliwatthours" | "mwh" => Some(Self::MilliWattHour),
+            "watthour" | "watthours" | "wh" => Some(Self::WattHour),
+            "kilowatthour" | "kilowatthours" | "kwh" => Some(Self::KiloWattHour),
+            _ => None,
+        }
     }
+    fn unit_kind() -> &'static str { "energy unit" }
 }
 
-impl TimeUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "hours" | "h" => Self::Hours,
-            "minutes" | "m" => Self::Minutes,
-            "seconds" | "s" => Self::Seconds,
-            "milliseconds" | "ms" => Self::Milliseconds,
-            "microseconds" | "us" => Self::Microseconds,
-            "nanoseconds" | "ns" => Self::Nanoseconds,
-            s => {
-                bail!("Expected to find a valid time unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+impl ValidateUnit for PowerUnit {
+    fn from_abbrev(s: &str) -> Option<Self> {
+        // SI convention: case-sensitive prefix distinguishes milli- from Mega-
+        match s {
+            "nW" | "nw" => Some(Self::NanoWatt),
+            "uW" | "uw" => Some(Self::MicroWatt),
+            "mW" | "mw" => Some(Self::MilliWatt),
+            "W" | "w" => Some(Self::Watt),
+            "kW" | "kw" => Some(Self::KiloWatt),
+            "MW" => Some(Self::MegaWatt),
+            "GW" | "gw" => Some(Self::GigaWatt),
+            _ => None,
+        }
     }
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "nanowatt" | "nanowatts" => Some(Self::NanoWatt),
+            "microwatt" | "microwatts" => Some(Self::MicroWatt),
+            "milliwatt" | "milliwatts" => Some(Self::MilliWatt),
+            "watt" | "watts" => Some(Self::Watt),
+            "kilowatt" | "kilowatts" => Some(Self::KiloWatt),
+            "megawatt" | "megawatts" => Some(Self::MegaWatt),
+            "gigawatt" | "gigawatts" => Some(Self::GigaWatt),
+            _ => None,
+        }
+    }
+    fn unit_kind() -> &'static str { "power unit" }
 }
 
-impl DistanceUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "millimeters" | "mm" => Self::Millimeters,
-            "centimeters" | "cm" => Self::Centimeters,
-            "meters" | "m" => Self::Meters,
-            "kilometers" | "km" => Self::Kilometers,
-            s => {
-                bail!("Expected to find a valid distance unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
+impl ValidateUnit for TimeUnit {
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "hours" | "h" => Some(Self::Hours),
+            "minutes" | "m" => Some(Self::Minutes),
+            "seconds" | "s" => Some(Self::Seconds),
+            "milliseconds" | "ms" => Some(Self::Milliseconds),
+            "microseconds" | "us" => Some(Self::Microseconds),
+            "nanoseconds" | "ns" => Some(Self::Nanoseconds),
+            _ => None,
+        }
     }
+    fn unit_kind() -> &'static str { "time unit" }
+}
+
+impl ValidateUnit for DistanceUnit {
+    fn from_lowercase(s: &str) -> Option<Self> {
+        match s {
+            "millimeters" | "mm" => Some(Self::Millimeters),
+            "centimeters" | "cm" => Some(Self::Centimeters),
+            "meters" | "m" => Some(Self::Meters),
+            "kilometers" | "km" => Some(Self::Kilometers),
+            _ => None,
+        }
+    }
+    fn unit_kind() -> &'static str { "distance unit" }
+}
+
+/// Validate an optional field, returning the default on `None`.
+fn validate_optional<V, T: Default>(
+    val: Option<V>,
+    validator: fn(V) -> Result<T>,
+) -> Result<T> {
+    val.map(validator).unwrap_or(Ok(T::default()))
 }
 
 impl DataRate {
     fn validate(val: parse::Rate) -> Result<Self> {
-        let data = val
-            .data
-            .map(DataUnit::validate)
-            .unwrap_or(Ok(DataUnit::default()))
+        let data = validate_optional(val.data, DataUnit::validate)
             .context("Unable to validate rate's data unit")?;
-        let time = val
-            .time
-            .map(TimeUnit::validate)
-            .unwrap_or(Ok(TimeUnit::default()))
+        let time = validate_optional(val.time, TimeUnit::validate)
             .context("Unable to validate rate's time unit")?;
         let rate = val.rate.unwrap_or(i64::MAX as u64);
         Ok(Self { rate, data, time })
@@ -195,9 +231,7 @@ impl ChannelType {
                 ChannelKind::Exclusive { nbuffered },
             ),
         };
-        let unit = unit
-            .map(TimeUnit::validate)
-            .unwrap_or(Ok(TimeUnit::default()))
+        let unit = validate_optional(unit, TimeUnit::validate)
             .context("Failed to validate time unit when parsing channel type.")?;
         let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
         let read_own_writes = read_own_writes.unwrap_or_default();
@@ -403,15 +437,9 @@ impl Mem {
 
 impl Resources {
     fn validate(val: parse::Resources) -> Result<Self> {
-        let clock_units = val
-            .clock_units
-            .map(ClockUnit::validate)
-            .unwrap_or(Ok(ClockUnit::default()))
+        let clock_units = validate_optional(val.clock_units, ClockUnit::validate)
             .context("Failed to validate clock rate. Please provide in hz, khz, mhz, or ghz.")?;
-        let ram_units = val
-            .ram_units
-            .map(DataUnit::validate_byte_aligned)
-            .unwrap_or(Ok(DataUnit::default()))
+        let ram_units = validate_optional(val.ram_units, DataUnit::validate_byte_aligned)
             .context("Failed to validate ram units.")?;
         let cpu = Cpu::new(val.cores, val.clock_rate, clock_units);
         let mem = Mem::new(val.ram, ram_units);
@@ -424,10 +452,7 @@ impl TimestepConfig {
     pub(crate) const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
 
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
-        let unit = val
-            .unit
-            .map(TimeUnit::validate)
-            .unwrap_or(Ok(TimeUnit::default()))
+        let unit = validate_optional(val.unit, TimeUnit::validate)
             .context("Unable to validate time unit in timestep config")?;
         if matches!(unit, TimeUnit::Minutes | TimeUnit::Hours) {
             bail!("Simulation timestamp must be in seconds or smaller.");
@@ -445,6 +470,8 @@ impl TimestepConfig {
         let start = val
             .start
             .map(toml_datetime_to_system_time)
+            .transpose()
+            .context("Unable to validate start time in timestep config")?
             .unwrap_or(SystemTime::now());
         Ok(Self {
             length,
@@ -458,10 +485,7 @@ impl TimestepConfig {
 impl Params {
     fn validate(config_root: &PathBuf, val: parse::Params) -> Result<Self> {
         let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
-        let timestep = val
-            .timestep
-            .map(TimestepConfig::validate)
-            .unwrap_or(Ok(TimestepConfig::default()))
+        let timestep = validate_optional(val.timestep, TimestepConfig::validate)
             .context("Unable to validate timestep configuration in simulation config.")?;
         let time_dilation = val.time_dilation.unwrap_or(1.0);
         Ok(Self {
@@ -475,20 +499,11 @@ impl Params {
 
 impl Delays {
     fn validate(val: parse::Delays) -> Result<Self> {
-        let transmission = val
-            .transmission
-            .map(DataRate::validate)
-            .unwrap_or(Ok(DataRate::default()))
+        let transmission = validate_optional(val.transmission, DataRate::validate)
             .context("Unable to validate transmission delay rate.")?;
-        let processing = val
-            .processing
-            .map(DataRate::validate)
-            .unwrap_or(Ok(DataRate::default()))
+        let processing = validate_optional(val.processing, DataRate::validate)
             .context("Unable to validate processing delay rate.")?;
-        let propagation = val
-            .propagation
-            .map(DistanceTimeVar::validate)
-            .unwrap_or(Ok(DistanceTimeVar::default()))
+        let propagation = validate_optional(val.propagation, DistanceTimeVar::validate)
             .context("Unable to validate propagation delay rate.")?;
         Ok(Self {
             transmission,
@@ -659,9 +674,7 @@ impl Medium {
                 if tx_min_dbm > tx_max_dbm {
                     bail!("cannot have tx_min_dbm > tx_max_dbm [{tx_min_dbm}, {tx_max_dbm}]");
                 }
-                let shape = shape
-                    .map(SignalShape::validate)
-                    .unwrap_or(Ok(SignalShape::default()))
+                let shape = validate_optional(shape, SignalShape::validate)
                     .context("unable to validate signal shape in wireless link")?;
                 Ok(Self::Wireless {
                     shape,
@@ -743,10 +756,7 @@ impl Position {
             .orientation
             .map(Orientation::validate)
             .unwrap_or_default();
-        let unit = val
-            .unit
-            .map(DistanceUnit::validate)
-            .unwrap_or(Ok(DistanceUnit::default()))
+        let unit = validate_optional(val.unit, DistanceUnit::validate)
             .context("Unable to validate distance units for node position")?;
         Ok(Self {
             point,
@@ -855,10 +865,7 @@ impl Node {
         default_start: &SystemTime,
         channel_handles: &HashSet<ChannelHandle>,
     ) -> Result<Vec<Self>> {
-        let resources = val
-            .resources
-            .map(Resources::validate)
-            .unwrap_or(Ok(Resources::default()))
+        let resources = validate_optional(val.resources, Resources::validate)
             .context("Failed to validate node resource allocation.")?;
         // No duplicate internal names
         let mut internal_names = HashSet::new();
@@ -986,6 +993,8 @@ impl Node {
         {
             let start = start
                 .map(toml_datetime_to_system_time)
+                .transpose()
+                .context("Unable to validate deployment start time")?
                 .unwrap_or(*default_start);
 
             // Validate restart_threshold is in [0, 1]
@@ -1034,9 +1043,7 @@ impl Node {
                     (name, protocol)
                 })
                 .collect::<HashMap<_, _>>();
-            let position = position
-                .map(Position::validate)
-                .unwrap_or(Ok(Position::default()))
+            let position = validate_optional(position, Position::validate)
                 .context("Failed to validate node coordinates.")?;
             let charge = charge.map(Charge::validate).transpose()?;
 
@@ -1139,12 +1146,12 @@ impl NodeProtocol {
     }
 }
 
-fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> DateTime<Utc> {
+fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> Result<DateTime<Utc>> {
     let s = dt.to_string();
-    let chrono_dt: chrono::DateTime<Utc> = s.parse().expect("invalid date format in toml file");
-    chrono_dt
+    s.parse::<chrono::DateTime<Utc>>()
+        .context(format!("Invalid date format: \"{s}\""))
 }
 
-fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> SystemTime {
-    SystemTime::from(toml_datetime_to_chrono(dt))
+fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> Result<SystemTime> {
+    toml_datetime_to_chrono(dt).map(SystemTime::from)
 }

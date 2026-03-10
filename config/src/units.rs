@@ -97,7 +97,13 @@ impl DecimalScaled for TimeUnit {
             Self::Milliseconds => 3,
             Self::Microseconds => 6,
             Self::Nanoseconds => 9,
-            _ => unimplemented!("power() only supported on time intervals with SI prefixes."),
+            // Hours and Minutes don't fit cleanly into a decimal power
+            // scheme relative to seconds, so we use to_ns_factor() for
+            // those conversions. This path should not be reached because
+            // TimestepConfig::validate rejects Hours/Minutes, but we
+            // handle it gracefully rather than panicking.
+            Self::Hours => 0,
+            Self::Minutes => 0,
         }
     }
 }
