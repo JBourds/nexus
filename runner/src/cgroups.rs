@@ -325,11 +325,10 @@ impl CgroupController {
 
     pub fn assign_cpu_weights(&mut self, relative_assignments: &Relative) {
         for (name, weight) in relative_assignments.weights() {
-            let path = self.nodes_limited.root.join(name).join(CPU_WEIGHT);
-            let mut f = OpenOptions::new().write(true).open(path).unwrap();
-            let _ = f
-                .write(weight.to_string().as_bytes())
-                .expect("unable to write cpu weight to cpu.weight file");
+            let dir = self.nodes_limited.root.join(name);
+            if let Err(e) = write_cgroup_file(&dir, CPU_WEIGHT, weight.to_string().as_bytes()) {
+                eprintln!("Failed to write {CPU_WEIGHT} for {name}: {e}");
+            }
         }
     }
 
@@ -352,11 +351,13 @@ impl CgroupController {
                 cgroup.period = period;
                 cgroup.adjustment_threshold = (ratio - EPSILON, ratio + EPSILON);
 
-                let cpu_max_path = cgroup.path.join(CPU_MAX);
-                let mut f = OpenOptions::new().write(true).open(cpu_max_path).unwrap();
-                let _ = f
-                    .write(format!("{bandwidth} {period}").as_bytes())
-                    .expect("unable to write cpu weight to cpu.weight file");
+                if let Err(e) = write_cgroup_file(
+                    &cgroup.path,
+                    CPU_MAX,
+                    format!("{bandwidth} {period}").as_bytes(),
+                ) {
+                    eprintln!("Failed to write {CPU_MAX} for {name}: {e}");
+                }
                 // increase uclamp minimum to hint to scheduler current policy is
                 // not keeping up
                 if bandwidth > period {
@@ -377,48 +378,62 @@ impl CgroupController {
     }
 }
 
+/// Write data to a cgroup control file, creating no new file.
+fn write_cgroup_file(dir: &Path, filename: &str, data: &[u8]) -> io::Result<()> {
+    OpenOptions::new()
+        .write(true)
+        .open(dir.join(filename))
+        .and_then(|mut f| f.write_all(data))
+}
+
 fn uclamp_min(cgroup: &Path, bytes: &[u8]) {
-    let path = cgroup.join(UCLAMP_MIN);
-    let mut f = OpenOptions::new().write(true).open(path).unwrap();
-    let _ = f
-        .write(bytes)
-        .expect("unable to write minimum usage to cpu.uclamp.min");
+    if let Err(e) = write_cgroup_file(cgroup, UCLAMP_MIN, bytes) {
+        eprintln!("Failed to write {UCLAMP_MIN}: {e}");
+    }
 }
 
 fn make_root(pid: u32) -> PathBuf {
     let parent_cgroup = PathBuf::from(format!("/proc/{pid}/cgroup"));
     let mut buf = String::new();
-    let _ = File::open(parent_cgroup).unwrap().read_to_string(&mut buf);
+    File::open(&parent_cgroup)
+        .unwrap_or_else(|e| panic!("Cannot open {}: {e}", parent_cgroup.display()))
+        .read_to_string(&mut buf)
+        .unwrap_or_else(|e| panic!("Cannot read {}: {e}", parent_cgroup.display()));
 
-    PathBuf::from(format!(
-        "/sys/fs/cgroup{}",
-        buf.split(":").last().unwrap().trim_end()
-    ))
+    let suffix = buf
+        .split(':')
+        .last()
+        .unwrap_or("")
+        .trim_end();
+    PathBuf::from(format!("/sys/fs/cgroup{suffix}"))
 }
 
 fn freeze(cgroup: &Path, status: bool) {
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(cgroup.join(FREEZE))
-        .unwrap()
-        .write(if status { "1" } else { "0" }.as_bytes())
-        .unwrap();
+    let data = if status { b"1" as &[u8] } else { b"0" };
+    if let Err(e) = write_cgroup_file(cgroup, FREEZE, data) {
+        eprintln!("Failed to write {FREEZE} for {}: {e}", cgroup.display());
+    }
 }
 
 fn enable_subtree_control(cgroup: &Path) {
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(cgroup.join(SUBTREE))
-        .unwrap()
-        .write(SUBTREE_SUBSYSTEMS.as_bytes())
-        .unwrap();
+    if let Err(e) = write_cgroup_file(cgroup, SUBTREE, SUBTREE_SUBSYSTEMS.as_bytes()) {
+        eprintln!(
+            "Failed to enable subtree control for {}: {e}",
+            cgroup.display()
+        );
+    }
 }
 
 fn move_process(cgroup: &Path, pid: u32) {
-    let _ = OpenOptions::new()
-        .write(true)
-        .open(cgroup.join(PROCS))
-        .unwrap()
-        .write(pid.to_string().as_bytes())
-        .unwrap();
+    if let Err(e) = write_cgroup_file(cgroup, PROCS, pid.to_string().as_bytes()) {
+        eprintln!("Failed to move PID {pid} to {}: {e}", cgroup.display());
+    }
+}
+
+impl Drop for CgroupController {
+    fn drop(&mut self) {
+        // Clean up per-simulation cgroup directories. Errors are best-effort
+        // since the kernel may still have processes in these groups.
+        let _ = fs::remove_dir_all(&self.root);
+    }
 }
