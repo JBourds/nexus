@@ -108,11 +108,13 @@ impl DelayCalculator {
         let mut ctx = meval::Context::new();
         ctx.var("distance", distance);
         ctx.var("d", distance);
-        let time_units = self
+        let expr = self
             .propagation
-            .rate
-            .parse::<meval::Expr>()
-            .expect("unable to parse meval expression")
+            .parsed_rate
+            .as_ref()
+            .expect("parsed_rate should be populated after validation")
+            .clone();
+        let time_units = expr
             .eval_with_context(ctx)
             .expect("could not evaluate distance time var");
 
@@ -170,10 +172,15 @@ mod tests {
             data: DataUnit::Bit,
             time: TimeUnit::Seconds,
         };
-        let propagation = DistanceTimeVar {
-            rate: "5 * d".parse().unwrap(),
-            time: TimeUnit::Seconds,
-            distance: DistanceUnit::Kilometers,
+        let propagation = {
+            let rate: String = "5 * d".parse().unwrap();
+            let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
+            DistanceTimeVar {
+                rate,
+                parsed_rate,
+                time: TimeUnit::Seconds,
+                distance: DistanceUnit::Kilometers,
+            }
         };
         let delays = Delays {
             transmission,
@@ -288,10 +295,15 @@ mod tests {
         }
 
         // Test nonlinear expressions
-        calculator.propagation = DistanceTimeVar {
-            rate: "5 * d^2".parse().unwrap(),
-            time: TimeUnit::Seconds,
-            distance: DistanceUnit::Meters,
+        calculator.propagation = {
+            let rate: String = "5 * d^2".parse().unwrap();
+            let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
+            DistanceTimeVar {
+                rate,
+                parsed_rate,
+                time: TimeUnit::Seconds,
+                distance: DistanceUnit::Meters,
+            }
         };
         let tests = [
             // Distance conversions (propagation distances)

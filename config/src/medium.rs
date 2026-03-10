@@ -347,10 +347,12 @@ impl RssiProbExpr {
         let mut ctx = meval::Context::new();
         ctx.var("rssi", rssi);
         ctx.var("snr", rssi - self.noise_floor_dbm);
-        self.expr
-            .parse::<meval::Expr>()
-            .expect("this gets checked in validation")
-            .eval_with_context(ctx)
+        let expr = self
+            .parsed_expr
+            .as_ref()
+            .expect("parsed_expr should be populated after validation")
+            .clone();
+        expr.eval_with_context(ctx)
             .expect("couldn't evaluate expression")
             .clamp(0.0, 1.0)
     }
@@ -358,8 +360,11 @@ impl RssiProbExpr {
 
 impl Default for RssiProbExpr {
     fn default() -> Self {
+        let expr: String = "0".parse().unwrap();
+        let parsed_expr = Some(expr.parse::<meval::Expr>().unwrap());
         Self {
-            expr: "0".parse().unwrap(),
+            expr,
+            parsed_expr,
             noise_floor_dbm: f64::MIN,
         }
     }

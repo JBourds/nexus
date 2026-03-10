@@ -509,13 +509,13 @@ impl Delays {
 
 impl DelayCalculator {
     pub(crate) fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
-        if delays
+        let parsed = delays
             .propagation
-            .rate
-            .parse::<meval::Expr>()?
-            .bind2("d", "distance")
-            .is_err()
-        {
+            .parsed_rate
+            .as_ref()
+            .expect("parsed_rate should be set by DistanceTimeVar::validate")
+            .clone();
+        if parsed.bind2("d", "distance").is_err() {
             bail!("Link rates must be a one variable function of distance \"x\"");
         };
         Ok(Self {
@@ -580,8 +580,10 @@ impl DistanceTimeVar {
         } else {
             def.distance
         };
+        let parsed_rate = Some(rate.parse::<meval::Expr>().context("Unable to parse rate expression")?);
         Ok(Self {
             rate,
+            parsed_rate,
             time,
             distance,
         })
@@ -592,11 +594,13 @@ impl RssiProbExpr {
     fn validate(val: parse::RssiProbExpr, noise_floor_dbm: f64) -> Result<Self> {
         let def = Self::default();
         let expr = val.0.unwrap_or(def.expr);
-        if expr.parse::<meval::Expr>()?.bind2("snr", "rssi").is_err() {
+        let parsed_expr = expr.parse::<meval::Expr>()?;
+        if parsed_expr.clone().bind2("snr", "rssi").is_err() {
             bail!("Distance probability variable must be a function of \"x\" (rssi)");
         }
         Ok(Self {
             expr,
+            parsed_expr: Some(parsed_expr),
             noise_floor_dbm,
         })
     }

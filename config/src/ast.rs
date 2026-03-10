@@ -295,6 +295,8 @@ pub struct Delays {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DistanceTimeVar {
     pub rate: String,
+    #[serde(skip)]
+    pub parsed_rate: Option<meval::Expr>,
     pub time: TimeUnit,
     pub distance: DistanceUnit,
 }
@@ -303,6 +305,8 @@ pub struct DistanceTimeVar {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RssiProbExpr {
     pub expr: String,
+    #[serde(skip)]
+    pub parsed_expr: Option<meval::Expr>,
     pub noise_floor_dbm: f64,
 }
 
@@ -414,8 +418,11 @@ impl std::fmt::Display for Cmd {
 
 impl Default for DistanceTimeVar {
     fn default() -> Self {
+        let rate: String = "0".parse().unwrap();
+        let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
         Self {
-            rate: "0".parse().unwrap(),
+            rate,
+            parsed_rate,
             time: Default::default(),
             distance: Default::default(),
         }
