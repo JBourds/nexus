@@ -1,0 +1,69 @@
+# Solar-Powered Sensor Network — Module System Example
+#
+# Demonstrates importing modules and composing multiple profiles on a node.
+#
+# Modules imported:
+#   - lora/sx1276_915mhz : LoRa link + channel definitions
+#   - boards/esp32_devkit : "esp32" profile (clock, RAM, power states, MCU sink)
+#   - energy/solar_small  : "solar_small" profile (100 mW piecewise-linear source)
+#
+# The sensor node uses `profile = ["esp32", "solar_small"]` to layer
+# the board hardware profile with the solar energy source. Profiles are
+# applied in order: the ESP32 board provides the base, and the solar
+# module adds its power source on top.
+#
+# The gateway uses just the ESP32 profile and overrides the clock rate
+# to demonstrate user-wins-over-profile behavior.
+
+use = [
+    "lora/sx1276_915mhz",
+    "boards/esp32_devkit",
+    "energy/solar_small",
+]
+
+[params]
+timestep.length = 100
+timestep.unit   = "ms"
+timestep.count  = 50000
+seed            = 42
+root            = "~/simulations"
+
+# --- Solar sensor: ESP32 board + solar energy profiles ---
+
+[nodes.sensor]
+profile = ["esp32", "solar_small"]
+
+[[nodes.sensor.deployments]]
+position = { point = [-10, 5, 0], unit = "km" }
+charge = { max = 5000, quantity = 5000, unit = "mj" }
+initial_state = "active"
+restart_threshold = 0.10
+
+[nodes.sensor.channel_energy.lora]
+tx = { quantity = 50, unit = "uj" }
+
+[[nodes.sensor.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["sensor.py"]
+publishers  = ["lora"]
+subscribers = ["lora"]
+
+# --- Gateway: plain ESP32 profile, override clock to 160 MHz ---
+
+[nodes.gateway]
+profile = "esp32"
+
+[[nodes.gateway.deployments]]
+position = { point = [0, 0, 0], unit = "km" }
+
+[nodes.gateway.resources]
+clock_rate  = 160
+clock_units = "mhz"
+
+[[nodes.gateway.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["gateway.py"]
+publishers  = ["lora"]
+subscribers = ["lora"]
