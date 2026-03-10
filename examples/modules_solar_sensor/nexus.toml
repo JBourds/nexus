@@ -3,7 +3,7 @@
 # Demonstrates importing modules and composing multiple profiles on a node.
 #
 # Modules imported:
-#   - lora/sx1276_915mhz : LoRa link + channel definitions
+#   - lora/sx1276_915mhz : LoRa links + channels per spreading factor (SF6-SF12)
 #   - boards/esp32_devkit : "esp32" profile (clock, RAM, power states, MCU sink)
 #   - energy/solar_small  : "solar_small" profile (100 mW piecewise-linear source)
 #

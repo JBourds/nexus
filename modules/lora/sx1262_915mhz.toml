@@ -4,14 +4,163 @@
 # Ref:    https://semtech.my.salesforce.com/sfc/p/#E0000000JelG/a/RQ000008n3pp/qXjWn19TZmb.1MgqPZ8Vrc5V7U.M_lOAIoTZHcEAeTI
 # - Next-gen LoRa transceiver, lower power than SX1276
 # - Max TX power: +22 dBm
-# - Receiver sensitivity: -148 dBm @ SF12/BW125kHz
 # - Lower RX current (~4.5 mA vs ~10 mA on SX1276)
 #
-# Assumptions:
-# - SF12 / BW 125 kHz
-# - Omnidirectional radiation pattern
+# Each spreading factor (SF6-SF12) at BW 125 kHz / CR 4/5 is defined as
+# a separate link and channel. The unsuffixed names default to SF6.
+# Sensitivities per SX1262 datasheet Table 11-2.
+
+# --- SF6 (default): 9375 bps, sensitivity -131 dBm ---
 
 [links.lora_sx1262_915]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -131.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 113) / 5))"
+
+[links.lora_sx1262_915.delays]
+transmission.rate = 9375
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262]
+link = "lora_sx1262_915"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+[channels.lora_sx1262_sf6]
+link = "lora_sx1262_915"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF7: 5470 bps, sensitivity -134 dBm ---
+
+[links.lora_sx1262_915_sf7]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -134.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 116) / 5))"
+
+[links.lora_sx1262_915_sf7.delays]
+transmission.rate = 5470
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262_sf7]
+link = "lora_sx1262_915_sf7"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF8: 3125 bps, sensitivity -137 dBm ---
+
+[links.lora_sx1262_915_sf8]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -137.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 119) / 5))"
+
+[links.lora_sx1262_915_sf8.delays]
+transmission.rate = 3125
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262_sf8]
+link = "lora_sx1262_915_sf8"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF9: 1760 bps, sensitivity -140 dBm ---
+
+[links.lora_sx1262_915_sf9]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -140.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 122) / 5))"
+
+[links.lora_sx1262_915_sf9.delays]
+transmission.rate = 1760
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262_sf9]
+link = "lora_sx1262_915_sf9"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF10: 977 bps, sensitivity -143 dBm ---
+
+[links.lora_sx1262_915_sf10]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -143.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 125) / 5))"
+
+[links.lora_sx1262_915_sf10.delays]
+transmission.rate = 977
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262_sf10]
+link = "lora_sx1262_915_sf10"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF11: 537 bps, sensitivity -145.5 dBm ---
+
+[links.lora_sx1262_915_sf11]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -145.5
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 127) / 5))"
+
+[links.lora_sx1262_915_sf11.delays]
+transmission.rate = 537
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262_sf11]
+link = "lora_sx1262_915_sf11"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }
+
+# --- SF12: 293 bps, sensitivity -148 dBm ---
+
+[links.lora_sx1262_915_sf12]
 medium.type = "wireless"
 medium.wavelength_meters = 0.328
 medium.gain_dbi = 2.0
@@ -21,14 +170,14 @@ medium.tx_max_dbm = 22.0
 medium.shape = "omni"
 packet_loss = "1 / (1 + exp((rssi + 130) / 5))"
 
-[links.lora_sx1262_915.delays]
-transmission.rate = 300
+[links.lora_sx1262_915_sf12.delays]
+transmission.rate = 293
 transmission.data = "bit"
 transmission.time = "s"
 propagation.rate = "d / 299792.458"
 propagation.distance = "km"
 propagation.time = "s"
 
-[channels.lora_sx1262]
-link = "lora_sx1262_915"
+[channels.lora_sx1262_sf12]
+link = "lora_sx1262_915_sf12"
 type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }

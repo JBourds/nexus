@@ -1,13 +1,16 @@
-# LoRa Mesh Network — Module System Example
+# LoRa Mesh Network -- Module System Example
 #
 # Demonstrates the simplest module usage: importing a stdlib LoRa link
 # and channel definition instead of specifying RF parameters by hand.
 #
-# The `use` list pulls in the SX1276 915 MHz module, which provides:
-#   - links.lora_915   (wireless medium, propagation/transmission delays)
-#   - channels.lora    (exclusive channel with 255-byte max, 2s TTL)
+# The `use` list pulls in the SX1276 915 MHz module, which provides a
+# link and channel per spreading factor (SF6-SF12). The unsuffixed names
+# default to SF6 (highest data rate, shortest range):
+#   - links.lora_915        (wireless medium, propagation/transmission delays)
+#   - channels.lora         (exclusive channel with 255-byte max, 2s TTL)
+# Use channels.lora_sf7 through channels.lora_sf12 for other SFs.
 #
-# Three nodes form a linear mesh: sensor → relay → gateway.
+# Three nodes form a linear mesh: sensor -> relay -> gateway.
 
 use = ["lora/sx1276_915mhz"]
 

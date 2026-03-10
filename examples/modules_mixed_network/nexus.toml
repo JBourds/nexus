@@ -4,15 +4,15 @@
 # and a local project-specific module.
 #
 # Modules imported:
-#   - lora/sx1276_915mhz      : LoRa link + channel (for field sensors)
+#   - lora/sx1276_915mhz      : LoRa links + channels per SF (for field sensors, default SF6)
 #   - wifi/wifi_2_4ghz         : Wi-Fi link + channel (for indoor cluster)
 #   - ./local_uart             : Project-local serial link (for gateway ↔ server)
 #   - boards/esp32_devkit      : ESP32 profile
 #   - boards/rpi_zero_w        : Raspberry Pi Zero W profile
 #
 # Topology:
-#   field_sensor ──(lora)──► edge_gateway ──(uart)──► server
-#                            indoor_node ──(wifi)──┘
+#   field_sensor --(lora)--> edge_gateway --(uart)--> server
+#                            indoor_node --(wifi)---/
 
 use = [
     "lora/sx1276_915mhz",
@@ -41,7 +41,7 @@ runner      = "python3"
 runner_args = ["field_sensor.py"]
 publishers  = ["lora"]
 
-# --- Edge gateway (RPi Zero W, bridges LoRa → UART) ---
+# --- Edge gateway (RPi Zero W, bridges LoRa -> UART) ---
 
 [nodes.edge_gateway]
 profile = "rpi_zero_w"
