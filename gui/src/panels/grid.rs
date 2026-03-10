@@ -33,8 +33,13 @@ pub fn show_grid_panel(
         ui.data_mut(|d| d.insert_temp(drag_on_node_id, false));
     }
 
-    // Handle pan/zoom
-    grid.handle_input(&response, drag_started_on_node);
+    // Interactive scrollbars (must come before handle_input so drag is detected first)
+    let scrollbar_active = grid.handle_scrollbars(ui, canvas_rect, nodes);
+
+    // Handle pan/zoom (suppressed when dragging a scrollbar)
+    if !scrollbar_active {
+        grid.handle_input(&response, drag_started_on_node);
+    }
 
     // Draw grid
     grid.draw(ui, canvas_rect, unit_label);
