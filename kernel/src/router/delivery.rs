@@ -32,11 +32,11 @@ impl RoutingServer {
         let sz: u64 = msg.len().try_into().expect("usize fits u64");
         let channel = &self.channels.channels[channel_handle.0];
 
-        match channel.r#type {
-            ChannelType::Shared { .. } => {
+        match channel.r#type.kind {
+            ChannelKind::Shared => {
                 self.queue_shared(src_node, channel_handle, msg, sz)?;
             }
-            ChannelType::Exclusive { .. } => {
+            ChannelKind::Exclusive { .. } => {
                 self.queue_exclusive(src_node, channel_handle, msg, sz)?;
             }
         }
@@ -152,9 +152,9 @@ impl RoutingServer {
     pub fn deliver_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (_, _, channel_handle) = self.channels.handles[index];
         let channel = &mut self.channels.channels[channel_handle.0];
-        match &channel.r#type {
-            ChannelType::Shared { .. } => self.deliver_shared_msg(index),
-            ChannelType::Exclusive { .. } => self.deliver_exclusive_msg(index),
+        match &channel.r#type.kind {
+            ChannelKind::Shared => self.deliver_shared_msg(index),
+            ChannelKind::Exclusive { .. } => self.deliver_exclusive_msg(index),
         }
     }
 
@@ -211,9 +211,7 @@ impl RoutingServer {
             }
             std::cmp::Ordering::Greater => {
                 warn!("Detected collision on shared medium.");
-                let ChannelType::Shared { max_size, .. } = channel.r#type else {
-                    unreachable!()
-                };
+                let max_size = channel.r#type.max_size;
 
                 let filtered = mailbox.iter().filter_map(|msg| {
                     let (distance, unit) = Position::distance(

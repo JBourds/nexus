@@ -19,7 +19,7 @@ use crate::{
 use config::ast::Position;
 use config::{
     CONTROL_PREFIX,
-    ast::{ChannelType, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
+    ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
 };
 use rand::rngs::StdRng;
 use std::rc::Rc;

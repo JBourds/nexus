@@ -64,34 +64,28 @@ pub struct Channel {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ChannelType {
-    /// No channel buffering other than transmission & propagation time (because
-    /// this is a shared medium, there can only be one source of truth for what
-    /// data can be read). If multiple nodes write at once or during overlapping
-    /// periods, the result is the bitwise OR of writes.
-    Shared {
-        /// Time to live once it has reached destination
-        ttl: Option<NonZeroU64>,
-        /// Time unit `ttl` is in
-        unit: TimeUnit,
-        /// Should a sender be able to read their own writes?
-        read_own_writes: bool,
-        /// Maximum message size in bytes.
-        max_size: NonZeroUsize,
-    },
+pub struct ChannelType {
+    /// Time to live once it has reached destination
+    pub ttl: Option<NonZeroU64>,
+    /// Time unit `ttl` is in
+    pub unit: TimeUnit,
+    /// Should a sender be able to read their own writes?
+    pub read_own_writes: bool,
+    /// Maximum message size in bytes.
+    pub max_size: NonZeroUsize,
+    /// The channel kind (shared vs exclusive).
+    pub kind: ChannelKind,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub enum ChannelKind {
+    /// No channel buffering other than transmission & propagation time.
+    /// If multiple nodes write at once, the result is the bitwise OR of writes.
+    Shared,
     /// Buffer some number of messages at a time for each node.
     Exclusive {
-        /// Time to live once it has reached destination
-        ttl: Option<NonZeroU64>,
-        /// Time unit `ttl` is in
-        unit: TimeUnit,
-        /// Maximum message size in bytes.
-        max_size: NonZeroUsize,
         /// Number of buffered messages per node. If None, is infinite.
         nbuffered: Option<NonZeroUsize>,
-        /// Should a sender be able to read their own writes?
-        /// eg. In an internal link.
-        read_own_writes: bool,
     },
 }
 
