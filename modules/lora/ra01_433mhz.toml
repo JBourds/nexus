@@ -1,0 +1,34 @@
+# AI-Thinker Ra-01 LoRa Module at 433 MHz
+#
+# Source: AI-Thinker Ra-01 datasheet (based on SX1278/SX1276)
+# Ref:    https://semtech.my.salesforce.com/sfc/p/E0000000JelG/a/2R0000001OKs/Bs97dmPXeatnbdoJNVMIDaKDlQz8q1N_gxDcgqi7g2o
+# - Frequency: 433 MHz ISM band
+# - Max TX power: +20 dBm
+# - Receiver sensitivity: -139 dBm @ SF12/BW125kHz
+# - Typical data rate: 300 bps (SF12)
+#
+# Assumptions:
+# - SF12 / BW 125 kHz
+# - Omnidirectional, 2 dBi antenna
+
+[links.lora_433]
+medium.type = "wireless"
+medium.wavelength_meters = 0.693      # 433 MHz → c / 433e6
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -139.0
+medium.tx_min_dbm = -4.0
+medium.tx_max_dbm = 20.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 120) / 5))"
+
+[links.lora_433.delays]
+transmission.rate = 300
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_433]
+link = "lora_433"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }

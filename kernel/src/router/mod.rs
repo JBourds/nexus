@@ -147,6 +147,7 @@ impl RoutingServer {
                     newly_recovered: Vec::new(),
                     pending_remaps,
                 };
+                let mut last_polled_ts: u64 = u64::MAX;
                 loop {
                     match kernel_rx.recv() {
                         Ok(KernelMessage::Shutdown) => {
@@ -159,8 +160,9 @@ impl RoutingServer {
                             }
                         }
                         Ok(KernelMessage::Poll(timestep)) => {
-                            router.timestep = timestep;
-                            if let Err(e) = source.poll(&mut router, timestep) {
+                            let ts_advanced = timestep != last_polled_ts;
+                            last_polled_ts = timestep;
+                            if let Err(e) = source.poll(&mut router, timestep, ts_advanced) {
                                 break Err(KernelError::SourceError(e));
                             }
                             let depleted = router
@@ -208,8 +210,9 @@ impl RoutingServer {
         // Rebuild fuse_mapping from scratch
         self.fuse_mapping = self.channels.make_fuse_mapping();
         // Push remaps to shared FUSE queue
-        if let Ok(mut queue) = self.pending_remaps.lock() {
-            queue.extend_from_slice(pairs);
+        match self.pending_remaps.lock() {
+            Ok(mut queue) => queue.extend_from_slice(pairs),
+            Err(e) => warn!("pending_remaps mutex poisoned, PID remaps lost: {e}"),
         }
     }
 
@@ -245,7 +248,7 @@ impl RoutingServer {
             ["pos", "motion"] => self.write_pos_motion(node_index, msg),
             ["pos", ..] => self.write_pos(node_index, msg),
             ["power_flows"] => self.write_power_flows(node_index, msg),
-            _ => unimplemented!("Unimplemented control file: {remaining}"),
+            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
         }
     }
 
@@ -337,7 +340,7 @@ impl RoutingServer {
             ["pos", "motion"] => self.read_pos_motion(node_index, msg),
             ["pos", ..] => self.read_pos(node_index, msg),
             ["power_flows"] => self.read_power_flows(node_index, msg),
-            _ => unimplemented!("Unimplemented control file: {remaining}"),
+            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
         }
     }
 
@@ -383,8 +386,7 @@ impl RoutingServer {
         self.timestep += 1;
 
         // Compute current simulation time in microseconds for piecewise flows
-        let timestep_ns =
-            self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
+        let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
         let current_time_us = self.timestep * timestep_ns / 1000;
 
         // Drain per-timestep energy for all nodes with batteries

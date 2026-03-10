@@ -17,7 +17,7 @@ use clap::Parser;
 use config::ast::{self, ChannelType};
 use fuse::{PID, fs::*};
 
-use runner::{cli::Cli, cli::RunCmd};
+use runner::{cli::Cli, cli::ModulesCmd, cli::RunCmd};
 use std::path::PathBuf;
 
 use crate::output::to_csv;
@@ -28,16 +28,20 @@ const CONFIG: &str = "nexus.toml";
 
 fn main() -> Result<()> {
     let args = Cli::parse();
-    match args.cmd {
-        RunCmd::Simulate => simulate(args),
+    match &args.cmd {
+        RunCmd::Simulate { .. } => simulate(args),
         RunCmd::Replay { .. } => replay(args),
         RunCmd::Logs { .. } => print_logs(args),
+        RunCmd::Modules { action } => handle_modules(action),
         _ => todo!(),
     }
 }
 
 fn simulate(args: Cli) -> Result<()> {
-    let sim = config::parse((&args.config).into())?;
+    let RunCmd::Simulate { ref config } = args.cmd else {
+        unreachable!()
+    };
+    let sim = config::parse(config.clone())?;
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join(CONFIG))?;
     run(args, sim, root)
@@ -58,6 +62,95 @@ fn print_logs(args: Cli) -> Result<()> {
         unreachable!()
     };
     Source::print_logs(logs)?;
+    Ok(())
+}
+
+fn handle_modules(action: &ModulesCmd) -> Result<()> {
+    match action {
+        ModulesCmd::List { category } => {
+            let stdlib = config::module::stdlib_path();
+            let mut dirs: Vec<PathBuf> = vec![];
+
+            // Collect search directories: NEXUS_MODULE_PATH + stdlib.
+            if let Ok(search_path) = std::env::var("NEXUS_MODULE_PATH") {
+                for dir in search_path.split(':') {
+                    let p = PathBuf::from(dir);
+                    if p.is_dir() {
+                        dirs.push(p);
+                    }
+                }
+            }
+            if stdlib.is_dir() {
+                dirs.push(stdlib.to_path_buf());
+            }
+
+            if dirs.is_empty() {
+                println!("No module directories found.");
+                return Ok(());
+            }
+
+            for dir in &dirs {
+                println!("# {}", dir.display());
+                list_modules(dir, category.as_deref(), "")?;
+                println!();
+            }
+            Ok(())
+        }
+        ModulesCmd::Show { module } => {
+            let path = config::module::resolve_module_path(module, None)?;
+            let contents = std::fs::read_to_string(&path)?;
+            println!("# {}\n", path.display());
+            print!("{contents}");
+            Ok(())
+        }
+        ModulesCmd::Verify { config } => {
+            match config::parse(config.clone()) {
+                Ok(_) => {
+                    println!("OK: all modules resolved, no conflicts.");
+                    Ok(())
+                }
+                Err(e) => {
+                    eprintln!("ERROR: {e:#}");
+                    Err(e)
+                }
+            }
+        }
+    }
+}
+
+fn list_modules(dir: &Path, category: Option<&str>, prefix: &str) -> Result<()> {
+    let mut entries: Vec<_> = std::fs::read_dir(dir)?.filter_map(|e| e.ok()).collect();
+    entries.sort_by_key(|e| e.file_name());
+
+    for entry in entries {
+        let ft = entry.file_type()?;
+        let name = entry.file_name();
+        let name_str = name.to_string_lossy();
+
+        if ft.is_dir() {
+            let sub_prefix = if prefix.is_empty() {
+                name_str.to_string()
+            } else {
+                format!("{prefix}/{name_str}")
+            };
+            // If category filter is set, only recurse into matching dirs.
+            if let Some(cat) = category
+                && !name_str.eq_ignore_ascii_case(cat)
+                && !sub_prefix.to_ascii_lowercase().starts_with(&cat.to_ascii_lowercase())
+            {
+                continue;
+            }
+            list_modules(&entry.path(), category, &sub_prefix)?;
+        } else if ft.is_file() && name_str.ends_with(".toml") {
+            let stem = name_str.trim_end_matches(".toml");
+            let spec = if prefix.is_empty() {
+                stem.to_string()
+            } else {
+                format!("{prefix}/{stem}")
+            };
+            println!("  {spec}");
+        }
+    }
     Ok(())
 }
 
@@ -139,7 +232,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
     let trace_path = root.join("trace.nxs");
 
     // Build TraceLayer for binary logging (both tx and rx go into unified trace)
-    let trace_layer = if matches!(cmd, RunCmd::Simulate | RunCmd::Replay { .. }) {
+    let trace_layer = if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
         let header = trace::format::TraceHeader {
             node_names: {
                 let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
@@ -245,7 +338,7 @@ fn make_fs_channels(
             .into_iter()
         {
             let mode = match run_cmd {
-                RunCmd::Simulate => {
+                RunCmd::Simulate { .. } => {
                     let file_cmd = match (
                         protocol.subscribers.contains(channel),
                         protocol.publishers.contains(channel),

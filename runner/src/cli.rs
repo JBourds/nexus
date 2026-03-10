@@ -21,10 +21,6 @@ pub struct Cli {
     #[arg(long)]
     pub n: Option<usize>,
 
-    /// Configuration toml file for the simulation
-    #[arg(short, long)]
-    pub config: String,
-
     /// Location where the NexusFS should be mounted during simulation
     #[arg(short, long)]
     pub root: Option<PathBuf>,
@@ -66,10 +62,12 @@ impl Display for OutputDestination {
     }
 }
 
-#[derive(Subcommand, Debug, Default, Clone, PartialEq)]
+#[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum RunCmd {
-    #[default]
-    Simulate,
+    Simulate {
+        /// Configuration toml file for the simulation
+        config: PathBuf,
+    },
     Replay {
         logs: PathBuf,
     },
@@ -77,15 +75,41 @@ pub enum RunCmd {
         logs: PathBuf,
     },
     Fuzz,
+    /// Manage and inspect reusable module files
+    Modules {
+        #[command(subcommand)]
+        action: ModulesCmd,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone, PartialEq)]
+pub enum ModulesCmd {
+    /// List available modules (stdlib + NEXUS_MODULE_PATH)
+    List {
+        /// Filter by category/directory (e.g. "lora", "boards")
+        #[arg(long)]
+        category: Option<String>,
+    },
+    /// Print module contents with descriptions
+    Show {
+        /// Module specifier (e.g. "lora/sx1276_915mhz")
+        module: String,
+    },
+    /// Verify all `use` imports resolve and no conflicts exist
+    Verify {
+        /// Path to nexus.toml configuration file
+        config: PathBuf,
+    },
 }
 
 impl Display for RunCmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunCmd::Simulate => write!(f, "simulate"),
+            RunCmd::Simulate { .. } => write!(f, "simulate"),
             RunCmd::Replay { .. } => write!(f, "replay"),
             RunCmd::Logs { .. } => write!(f, "logs"),
             RunCmd::Fuzz => write!(f, "fuzz"),
+            RunCmd::Modules { .. } => write!(f, "modules"),
         }
     }
 }

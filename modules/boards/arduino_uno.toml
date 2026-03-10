@@ -1,0 +1,31 @@
+# Arduino Uno (ATmega328P)
+#
+# Source: Atmel ATmega328P datasheet (DS40001984A), Table 33-1
+# Ref:    https://ww1.microchip.com/downloads/en/DeviceDoc/Atmel-7810-Automotive-Microcontrollers-ATmega328P_Datasheet.pdf
+#
+# - 8-bit AVR @ 16 MHz
+# - 2 KB SRAM
+# - Operating voltage: 5V
+# - Active current: ~12 mA @ 5V, 16 MHz → ~60 mW
+# - Idle mode: ~4 mA @ 5V → ~20 mW
+# - Power-down: ~1 uA @ 5V → ~5 uW
+#
+# Assumptions:
+# - Power = current * 5V
+# - Board sink includes regulator + LED (~15 mA → ~75 mW)
+
+[profiles.arduino_uno]
+
+[profiles.arduino_uno.resources]
+clock_rate = 16
+clock_units = "mhz"
+ram = 2
+ram_units = "kb"
+
+[profiles.arduino_uno.power_states]
+power_down = { rate = 5,  unit = "uw", time = "s" }
+idle       = { rate = 20, unit = "mw", time = "s" }
+active     = { rate = 60, unit = "mw", time = "s" }
+
+[profiles.arduino_uno.power_sinks]
+board = { rate = 75, unit = "mw", time = "s" }

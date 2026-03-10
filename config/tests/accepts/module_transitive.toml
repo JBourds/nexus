@@ -1,0 +1,21 @@
+# Test: transitive module import (esp32_wifi uses boards/esp32_devkit + wifi/wifi_2_4ghz).
+
+use = ["wifi/esp32_wifi"]
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
+
+[nodes.gateway]
+profile = "esp32"
+deployments = [{}]
+
+[[nodes.gateway.protocols]]
+name = "bridge"
+runner = "python3"
+runner_args = ["bridge.py"]
+publishers = ["wifi"]
+subscribers = ["wifi"]

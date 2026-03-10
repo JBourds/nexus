@@ -8,9 +8,7 @@ use crate::ast::{
 /// into microseconds.
 pub fn parse_duration_to_us(s: &str) -> Result<u64> {
     let s = s.trim();
-    let num_end = s
-        .find(|c: char| !c.is_ascii_digit())
-        .unwrap_or(s.len());
+    let num_end = s.find(|c: char| !c.is_ascii_digit()).unwrap_or(s.len());
     let (num_str, unit_str) = s.split_at(num_end);
     let num: u64 = num_str
         .parse()
@@ -184,9 +182,9 @@ impl PowerRate {
     ///
     /// Formula: energy_nj = rate_nw × timestep_ns / time_ns
     pub fn nj_per_timestep(&self, timestep_ns: u64) -> u64 {
-        let rate_nw = self.rate * self.unit.to_nw_factor();
-        let time_ns = self.time.to_ns_factor();
-        rate_nw * timestep_ns / time_ns
+        let rate_nw = self.rate as u128 * self.unit.to_nw_factor() as u128;
+        let time_ns = self.time.to_ns_factor() as u128;
+        (rate_nw * timestep_ns as u128 / time_ns) as u64
     }
 }
 

@@ -1,4 +1,4 @@
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
 use std::{
     collections::HashMap,
     num::{NonZeroU64, NonZeroUsize},
@@ -7,10 +7,34 @@ use toml::value::Datetime;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Simulation {
+    pub(super) r#use: Option<Vec<String>>,
     pub(super) params: Params,
     pub(super) links: HashMap<String, Link>,
     pub(super) nodes: HashMap<String, Node>,
     pub(super) channels: HashMap<String, Channel>,
+    pub(super) profiles: Option<HashMap<String, NodeProfile>>,
+}
+
+/// A module file: restricted subset of nexus.toml (no params, no nodes).
+/// `deny_unknown_fields` ensures params/nodes are rejected by serde.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct ModuleFile {
+    pub r#use: Option<Vec<String>>,
+    pub links: HashMap<String, Link>,
+    pub channels: HashMap<String, Channel>,
+    pub profiles: Option<HashMap<String, NodeProfile>>,
+}
+
+/// A reusable partial node template (hardware characteristics).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NodeProfile {
+    pub resources: Option<Resources>,
+    pub power_states: Option<HashMap<String, PowerRate>>,
+    pub power_sources: Option<HashMap<String, PowerFlowDef>>,
+    pub power_sinks: Option<HashMap<String, PowerFlowDef>>,
+    pub channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -68,16 +92,16 @@ pub struct Charge {
 /// A power rate used for per-node power states.
 /// `rate` is always positive; semantics (consumption vs. generation) are
 /// determined by the field it appears in.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PowerRate {
-    pub(super) rate: u64,
-    pub(super) unit: Unit,
-    pub(super) time: Unit,
+    pub rate: u64,
+    pub unit: Unit,
+    pub time: Unit,
 }
 
 /// A single breakpoint in a piecewise-linear power schedule.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Breakpoint {
     pub(super) at: String,
@@ -86,7 +110,7 @@ pub struct Breakpoint {
 
 /// A power flow definition that can be either constant or scheduled.
 /// Deserialized as untagged: presence of `schedule` distinguishes the two.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum PowerFlowDef {
     Scheduled {
@@ -103,7 +127,7 @@ pub enum PowerFlowDef {
 }
 
 /// One-time energy cost (e.g. per TX or RX on a channel).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Energy {
     pub(super) quantity: u64,
@@ -111,7 +135,7 @@ pub struct Energy {
 }
 
 /// Optional TX/RX energy costs for a single channel within a protocol.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ChannelEnergy {
     pub(super) tx: Option<Energy>,
@@ -244,19 +268,21 @@ pub struct Coordinate {
     pub(super) unit: Option<Unit>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Resources {
-    pub(super) clock_rate: Option<NonZeroU64>,
-    pub(super) cores: Option<NonZeroU64>,
-    pub(super) clock_units: Option<Unit>,
-    pub(super) ram: Option<NonZeroU64>,
-    pub(super) ram_units: Option<Unit>,
+    pub clock_rate: Option<NonZeroU64>,
+    pub cores: Option<NonZeroU64>,
+    pub clock_units: Option<Unit>,
+    pub ram: Option<NonZeroU64>,
+    pub ram_units: Option<Unit>,
 }
 
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Node {
+    #[serde(default, deserialize_with = "string_or_list")]
+    pub(super) profile: Vec<String>,
     pub(super) resources: Option<Resources>,
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,
@@ -283,4 +309,22 @@ pub struct NodeProtocol {
     pub(super) build_args: Option<Vec<String>>,
     pub(super) publishers: Option<Vec<ChannelName>>,
     pub(super) subscribers: Option<Vec<ChannelName>>,
+}
+
+/// Deserialize a field that accepts either a single string or a list of strings.
+/// Missing/null values produce an empty Vec (via `#[serde(default)]`).
+fn string_or_list<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum StringOrList {
+        Single(String),
+        List(Vec<String>),
+    }
+    match StringOrList::deserialize(deserializer)? {
+        StringOrList::Single(s) => Ok(vec![s]),
+        StringOrList::List(v) => Ok(v),
+    }
 }

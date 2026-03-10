@@ -2,8 +2,8 @@ use config::ast::{self, DistanceTimeVar, Medium, SignalShape};
 use egui::Ui;
 
 use super::widgets::{
-    DISTANCE_UNIT_PAIRS, SIGNAL_SHAPE_PAIRS, TIME_UNIT_PAIRS, data_rate_editor, enum_combo,
-    rssi_prob_expr_editor,
+    DISTANCE_UNIT_PAIRS, SIGNAL_SHAPE_PAIRS, TIME_UNIT_PAIRS, data_rate_editor, dbm_drag_value,
+    enum_combo, rssi_prob_expr_editor,
 };
 
 pub fn show_link(ui: &mut Ui, id: &str, link: &mut ast::Link) {
@@ -57,15 +57,15 @@ pub fn show_link(ui: &mut Ui, id: &str, link: &mut ast::Link) {
             });
             ui.horizontal(|ui| {
                 ui.label("RX min (dBm):");
-                ui.add(egui::DragValue::new(rx_min_dbm).speed(0.1));
+                dbm_drag_value(ui, rx_min_dbm);
             });
             ui.horizontal(|ui| {
                 ui.label("TX min (dBm):");
-                ui.add(egui::DragValue::new(tx_min_dbm).speed(0.1));
+                dbm_drag_value(ui, tx_min_dbm);
             });
             ui.horizontal(|ui| {
                 ui.label("TX max (dBm):");
-                ui.add(egui::DragValue::new(tx_max_dbm).speed(0.1));
+                dbm_drag_value(ui, tx_max_dbm);
             });
         }
         Medium::Wired {
@@ -80,13 +80,13 @@ pub fn show_link(ui: &mut Ui, id: &str, link: &mut ast::Link) {
         } => {
             ui.horizontal(|ui| {
                 ui.label("RX min (dBm):");
-                ui.add(egui::DragValue::new(rx_min_dbm).speed(0.1));
+                dbm_drag_value(ui, rx_min_dbm);
             });
             ui.horizontal(|ui| {
                 ui.label("TX (dBm):");
-                ui.add(egui::DragValue::new(tx_min_dbm).speed(0.1));
+                dbm_drag_value(ui, tx_min_dbm);
                 ui.label("-");
-                ui.add(egui::DragValue::new(tx_max_dbm).speed(0.1));
+                dbm_drag_value(ui, tx_max_dbm);
             });
             ui.horizontal(|ui| {
                 ui.label("R:");

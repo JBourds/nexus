@@ -1,0 +1,29 @@
+# STM32F4 Discovery (STM32F407VG)
+#
+# Source: STM32F407xx Datasheet (DS8626 Rev 10), Table 25 "Typical current consumption"
+# Ref:    https://www.st.com/resource/en/datasheet/stm32f407vg.pdf
+#
+# - ARM Cortex-M4 @ 168 MHz
+# - 192 KB SRAM
+# - Operating voltage: 3.3V
+# - Run mode: ~93 mA @ 168 MHz, all peripherals on → ~307 mW
+# - Sleep: ~33 mA @ 3.3V → ~109 mW
+# - Stop: ~0.4 mA @ 3.3V → ~1320 uW
+# - Standby: ~2.5 uA @ 3.3V → ~8 uW
+
+[profiles.stm32f4]
+
+[profiles.stm32f4.resources]
+clock_rate = 168
+clock_units = "mhz"
+ram = 192
+ram_units = "kb"
+
+[profiles.stm32f4.power_states]
+standby = { rate = 8,    unit = "uw", time = "s" }
+stop    = { rate = 1320, unit = "uw", time = "s" }
+sleep   = { rate = 109,  unit = "mw", time = "s" }
+active  = { rate = 307,  unit = "mw", time = "s" }
+
+[profiles.stm32f4.power_sinks]
+mcu = { rate = 50, unit = "mw", time = "s" }

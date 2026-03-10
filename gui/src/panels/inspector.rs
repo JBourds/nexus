@@ -67,12 +67,7 @@ pub fn show_inspector(
     }); // Frame
 }
 
-fn show_node_details(
-    ui: &mut Ui,
-    sim: &ast::Simulation,
-    node_states: &[NodeState],
-    name: &str,
-) {
+fn show_node_details(ui: &mut Ui, sim: &ast::Simulation, node_states: &[NodeState], name: &str) {
     let runtime = node_states.iter().find(|n| n.name == name);
 
     // Position

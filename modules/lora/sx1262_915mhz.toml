@@ -1,0 +1,34 @@
+# Semtech SX1262 LoRa transceiver at 915 MHz
+#
+# Source: Semtech SX1261/2 datasheet (DS_SX1261-2_V2.1), Table 11-2
+# Ref:    https://semtech.my.salesforce.com/sfc/p/#E0000000JelG/a/RQ000008n3pp/qXjWn19TZmb.1MgqPZ8Vrc5V7U.M_lOAIoTZHcEAeTI
+# - Next-gen LoRa transceiver, lower power than SX1276
+# - Max TX power: +22 dBm
+# - Receiver sensitivity: -148 dBm @ SF12/BW125kHz
+# - Lower RX current (~4.5 mA vs ~10 mA on SX1276)
+#
+# Assumptions:
+# - SF12 / BW 125 kHz
+# - Omnidirectional radiation pattern
+
+[links.lora_sx1262_915]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -148.0
+medium.tx_min_dbm = -17.0
+medium.tx_max_dbm = 22.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 130) / 5))"
+
+[links.lora_sx1262_915.delays]
+transmission.rate = 300
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_sx1262]
+link = "lora_sx1262_915"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }

@@ -1,0 +1,20 @@
+# Test: importing a stdlib module and using its link/channel.
+
+use = ["lora/sx1276_915mhz"]
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
+
+[nodes.sensor]
+deployments = [{}]
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["main.py"]
+publishers = ["lora"]
+subscribers = ["lora"]

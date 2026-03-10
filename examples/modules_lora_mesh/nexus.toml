@@ -1,0 +1,49 @@
+# LoRa Mesh Network — Module System Example
+#
+# Demonstrates the simplest module usage: importing a stdlib LoRa link
+# and channel definition instead of specifying RF parameters by hand.
+#
+# The `use` list pulls in the SX1276 915 MHz module, which provides:
+#   - links.lora_915   (wireless medium, propagation/transmission delays)
+#   - channels.lora    (exclusive channel with 255-byte max, 2s TTL)
+#
+# Three nodes form a linear mesh: sensor → relay → gateway.
+
+use = ["lora/sx1276_915mhz"]
+
+[params]
+timestep.length = 10
+timestep.unit   = "ms"
+timestep.count  = 10000
+seed            = 7
+root            = "~/simulations"
+
+# --- Nodes ---
+
+[nodes.sensor]
+deployments = [{ position = { point = [0, 0, 0], unit = "km" } }]
+
+[[nodes.sensor.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["sensor.py"]
+publishers  = ["lora"]
+
+[nodes.relay]
+deployments = [{ position = { point = [5, 0, 0], unit = "km" } }]
+
+[[nodes.relay.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["relay.py"]
+publishers  = ["lora"]
+subscribers = ["lora"]
+
+[nodes.gateway]
+deployments = [{ position = { point = [10, 0, 0], unit = "km" } }]
+
+[[nodes.gateway.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["gateway.py"]
+subscribers = ["lora"]

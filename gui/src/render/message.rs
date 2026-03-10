@@ -1,4 +1,4 @@
-use egui::{Color32, Pos2, Rect, Stroke, Vec2, Ui};
+use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::render::grid::GridView;
 use crate::state::{ArrowKind, NodeState};

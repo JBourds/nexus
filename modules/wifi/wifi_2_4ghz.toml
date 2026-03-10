@@ -1,0 +1,35 @@
+# Generic 802.11b/g/n Wi-Fi at 2.4 GHz
+#
+# Source: IEEE 802.11 standard, typical consumer hardware specs
+# - Frequency: 2.4 GHz (channel 6 = 2437 MHz)
+# - Data rate: 54 Mbps (802.11g max), modeled at 20 Mbps typical
+# - TX power: up to 20 dBm (100 mW) typical
+# - Receiver sensitivity: ~-90 dBm (802.11g at 54 Mbps)
+# - Typical antenna gain: 2 dBi
+#
+# Assumptions:
+# - Omnidirectional pattern
+# - 20 Mbps effective throughput (TCP overhead, contention)
+# - 1500 byte MTU
+
+[links.wifi_2_4]
+medium.type = "wireless"
+medium.wavelength_meters = 0.123      # 2437 MHz → c / 2.437e9
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -90.0
+medium.tx_min_dbm = 0.0
+medium.tx_max_dbm = 20.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 80) / 3))"
+
+[links.wifi_2_4.delays]
+transmission.rate = 20
+transmission.data = "mB"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.wifi]
+link = "wifi_2_4"
+type = { type = "exclusive", ttl = 500, unit = "ms", max_size = 1500 }

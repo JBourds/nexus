@@ -1,0 +1,12 @@
+# 18650 Li-ion Battery Cell
+#
+# Source: Samsung INR18650-30Q datasheet
+# - Nominal voltage: 3.6V
+# - Typical capacity: 3000 mAh (~10800 mWh at nominal)
+# - Max continuous discharge: 15A
+# - Common in flashlights, power banks, e-bikes
+#
+# Note: Capacity and voltage vary with discharge rate and temperature.
+
+[profiles.18650]
+# No resources — battery-only profile; combine with a board profile.

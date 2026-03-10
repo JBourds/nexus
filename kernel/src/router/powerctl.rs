@@ -26,13 +26,15 @@ impl RoutingServer {
         mut msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let mut output = String::new();
+        let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
+        let current_time_us = self.timestep * timestep_ns / 1000;
         if let Some(energy) = &self.channels.nodes[node_index].energy {
             for (name, flow) in &energy.power_sources {
-                let nj = flow.nj_per_timestep(0);
+                let nj = flow.nj_per_timestep(current_time_us);
                 output.push_str(&format!("source {name} {nj} nj/ts\n"));
             }
             for (name, flow) in &energy.power_sinks {
-                let nj = flow.nj_per_timestep(0);
+                let nj = flow.nj_per_timestep(current_time_us);
                 output.push_str(&format!("sink {name} {nj} nj/ts\n"));
             }
         }
@@ -68,8 +70,7 @@ impl RoutingServer {
                     energy.power_sinks.retain(|(n, _)| *n != name);
                 }
                 ["source", name, rate_str, unit_time] => {
-                    if let Some(nj_per_ts) =
-                        Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
+                    if let Some(nj_per_ts) = Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
                     {
                         let name = name.to_string();
                         energy.power_sources.retain(|(n, _)| *n != name);
@@ -79,8 +80,7 @@ impl RoutingServer {
                     }
                 }
                 ["sink", name, rate_str, unit_time] => {
-                    if let Some(nj_per_ts) =
-                        Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
+                    if let Some(nj_per_ts) = Self::parse_flow_rate(rate_str, unit_time, timestep_ns)
                     {
                         let name = name.to_string();
                         energy.power_sinks.retain(|(n, _)| *n != name);
@@ -122,6 +122,51 @@ impl RoutingServer {
             "ns" => 1,
             _ => return None,
         };
-        Some(rate * nw_factor * timestep_ns / time_ns)
+        // Use u128 to avoid overflow for large rates (e.g., kW with long timesteps).
+        let nj = (rate as u128) * (nw_factor as u128) * (timestep_ns as u128) / (time_ns as u128);
+        u64::try_from(nj).ok()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parse_flow_rate_basic() {
+        // 400 mw/s with 1ms timestep (1_000_000 ns)
+        // 400 * 1e6 nw * 1e6 ns / 1e9 ns = 400_000 nJ
+        let result = RoutingServer::parse_flow_rate("400", "mw/s", 1_000_000);
+        assert_eq!(result, Some(400_000));
+    }
+
+    #[test]
+    fn parse_flow_rate_nj_ts_passthrough() {
+        let result = RoutingServer::parse_flow_rate("42", "nj/ts", 999);
+        assert_eq!(result, Some(42));
+    }
+
+    #[test]
+    fn parse_flow_rate_no_overflow_kw() {
+        // 1 kw/s with 1s timestep (1_000_000_000 ns)
+        // = 1 * 1e12 nw * 1e9 ns / 1e9 ns = 1e12 nJ
+        // Without u128 intermediates: 1 * 1_000_000_000_000 * 1_000_000_000 would overflow u64.
+        let result = RoutingServer::parse_flow_rate("1", "kw/s", 1_000_000_000);
+        assert_eq!(result, Some(1_000_000_000_000));
+    }
+
+    #[test]
+    fn parse_flow_rate_invalid_unit() {
+        assert_eq!(RoutingServer::parse_flow_rate("100", "foo/s", 1_000_000), None);
+    }
+
+    #[test]
+    fn parse_flow_rate_invalid_time() {
+        assert_eq!(RoutingServer::parse_flow_rate("100", "mw/yr", 1_000_000), None);
+    }
+
+    #[test]
+    fn parse_flow_rate_invalid_rate() {
+        assert_eq!(RoutingServer::parse_flow_rate("abc", "mw/s", 1_000_000), None);
     }
 }

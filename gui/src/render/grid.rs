@@ -61,30 +61,42 @@ impl GridView {
     /// Handle pan (drag) and zoom (scroll) input on the canvas.
     ///
     /// `drag_started_on_node` should be `true` when the pointer was over a node
-    /// at drag start — in that case primary-drag is suppressed to avoid panning
+    /// at drag start -- in that case primary-drag is suppressed to avoid panning
     /// when the user meant to click a node.
     pub fn handle_input(&mut self, response: &Response, drag_started_on_node: bool) {
         let middle_drag = response.dragged_by(egui::PointerButton::Middle);
         let shift_drag = response.dragged_by(egui::PointerButton::Primary)
             && response.ctx.input(|i| i.modifiers.shift);
-        let primary_pan = response.dragged_by(egui::PointerButton::Primary)
-            && !drag_started_on_node;
+        let primary_pan =
+            response.dragged_by(egui::PointerButton::Primary) && !drag_started_on_node;
 
         if middle_drag || shift_drag || primary_pan {
             self.offset += response.drag_delta();
         }
 
         if response.hovered() {
-            let scroll = response.ctx.input(|i| i.smooth_scroll_delta.y);
-            if scroll != 0.0 {
-                let factor = 1.0 + scroll * 0.002;
+            // Pinch-to-zoom on touchpad
+            let pinch = response.ctx.input(|i| i.zoom_delta());
+            if pinch != 1.0 {
+                self.zoom = (self.zoom * pinch).clamp(0.01, 1000.0);
+            }
+
+            let ctrl_held = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.mac_cmd);
+            let scroll = response.ctx.input(|i| i.smooth_scroll_delta);
+
+            if ctrl_held && scroll.y != 0.0 {
+                // Ctrl+MouseWheel = zoom
+                let factor = 1.0 + scroll.y * 0.002;
                 self.zoom = (self.zoom * factor).clamp(0.01, 1000.0);
+            } else if scroll.x != 0.0 || scroll.y != 0.0 {
+                // Plain scroll / two-finger swipe = pan
+                self.offset += scroll;
             }
         }
     }
 
-    /// Draw the grid lines on the given canvas rect.
-    pub fn draw(&self, ui: &mut Ui, canvas_rect: Rect) {
+    /// Draw the grid lines and axis labels on the given canvas rect.
+    pub fn draw(&self, ui: &mut Ui, canvas_rect: Rect, unit_label: &str) {
         let painter = ui.painter_at(canvas_rect);
 
         // Determine grid spacing based on zoom
@@ -102,6 +114,7 @@ impl GridView {
         let grid_color = Color32::from_gray(60);
         let axis_color = Color32::from_gray(120);
         let text_color = Color32::from_gray(160);
+        let label_color = Color32::from_gray(200);
 
         for ix in x_start..=x_end {
             let wx = ix as f32 * base_spacing;
@@ -141,6 +154,304 @@ impl GridView {
                     egui::FontId::proportional(10.0),
                     text_color,
                 );
+            }
+        }
+
+        // Axis labels in the bottom-right corner
+        if !unit_label.is_empty() {
+            let margin = 8.0;
+            let font = egui::FontId::proportional(12.0);
+            // X-axis label
+            painter.text(
+                Pos2::new(canvas_rect.right() - margin, canvas_rect.bottom() - margin),
+                egui::Align2::RIGHT_BOTTOM,
+                format!("X ({unit_label})"),
+                font.clone(),
+                label_color,
+            );
+            // Y-axis label
+            painter.text(
+                Pos2::new(canvas_rect.left() + margin, canvas_rect.top() + margin),
+                egui::Align2::LEFT_TOP,
+                format!("Y ({unit_label})"),
+                font,
+                label_color,
+            );
+        }
+    }
+
+    /// Compute the visible world-space bounding box.
+    fn world_bounds(&self, canvas_rect: Rect) -> (Pos2, Pos2) {
+        let tl = self.screen_to_world(canvas_rect.left_top(), canvas_rect);
+        let br = self.screen_to_world(canvas_rect.right_bottom(), canvas_rect);
+        (
+            Pos2::new(tl.x.min(br.x), br.y.min(tl.y)),
+            Pos2::new(tl.x.max(br.x), br.y.max(tl.y)),
+        )
+    }
+
+    /// Compute content bounding box from nodes with margin.
+    fn content_bounds(nodes: &[crate::state::NodeState]) -> Option<(Pos2, Pos2)> {
+        if nodes.is_empty() {
+            return None;
+        }
+        let mut cmin = Pos2::new(f32::MAX, f32::MAX);
+        let mut cmax = Pos2::new(f32::MIN, f32::MIN);
+        for n in nodes {
+            cmin.x = cmin.x.min(n.x as f32);
+            cmin.y = cmin.y.min(n.y as f32);
+            cmax.x = cmax.x.max(n.x as f32);
+            cmax.y = cmax.y.max(n.y as f32);
+        }
+        let margin = ((cmax.x - cmin.x).max(cmax.y - cmin.y)).max(1.0) * 0.5;
+        cmin.x -= margin;
+        cmin.y -= margin;
+        cmax.x += margin;
+        cmax.y += margin;
+        Some((cmin, cmax))
+    }
+
+    /// Interactive scrollbars on all four edges of the canvas.
+    ///
+    /// Horizontal bars appear near the top and bottom edges; vertical bars near
+    /// the left and right edges. They become visible when the cursor is within
+    /// `PROXIMITY` pixels of the edge and can be dragged to pan the view.
+    ///
+    /// Returns `true` if a scrollbar is currently being dragged.
+    pub fn handle_scrollbars(
+        &mut self,
+        ui: &mut Ui,
+        canvas_rect: Rect,
+        nodes: &[crate::state::NodeState],
+    ) -> bool {
+        let Some((content_min, content_max)) = Self::content_bounds(nodes) else {
+            return false;
+        };
+        let content_w = content_max.x - content_min.x;
+        let content_h = content_max.y - content_min.y;
+        if content_w <= 0.0 || content_h <= 0.0 {
+            return false;
+        }
+
+        let pointer_pos = ui.ctx().input(|i| i.pointer.hover_pos());
+        let pointer_down = ui.ctx().input(|i| i.pointer.primary_down());
+        let pointer_pressed = ui.ctx().input(|i| i.pointer.primary_pressed());
+        let drag_delta = ui.ctx().input(|i| i.pointer.delta());
+
+        const PROXIMITY: f32 = 40.0;
+        const BAR_THICKNESS: f32 = 8.0;
+        const BAR_INSET: f32 = 3.0;
+        const ROUNDING: f32 = 4.0;
+
+        // Persistent drag state
+        let drag_id = ui.id().with("scrollbar_drag");
+        let mut dragging: Option<ScrollbarEdge> =
+            ui.data(|d| d.get_temp(drag_id)).unwrap_or(None);
+
+        if !pointer_down {
+            dragging = None;
+        }
+
+        let painter = ui.painter_at(canvas_rect);
+        let mut any_dragging = false;
+
+        // Process each edge
+        for &edge in &[
+            ScrollbarEdge::Bottom,
+            ScrollbarEdge::Top,
+            ScrollbarEdge::Right,
+            ScrollbarEdge::Left,
+        ] {
+            let is_horizontal = matches!(edge, ScrollbarEdge::Top | ScrollbarEdge::Bottom);
+
+            // Compute thumb fractions
+            let (view_min, view_max) = self.world_bounds(canvas_rect);
+            let (frac_start, frac_end) = if is_horizontal {
+                let fl = ((view_min.x - content_min.x) / content_w).clamp(0.0, 1.0);
+                let fr = ((view_max.x - content_min.x) / content_w).clamp(0.0, 1.0);
+                (fl, fr)
+            } else {
+                // Screen Y inverted vs world Y
+                let ft = ((content_max.y - view_max.y) / content_h).clamp(0.0, 1.0);
+                let fb = ((content_max.y - view_min.y) / content_h).clamp(0.0, 1.0);
+                (ft, fb)
+            };
+
+            // Compute geometry
+            let (track_rect, thumb_rect) = edge.geometry(
+                canvas_rect,
+                frac_start,
+                frac_end,
+                BAR_THICKNESS,
+                BAR_INSET,
+            );
+
+            let near_edge = pointer_pos.is_some_and(|p| {
+                let expanded = track_rect.expand2(if is_horizontal {
+                    Vec2::new(0.0, PROXIMITY)
+                } else {
+                    Vec2::new(PROXIMITY, 0.0)
+                });
+                expanded.contains(p)
+            });
+
+            let is_this_dragging = dragging == Some(edge);
+
+            // Start drag on press (not just down) to avoid re-triggering
+            if pointer_pressed && dragging.is_none() {
+                if let Some(p) = pointer_pos {
+                    if thumb_rect.expand(4.0).contains(p) {
+                        dragging = Some(edge);
+                    } else if near_edge && track_rect.contains(p) {
+                        // Click on track: jump thumb center to click position
+                        if is_horizontal {
+                            let click_frac =
+                                (p.x - canvas_rect.left()) / canvas_rect.width();
+                            let center_frac = (frac_start + frac_end) / 2.0;
+                            let world_dx = (click_frac - center_frac) * content_w;
+                            self.offset.x -= world_dx * self.zoom;
+                        } else {
+                            let click_frac =
+                                (p.y - canvas_rect.top()) / canvas_rect.height();
+                            let center_frac = (frac_start + frac_end) / 2.0;
+                            let world_dy = (click_frac - center_frac) * content_h;
+                            self.offset.y -= world_dy * self.zoom;
+                        }
+                        dragging = Some(edge);
+                    }
+                }
+            }
+
+            // Apply drag delta
+            if is_this_dragging {
+                if is_horizontal && drag_delta.x != 0.0 {
+                    let frac_dx = drag_delta.x / canvas_rect.width();
+                    self.offset.x -= frac_dx * content_w * self.zoom;
+                } else if !is_horizontal && drag_delta.y != 0.0 {
+                    let frac_dy = drag_delta.y / canvas_rect.height();
+                    self.offset.y -= frac_dy * content_h * self.zoom;
+                }
+                any_dragging = true;
+            }
+
+            // Draw when near or dragging
+            if near_edge || is_this_dragging {
+                let alpha = if is_this_dragging { 180 } else { 100 };
+                let color = Color32::from_rgba_premultiplied(150, 150, 150, alpha);
+
+                // Recompute thumb after potential offset change
+                let (vm, vx) = self.world_bounds(canvas_rect);
+                let (fs, fe) = if is_horizontal {
+                    (
+                        ((vm.x - content_min.x) / content_w).clamp(0.0, 1.0),
+                        ((vx.x - content_min.x) / content_w).clamp(0.0, 1.0),
+                    )
+                } else {
+                    (
+                        ((content_max.y - vx.y) / content_h).clamp(0.0, 1.0),
+                        ((content_max.y - vm.y) / content_h).clamp(0.0, 1.0),
+                    )
+                };
+                let (_, updated_thumb) =
+                    edge.geometry(canvas_rect, fs, fe, BAR_THICKNESS, BAR_INSET);
+                painter.rect_filled(updated_thumb, ROUNDING, color);
+            }
+        }
+
+        ui.data_mut(|d| d.insert_temp(drag_id, dragging));
+
+        if any_dragging {
+            ui.ctx().request_repaint();
+        }
+
+        any_dragging
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum ScrollbarEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+}
+
+impl ScrollbarEdge {
+    /// Returns (track_rect, thumb_rect) for this edge.
+    fn geometry(
+        self,
+        canvas: Rect,
+        frac_start: f32,
+        frac_end: f32,
+        thickness: f32,
+        inset: f32,
+    ) -> (Rect, Rect) {
+        match self {
+            Self::Bottom => {
+                let y = canvas.bottom() - inset - thickness;
+                let track = Rect::from_min_max(
+                    Pos2::new(canvas.left(), y),
+                    Pos2::new(canvas.right(), y + thickness),
+                );
+                let thumb = Rect::from_min_max(
+                    Pos2::new(
+                        canvas.left() + frac_start * canvas.width(),
+                        y,
+                    ),
+                    Pos2::new(
+                        canvas.left() + frac_end * canvas.width(),
+                        y + thickness,
+                    ),
+                );
+                (track, thumb)
+            }
+            Self::Top => {
+                let y = canvas.top() + inset;
+                let track = Rect::from_min_max(
+                    Pos2::new(canvas.left(), y),
+                    Pos2::new(canvas.right(), y + thickness),
+                );
+                let thumb = Rect::from_min_max(
+                    Pos2::new(
+                        canvas.left() + frac_start * canvas.width(),
+                        y,
+                    ),
+                    Pos2::new(
+                        canvas.left() + frac_end * canvas.width(),
+                        y + thickness,
+                    ),
+                );
+                (track, thumb)
+            }
+            Self::Right => {
+                let x = canvas.right() - inset - thickness;
+                let track = Rect::from_min_max(
+                    Pos2::new(x, canvas.top()),
+                    Pos2::new(x + thickness, canvas.bottom()),
+                );
+                let thumb = Rect::from_min_max(
+                    Pos2::new(x, canvas.top() + frac_start * canvas.height()),
+                    Pos2::new(
+                        x + thickness,
+                        canvas.top() + frac_end * canvas.height(),
+                    ),
+                );
+                (track, thumb)
+            }
+            Self::Left => {
+                let x = canvas.left() + inset;
+                let track = Rect::from_min_max(
+                    Pos2::new(x, canvas.top()),
+                    Pos2::new(x + thickness, canvas.bottom()),
+                );
+                let thumb = Rect::from_min_max(
+                    Pos2::new(x, canvas.top() + frac_start * canvas.height()),
+                    Pos2::new(
+                        x + thickness,
+                        canvas.top() + frac_end * canvas.height(),
+                    ),
+                );
+                (track, thumb)
             }
         }
     }

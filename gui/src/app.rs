@@ -1,7 +1,11 @@
+use anyhow::Result;
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use eframe::App;
 use egui::Context;
+
+use config::ast::DistanceUnit;
 
 use crate::config_editor;
 use crate::panels::{grid, inspector, messages, timeline, toolbar};
@@ -12,6 +16,15 @@ use trace::format::TraceEvent;
 
 pub struct NexusApp {
     pub mode: AppMode,
+}
+
+impl NexusApp {
+    pub fn new_with_config(p: PathBuf) -> Result<Self> {
+        let state = ConfigEditorState::new(p)?;
+        Ok(Self {
+            mode: AppMode::ConfigEditor(Box::new(state)),
+        })
+    }
 }
 
 impl Default for NexusApp {
@@ -132,8 +145,9 @@ impl NexusApp {
                 state.grid.fit_to_nodes(&nodes, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, _hovered) =
-                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[]);
+                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[], dist_unit);
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
@@ -216,7 +230,9 @@ impl NexusApp {
             ui.horizontal(|ui| {
                 ui.label("Dilation:");
                 let mut td = f64::from_bits(
-                    state.time_dilation.load(std::sync::atomic::Ordering::Relaxed),
+                    state
+                        .time_dilation
+                        .load(std::sync::atomic::Ordering::Relaxed),
                 ) as f32;
                 if ui
                     .add(
@@ -226,10 +242,9 @@ impl NexusApp {
                     )
                     .changed()
                 {
-                    state.time_dilation.store(
-                        (td as f64).to_bits(),
-                        std::sync::atomic::Ordering::Relaxed,
-                    );
+                    state
+                        .time_dilation
+                        .store((td as f64).to_bits(), std::sync::atomic::Ordering::Relaxed);
                 }
             });
             if finished {
@@ -245,15 +260,19 @@ impl NexusApp {
         // Central grid
         egui::CentralPanel::default().show(ctx, |ui| {
             if state.needs_fit {
-                state.grid.fit_to_nodes(&state.node_states, ui.available_size());
+                state
+                    .grid
+                    .fit_to_nodes(&state.node_states, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
                 &state.active_arrows,
+                dist_unit,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -410,7 +429,9 @@ impl NexusApp {
             if let Some(ts) = action.seek_to {
                 state.current_timestep = ts;
                 state.playing = false;
-                state.node_states = state.controller.reconstruct_states(ts, &state.initial_states);
+                state.node_states = state
+                    .controller
+                    .reconstruct_states(ts, &state.initial_states);
                 state.messages.clear();
                 gather_messages_through(&state.controller, ts, &state.sim, &mut state.messages);
             }
@@ -448,15 +469,19 @@ impl NexusApp {
         // Central grid
         egui::CentralPanel::default().show(ctx, |ui| {
             if state.needs_fit {
-                state.grid.fit_to_nodes(&state.node_states, ui.available_size());
+                state
+                    .grid
+                    .fit_to_nodes(&state.node_states, ui.available_size());
                 state.needs_fit = false;
             }
+            let dist_unit = sim_distance_unit(&state.sim);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
                 &state.node_states,
                 &state.selected_node,
                 &state.active_arrows,
+                dist_unit,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -572,21 +597,9 @@ impl NexusApp {
             .add_filter("TOML", &["toml"])
             .pick_file()
         {
-            // Try raw config first, then snapshot format
-            let sim = config::parse(path.clone()).or_else(|_| config::deserialize_config(&path));
-            match sim {
-                Ok(sim) => {
-                    self.mode = AppMode::ConfigEditor(Box::new(ConfigEditorState {
-                        sim,
-                        file_path: Some(path),
-                        grid: GridView::default(),
-                        selected_node: None,
-                        selected_channel: None,
-                        validation_error: None,
-                        dirty: false,
-                        add_item_buf: String::new(),
-                        needs_fit: true,
-                    }));
+            match ConfigEditorState::new(path) {
+                Ok(mode) => {
+                    self.mode = AppMode::ConfigEditor(Box::new(mode));
                 }
                 Err(e) => {
                     eprintln!("Failed to parse config: {e:#}");
@@ -626,6 +639,7 @@ impl NexusApp {
             dirty: true,
             add_item_buf: String::new(),
             needs_fit: true,
+            modules: crate::state::ModuleState::default(),
         }));
     }
 
@@ -717,7 +731,16 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
     nodes
 }
 
-/// Build a channel_index → Vec<subscriber node_index> lookup from the simulation config.
+/// Get the distance unit from the first node, falling back to Kilometers.
+fn sim_distance_unit(sim: &config::ast::Simulation) -> DistanceUnit {
+    sim.nodes
+        .values()
+        .next()
+        .map(|n| n.position.unit)
+        .unwrap_or(DistanceUnit::Kilometers)
+}
+
+/// Build a channel_index -> Vec<subscriber node_index> lookup from the simulation config.
 fn build_channel_subscribers(sim: &config::ast::Simulation) -> Vec<Vec<usize>> {
     let mut ch_names: Vec<_> = sim.channels.keys().cloned().collect();
     ch_names.sort();
@@ -871,7 +894,11 @@ fn process_gui_event(
                     if let Some(state) = node_states.get_mut(*node as usize)
                         && let Some(max) = state.max_nj
                     {
-                        let ratio = if max == 0 { 1.0 } else { *energy_nj as f32 / max as f32 };
+                        let ratio = if max == 0 {
+                            1.0
+                        } else {
+                            *energy_nj as f32 / max as f32
+                        };
                         state.charge_ratio = Some(ratio.clamp(0.0, 1.0));
                         state.is_dead = *energy_nj == 0 && max > 0;
                     }
@@ -915,7 +942,8 @@ fn format_data_preview(data: &[u8]) -> String {
         return if s.len() <= 64 {
             s.to_string()
         } else {
-            format!("{}... ({} bytes)", &s[..64], data.len())
+            let boundary = s.floor_char_boundary(64);
+            format!("{}... ({} bytes)", &s[..boundary], data.len())
         };
     }
     // Fallback to hex
@@ -973,7 +1001,7 @@ fn create_sim_from_trace_header(
             timestep: TimestepConfig {
                 length: NonZeroU64::new(1).unwrap(),
                 unit: TimeUnit::Milliseconds,
-                count: NonZeroU64::new(controller.total_timesteps).unwrap(),
+                count: NonZeroU64::new(controller.total_timesteps.max(1)).unwrap(),
                 start: SystemTime::now(),
             },
             seed: 0,

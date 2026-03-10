@@ -311,7 +311,22 @@ impl Simulation {
         Ok(ordering)
     }
 
-    pub(crate) fn validate(config_root: &PathBuf, val: parse::Simulation) -> Result<Self> {
+    pub(crate) fn validate(config_root: &PathBuf, mut val: parse::Simulation) -> Result<Self> {
+        // Apply profiles to nodes before validation (in order, so later
+        // profiles layer on top of earlier ones).
+        let profiles = val.profiles.take().unwrap_or_default();
+        for (node_name, node) in val.nodes.iter_mut() {
+            let profile_names = std::mem::take(&mut node.profile);
+            for profile_name in &profile_names {
+                // Case-insensitive profile lookup: module keys are stored lowercased.
+                let key = profile_name.to_ascii_lowercase();
+                let profile = profiles.get(&key).with_context(|| {
+                    format!("Node \"{node_name}\" references unknown profile \"{profile_name}\"")
+                })?;
+                crate::module::apply_profile(node, profile);
+            }
+        }
+
         let params = Params::validate(config_root, val.params)
             .context("Unable to validate simulation parameters")?;
 
@@ -779,10 +794,8 @@ impl PowerFlow {
     fn validate(def: parse::PowerFlowDef) -> Result<Self> {
         match def {
             parse::PowerFlowDef::Constant { rate, unit, time } => {
-                let unit =
-                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
-                let time =
-                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let unit = PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time = TimeUnit::validate(time).context("Failed to validate time unit")?;
                 Ok(Self::Constant(PowerRate { rate, unit, time }))
             }
             parse::PowerFlowDef::Scheduled {
@@ -795,10 +808,8 @@ impl PowerFlow {
                     schedule.len() >= 2,
                     "Piecewise linear schedule must have at least 2 breakpoints"
                 );
-                let unit =
-                    PowerUnit::validate(unit).context("Failed to validate power unit")?;
-                let time =
-                    TimeUnit::validate(time).context("Failed to validate time unit")?;
+                let unit = PowerUnit::validate(unit).context("Failed to validate power unit")?;
+                let time = TimeUnit::validate(time).context("Failed to validate time unit")?;
                 let mut breakpoints = Vec::with_capacity(schedule.len());
                 for bp in schedule {
                     let time_us = parse_duration_to_us(&bp.at)

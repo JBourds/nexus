@@ -22,9 +22,12 @@ pub fn add_item_ui(ui: &mut Ui, label: &str, buf: &mut String) -> Option<String>
     result
 }
 
-/// Small red "X" remove button. Returns `true` when clicked.
+/// Small red "X" remove button with hover tooltip. Returns `true` when clicked.
 pub fn remove_button(ui: &mut Ui) -> bool {
-    ui.add(egui::Button::new("✕").small())
+    let text = egui::RichText::new("\u{2716}")
+        .color(egui::Color32::from_rgb(200, 60, 60))
+        .size(12.0);
+    ui.add(egui::Button::new(text).small().frame(false))
         .on_hover_text("Remove")
         .clicked()
 }
@@ -66,9 +69,10 @@ pub fn optional_nonzero_u64(ui: &mut Ui, label: &str, val: &mut Option<NonZeroU6
             if ui
                 .add(egui::DragValue::new(&mut n).range(1..=u64::MAX))
                 .changed()
-                && let Some(nz) = NonZeroU64::new(n) {
-                    *v = nz;
-                }
+                && let Some(nz) = NonZeroU64::new(n)
+            {
+                *v = nz;
+            }
         }
     });
 }
@@ -89,9 +93,10 @@ pub fn optional_nonzero_usize(ui: &mut Ui, label: &str, val: &mut Option<NonZero
             if ui
                 .add(egui::DragValue::new(&mut n).range(1..=usize::MAX))
                 .changed()
-                && let Some(nz) = NonZeroUsize::new(n) {
-                    *v = nz;
-                }
+                && let Some(nz) = NonZeroUsize::new(n)
+            {
+                *v = nz;
+            }
         }
     });
 }
@@ -173,8 +178,39 @@ pub fn rssi_prob_expr_editor(ui: &mut Ui, id: &str, expr: &mut RssiProbExpr) {
                 .desired_width(120.0),
         );
         ui.label("noise floor (dBm):");
-        ui.add(egui::DragValue::new(&mut expr.noise_floor_dbm).speed(0.1));
+        dbm_drag_value(ui, &mut expr.noise_floor_dbm);
     });
+}
+
+/// DragValue for dBm fields that displays extreme values as +/- infinity.
+pub fn dbm_drag_value(ui: &mut Ui, val: &mut f64) {
+    let display = format_dbm(*val);
+    let mut text = display.clone();
+    let response = ui.add(
+        egui::TextEdit::singleline(&mut text)
+            .desired_width(60.0)
+            .horizontal_align(egui::Align::RIGHT),
+    );
+    if response.changed() {
+        let trimmed = text.trim();
+        if trimmed == "+inf" || trimmed == "inf" {
+            *val = f64::MAX;
+        } else if trimmed == "-inf" {
+            *val = f64::MIN;
+        } else if let Ok(v) = trimmed.parse::<f64>() {
+            *val = v;
+        }
+    }
+}
+
+fn format_dbm(val: f64) -> String {
+    if val >= f64::MAX / 2.0 {
+        "+inf".to_string()
+    } else if val <= f64::MIN / 2.0 {
+        "-inf".to_string()
+    } else {
+        format!("{val:.3}")
+    }
 }
 
 // --- Constant lookup tables for enum combos ---
@@ -252,7 +288,11 @@ pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
     ui.horizontal(|ui| {
         ui.label("Mode:");
         egui::ComboBox::from_id_salt(format!("{id}_mode"))
-            .selected_text(if mode == 0 { "Constant" } else { "PiecewiseLinear" })
+            .selected_text(if mode == 0 {
+                "Constant"
+            } else {
+                "PiecewiseLinear"
+            })
             .show_ui(ui, |ui| {
                 if ui.selectable_value(&mut mode, 0, "Constant").changed() {
                     *flow = PowerFlow::Constant(PowerRate {
@@ -261,7 +301,10 @@ pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
                         time: Default::default(),
                     });
                 }
-                if ui.selectable_value(&mut mode, 1, "PiecewiseLinear").changed() {
+                if ui
+                    .selectable_value(&mut mode, 1, "PiecewiseLinear")
+                    .changed()
+                {
                     *flow = PowerFlow::PiecewiseLinear {
                         unit: Default::default(),
                         time: Default::default(),

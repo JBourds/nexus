@@ -1,0 +1,6 @@
+# ESP32 Wi-Fi (includes board profile + Wi-Fi link)
+#
+# Combines the ESP32 board profile with a 2.4 GHz Wi-Fi link.
+# Use this module to get a complete ESP32 + Wi-Fi setup in one import.
+
+use = ["boards/esp32_devkit", "wifi/wifi_2_4ghz"]

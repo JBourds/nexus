@@ -1,0 +1,21 @@
+# Medium Solar Panel (~1W peak, day/night cycle)
+#
+# Source: Typical 1W solar panel (6V @ 170 mA)
+# - Peak output: ~1000 mW in direct sunlight
+# - Same day/night cycle model as solar_small, scaled up
+#
+# Assumptions:
+# - 24-hour repeating cycle
+# - Dawn 6:00–8:00, peak 8:00–16:00, dusk 16:00–18:00
+
+[profiles.solar_medium]
+
+[profiles.solar_medium.power_sources]
+solar = { unit = "mw", time = "s", repeat = "24h", schedule = [
+    { at = "0h",  rate = 0 },
+    { at = "6h",  rate = 0 },
+    { at = "8h",  rate = 1000 },
+    { at = "16h", rate = 1000 },
+    { at = "18h", rate = 0 },
+    { at = "24h", rate = 0 },
+]}

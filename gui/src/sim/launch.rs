@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, OnceLock};
 use std::sync::atomic::{AtomicBool, AtomicU64};
+use std::sync::{Arc, OnceLock};
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -34,10 +34,18 @@ fn ensure_global_subscriber() -> SimSinks {
         let sinks = SimSinks::new();
 
         let sim_layer = ReloadableSimLayer::new(sinks.clone());
-        let sim_filter =
-            filter::filter_fn(|metadata| matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement" | "motion"));
-        let fmt_filter =
-            filter::filter_fn(|metadata| !matches!(metadata.target(), "tx" | "rx" | "drop" | "battery" | "movement" | "motion"));
+        let sim_filter = filter::filter_fn(|metadata| {
+            matches!(
+                metadata.target(),
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+            )
+        });
+        let fmt_filter = filter::filter_fn(|metadata| {
+            !matches!(
+                metadata.target(),
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+            )
+        });
 
         let subscriber = tracing_subscriber::registry()
             .with(sim_layer.with_filter(sim_filter))
@@ -84,9 +92,16 @@ pub fn launch_simulation(
     let handle = std::thread::Builder::new()
         .name("nexus-sim".into())
         .spawn(move || {
-            if let Err(e) =
-                run_simulation(sim_clone, root_clone, fs_root, gui_tx_clone.clone(), sinks.clone(), abort_clone, pause_clone, td_clone)
-            {
+            if let Err(e) = run_simulation(
+                sim_clone,
+                root_clone,
+                fs_root,
+                gui_tx_clone.clone(),
+                sinks.clone(),
+                abort_clone,
+                pause_clone,
+                td_clone,
+            ) {
                 let _ = gui_tx_clone.send(GuiEvent::SimulationError(format!("{e:#}")));
             } else {
                 let _ = gui_tx_clone.send(GuiEvent::SimulationComplete);
@@ -97,7 +112,11 @@ pub fn launch_simulation(
         })
         .context("failed to spawn simulation thread")?;
 
-    Ok((SimController::new(gui_rx, abort, pause, handle), root, time_dilation))
+    Ok((
+        SimController::new(gui_rx, abort, pause, handle),
+        root,
+        time_dilation,
+    ))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -127,14 +146,15 @@ fn run_simulation(
         node_max_nj: {
             let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
             names.sort();
-            names.iter().map(|n| {
-                sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max))
-            }).collect()
+            names
+                .iter()
+                .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                .collect()
         },
     };
 
-    let writer = TraceWriter::create(&trace_path, &header)
-        .context("failed to create trace writer")?;
+    let writer =
+        TraceWriter::create(&trace_path, &header).context("failed to create trace writer")?;
 
     // Install sinks for this simulation run.
     sinks.install(gui_tx, writer);
@@ -142,7 +162,13 @@ fn run_simulation(
     run_inner(sim, fs_root, abort, pause, time_dilation)
 }
 
-fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBool>, pause: Arc<AtomicBool>, time_dilation: Arc<AtomicU64>) -> Result<()> {
+fn run_inner(
+    sim: ast::Simulation,
+    fs_root: Option<PathBuf>,
+    abort: Arc<AtomicBool>,
+    pause: Arc<AtomicBool>,
+    time_dilation: Arc<AtomicU64>,
+) -> Result<()> {
     let _ = ctrlc::set_handler(|| {});
 
     runner::build(&sim)?;
@@ -162,8 +188,20 @@ fn run_inner(sim: ast::Simulation, fs_root: Option<PathBuf>, abort: Arc<AtomicBo
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new_with_all_flags(sim, runc, file_handles, rx, tx, pending_remaps, Some(abort), Some(pause), Some(time_dilation))?;
-    let _protocol_handles = kernel.run(RunCmd::Simulate)?;
+    let kernel = Kernel::new_with_all_flags(
+        sim,
+        runc,
+        file_handles,
+        rx,
+        tx,
+        pending_remaps,
+        Some(abort),
+        Some(pause),
+        Some(time_dilation),
+    )?;
+    let _protocol_handles = kernel.run(RunCmd::Simulate {
+        config: PathBuf::new(),
+    })?;
 
     drop(sess);
     Ok(())

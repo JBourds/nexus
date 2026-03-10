@@ -1,4 +1,4 @@
-use egui::{Color32, Pos2, Rect, Stroke, Vec2, Ui};
+use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
 
 use crate::render::grid::GridView;
 use crate::state::NodeState;
@@ -36,8 +36,20 @@ pub fn draw_node(
     if node.is_dead {
         let half = radius * 0.7;
         let stroke = Stroke::new(2.0, Color32::RED);
-        painter.line_segment([screen_pos + Vec2::new(-half, -half), screen_pos + Vec2::new(half, half)], stroke);
-        painter.line_segment([screen_pos + Vec2::new(-half, half), screen_pos + Vec2::new(half, -half)], stroke);
+        painter.line_segment(
+            [
+                screen_pos + Vec2::new(-half, -half),
+                screen_pos + Vec2::new(half, half),
+            ],
+            stroke,
+        );
+        painter.line_segment(
+            [
+                screen_pos + Vec2::new(-half, half),
+                screen_pos + Vec2::new(half, -half),
+            ],
+            stroke,
+        );
     }
 
     // Selection ring

@@ -1,0 +1,4 @@
+Error {
+    context: "Failed to validate simulation parameters from config file.",
+    source: Node "sensor" references unknown profile "nonexistent_profile",
+}

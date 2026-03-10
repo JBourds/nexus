@@ -234,10 +234,9 @@ mod tests {
     #[test]
     fn test_dead_node_sources_and_sinks() {
         let mut energy = energy_with_source(0, 10_000, 50);
-        energy.power_sinks.push((
-            "mcu".into(),
-            PowerFlowState::Constant { nj_per_ts: 20 },
-        ));
+        energy
+            .power_sinks
+            .push(("mcu".into(), PowerFlowState::Constant { nj_per_ts: 20 }));
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         energy.is_dead = true;
@@ -1059,14 +1058,8 @@ mod tests {
     fn test_multiple_sources_and_sinks() {
         let mut energy = basic_energy(1000, 100_000);
         energy.power_sources = vec![
-            (
-                "solar".into(),
-                PowerFlowState::Constant { nj_per_ts: 100 },
-            ),
-            (
-                "charger".into(),
-                PowerFlowState::Constant { nj_per_ts: 50 },
-            ),
+            ("solar".into(), PowerFlowState::Constant { nj_per_ts: 100 }),
+            ("charger".into(), PowerFlowState::Constant { nj_per_ts: 50 }),
         ];
         energy.power_sinks = vec![
             ("mcu".into(), PowerFlowState::Constant { nj_per_ts: 30 }),
@@ -1086,10 +1079,7 @@ mod tests {
     #[test]
     fn test_dead_node_sinks_keep_zero() {
         let mut energy = basic_energy(0, 10_000);
-        energy.power_sinks = vec![(
-            "mcu".into(),
-            PowerFlowState::Constant { nj_per_ts: 100 },
-        )];
+        energy.power_sinks = vec![("mcu".into(), PowerFlowState::Constant { nj_per_ts: 100 })];
         energy.is_dead = true;
         let (mut router, _rx) = make_single_node_router(energy);
 

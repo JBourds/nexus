@@ -1,0 +1,35 @@
+# Test: profile applied with user overrides (user-wins merge).
+
+use = ["boards/esp32_devkit", "lora/sx1276_915mhz"]
+
+[params]
+timestep.length = 1
+timestep.unit = "s"
+timestep.count = 5
+seed = 42
+root = "~/simulations"
+
+[nodes.sensor]
+profile = "esp32"
+deployments = [
+    { charge = { max = 500, quantity = 500, unit = "mwh" }, initial_state = "active" }
+]
+
+# Override the clock rate from the profile (240 MHz → 160 MHz).
+[nodes.sensor.resources]
+clock_rate = 160
+clock_units = "mhz"
+
+# Add a GPS sink on top of the profile's MCU sink.
+[nodes.sensor.power_sinks]
+gps = { rate = 25, unit = "mw", time = "s" }
+
+[nodes.sensor.channel_energy.lora]
+tx = { quantity = 120, unit = "uj" }
+
+[[nodes.sensor.protocols]]
+name = "firmware"
+runner = "python3"
+runner_args = ["main.py"]
+publishers = ["lora"]
+subscribers = ["lora"]

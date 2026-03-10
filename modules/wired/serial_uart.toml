@@ -1,0 +1,36 @@
+# Generic UART Serial Link
+#
+# Source: Common UART specifications (RS-232 / TTL-level)
+# - Typical baud rate: 115200 bps
+# - Max cable length: ~15 m (RS-232), shorter for TTL
+# - Negligible propagation delay at short distances
+# - No packet loss on a direct wired connection
+#
+# Assumptions:
+# - Point-to-point exclusive channel
+# - Wired medium modeled with minimal RLGC values (short cable)
+# - 256 byte max message size (common UART buffer)
+
+[links.uart]
+medium.type = "wired"
+medium.rx_min_dbm = -60.0
+medium.tx_min_dbm = -10.0
+medium.tx_max_dbm = 0.0
+medium.r = 0.05
+medium.l = 0.0000005
+medium.c = 0.00000000005
+medium.g = 0.0000001
+medium.f = 115200.0
+packet_loss = "0"
+
+[links.uart.delays]
+transmission.rate = 115200
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 200000"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.uart]
+link = "uart"
+type = { type = "exclusive", ttl = 500, unit = "ms", max_size = 256 }
