@@ -1,0 +1,79 @@
+# Mixed Wireless Network — Module System Example
+#
+# Demonstrates combining multiple link technologies from stdlib modules
+# and a local project-specific module.
+#
+# Modules imported:
+#   - lora/sx1276_915mhz      : LoRa link + channel (for field sensors)
+#   - wifi/wifi_2_4ghz         : Wi-Fi link + channel (for indoor cluster)
+#   - ./local_uart             : Project-local serial link (for gateway ↔ server)
+#   - boards/esp32_devkit      : ESP32 profile
+#   - boards/rpi_zero_w        : Raspberry Pi Zero W profile
+#
+# Topology:
+#   field_sensor ──(lora)──► edge_gateway ──(uart)──► server
+#                            indoor_node ──(wifi)──┘
+
+use = [
+    "lora/sx1276_915mhz",
+    "wifi/wifi_2_4ghz",
+    "./local_uart",
+    "boards/esp32_devkit",
+    "boards/rpi_zero_w",
+]
+
+[params]
+timestep.length = 10
+timestep.unit   = "ms"
+timestep.count  = 20000
+seed            = 314
+root            = "~/simulations"
+
+# --- Field sensor (ESP32 + LoRa) ---
+
+[nodes.field_sensor]
+profile = "esp32"
+deployments = [{ position = { point = [-8, 0, 0], unit = "km" } }]
+
+[[nodes.field_sensor.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["field_sensor.py"]
+publishers  = ["lora"]
+
+# --- Edge gateway (RPi Zero W, bridges LoRa → UART) ---
+
+[nodes.edge_gateway]
+profile = "rpi_zero_w"
+deployments = [{ position = { point = [0, 0, 0], unit = "km" } }]
+
+[[nodes.edge_gateway.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["edge_gateway.py"]
+subscribers = ["lora"]
+publishers  = ["uart"]
+
+# --- Indoor Wi-Fi node (ESP32) ---
+
+[nodes.indoor_node]
+profile = "esp32"
+deployments = [{ position = { point = [0.05, 0, 0], unit = "km" } }]
+
+[[nodes.indoor_node.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["indoor_node.py"]
+publishers  = ["wifi"]
+
+# --- Server (RPi, receives from both UART and Wi-Fi) ---
+
+[nodes.server]
+profile = "rpi_zero_w"
+deployments = [{ position = { point = [0.1, 0, 0], unit = "km" } }]
+
+[[nodes.server.protocols]]
+name        = "fw"
+runner      = "python3"
+runner_args = ["server.py"]
+subscribers = ["uart", "wifi"]

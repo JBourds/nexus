@@ -1,0 +1,29 @@
+# Project-local UART module
+#
+# A slow 9600-baud serial link for the gateway-to-server connection.
+# This demonstrates using a relative-path module (./local_uart)
+# alongside stdlib modules.
+
+[links.uart]
+medium.type = "wired"
+medium.rx_min_dbm = -60.0
+medium.tx_min_dbm = -10.0
+medium.tx_max_dbm = 0.0
+medium.r = 0.05
+medium.l = 0.0000005
+medium.c = 0.00000000005
+medium.g = 0.0000001
+medium.f = 9600.0
+packet_loss = "0"
+
+[links.uart.delays]
+transmission.rate = 9600
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 200000"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.uart]
+link = "uart"
+type = { type = "exclusive", ttl = 1000, unit = "ms", max_size = 256 }
