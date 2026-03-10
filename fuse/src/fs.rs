@@ -496,7 +496,6 @@ impl Filesystem for NexusFs {
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
-                eprintln!("break!");
                 break;
             }
         }
