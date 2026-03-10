@@ -38,6 +38,27 @@ use crate::router::{RouterError, RoutingServer};
 use crate::types::MotionPattern;
 
 impl RoutingServer {
+    /// Emit a "movement" tracing event for the given node.
+    fn emit_movement_event(node_index: usize, node: &crate::types::Node, timestep: u64) {
+        let (x, y, z) = (
+            node.position.point.x,
+            node.position.point.y,
+            node.position.point.z,
+        );
+        let (az, el, roll) = (
+            node.position.orientation.az,
+            node.position.orientation.el,
+            node.position.orientation.roll,
+        );
+        event!(
+            target: "movement",
+            Level::INFO,
+            timestep,
+            node = node_index as u64,
+            x, y, z, az, el, roll
+        );
+    }
+
     /// Apply the current motion pattern to `node_index`, updating
     /// `position.point` to reflect the current timestep.  No-op for `Static`.
     pub(super) fn apply_motion(&mut self, node_index: usize) {
@@ -60,19 +81,7 @@ impl RoutingServer {
                 continue;
             };
             node.position.point = new_point;
-            let (x, y, z) = (new_point.x, new_point.y, new_point.z);
-            let (az, el, roll) = (
-                node.position.orientation.az,
-                node.position.orientation.el,
-                node.position.orientation.roll,
-            );
-            event!(
-                target: "movement",
-                Level::INFO,
-                timestep,
-                node = node_idx as u64,
-                x, y, z, az, el, roll
-            );
+            Self::emit_movement_event(node_idx, node, timestep);
         }
     }
 
@@ -143,26 +152,9 @@ impl RoutingServer {
             _ => return Err(RouterError::InvalidString(msg.data)),
         }
         node.motion = MotionPattern::Static;
-        // Emit movement event with updated position.
         let timestep = self.timestep;
         let node = &self.channels.nodes[node_index];
-        let (x, y, z) = (
-            node.position.point.x,
-            node.position.point.y,
-            node.position.point.z,
-        );
-        let (az, el, roll) = (
-            node.position.orientation.az,
-            node.position.orientation.el,
-            node.position.orientation.roll,
-        );
-        event!(
-            target: "movement",
-            Level::INFO,
-            timestep,
-            node = node_index as u64,
-            x, y, z, az, el, roll
-        );
+        Self::emit_movement_event(node_index, node, timestep);
         Ok(())
     }
 
@@ -196,23 +188,7 @@ impl RoutingServer {
         node.motion = MotionPattern::Static;
         let timestep = self.timestep;
         let node = &self.channels.nodes[node_index];
-        let (x, y, z) = (
-            node.position.point.x,
-            node.position.point.y,
-            node.position.point.z,
-        );
-        let (az, el, roll) = (
-            node.position.orientation.az,
-            node.position.orientation.el,
-            node.position.orientation.roll,
-        );
-        event!(
-            target: "movement",
-            Level::INFO,
-            timestep,
-            node = node_index as u64,
-            x, y, z, az, el, roll
-        );
+        Self::emit_movement_event(node_index, node, timestep);
         event!(
             target: "motion",
             Level::INFO,
