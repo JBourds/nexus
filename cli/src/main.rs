@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
-use kernel::{self, Kernel, sources::Source};
+use kernel::{self, KernelBuilder, sources::Source};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
@@ -181,14 +181,15 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles = Kernel::new(
+        let protocol_handles = KernelBuilder::new(
             sim.clone(),
             runc,
             file_handles,
             rx,
             tx,
             pending_remaps.clone(),
-        )?
+        )
+        .build()?
         .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));
     }

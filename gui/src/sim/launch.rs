@@ -14,7 +14,7 @@ use config::ast::{self, ChannelType};
 use fuse::PID;
 use fuse::channel::{ChannelMode, NexusChannel};
 use fuse::fs::*;
-use kernel::Kernel;
+use kernel::KernelBuilder;
 use runner::ProtocolHandle;
 use runner::cli::RunCmd;
 use trace::format::TraceHeader;
@@ -187,17 +187,18 @@ fn run_inner(
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new_with_all_flags(
+    let kernel = KernelBuilder::new(
         sim,
         runc,
         file_handles,
         rx,
         tx,
         pending_remaps,
-        Some(abort),
-        Some(pause),
-        Some(time_dilation),
-    )?;
+    )
+    .abort_flag(abort)
+    .pause_flag(pause)
+    .time_dilation(time_dilation)
+    .build()?;
     let _protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;
