@@ -5,4 +5,6 @@ fn main() {
         .unwrap()
         .join("modules");
     println!("cargo:rustc-env=NEXUS_STDLIB_DIR={}", modules_dir.display());
+    println!("cargo:rerun-if-changed=build.rs");
+    println!("cargo:rerun-if-changed={}", modules_dir.display());
 }

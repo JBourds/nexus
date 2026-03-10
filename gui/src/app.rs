@@ -942,7 +942,8 @@ fn format_data_preview(data: &[u8]) -> String {
         return if s.len() <= 64 {
             s.to_string()
         } else {
-            format!("{}... ({} bytes)", &s[..64], data.len())
+            let boundary = s.floor_char_boundary(64);
+            format!("{}... ({} bytes)", &s[..boundary], data.len())
         };
     }
     // Fallback to hex
@@ -1000,7 +1001,7 @@ fn create_sim_from_trace_header(
             timestep: TimestepConfig {
                 length: NonZeroU64::new(1).unwrap(),
                 unit: TimeUnit::Milliseconds,
-                count: NonZeroU64::new(controller.total_timesteps).unwrap(),
+                count: NonZeroU64::new(controller.total_timesteps.max(1)).unwrap(),
                 start: SystemTime::now(),
             },
             seed: 0,
