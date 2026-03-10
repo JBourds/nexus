@@ -311,7 +311,20 @@ impl Simulation {
         Ok(ordering)
     }
 
-    pub(crate) fn validate(config_root: &PathBuf, val: parse::Simulation) -> Result<Self> {
+    pub(crate) fn validate(config_root: &PathBuf, mut val: parse::Simulation) -> Result<Self> {
+        // Apply profiles to nodes before validation.
+        let profiles = val.profiles.take().unwrap_or_default();
+        for (node_name, node) in val.nodes.iter_mut() {
+            if let Some(ref profile_name) = node.profile {
+                let profile = profiles.get(profile_name).with_context(|| {
+                    format!(
+                        "Node \"{node_name}\" references unknown profile \"{profile_name}\""
+                    )
+                })?;
+                crate::module::apply_profile(node, profile);
+            }
+        }
+
         let params = Params::validate(config_root, val.params)
             .context("Unable to validate simulation parameters")?;
 

@@ -7,10 +7,34 @@ use toml::value::Datetime;
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Simulation {
+    pub(super) r#use: Option<Vec<String>>,
     pub(super) params: Params,
     pub(super) links: HashMap<String, Link>,
     pub(super) nodes: HashMap<String, Node>,
     pub(super) channels: HashMap<String, Channel>,
+    pub(super) profiles: Option<HashMap<String, NodeProfile>>,
+}
+
+/// A module file: restricted subset of nexus.toml (no params, no nodes).
+/// `deny_unknown_fields` ensures params/nodes are rejected by serde.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub(crate) struct ModuleFile {
+    pub(crate) r#use: Option<Vec<String>>,
+    pub(crate) links: HashMap<String, Link>,
+    pub(crate) channels: HashMap<String, Channel>,
+    pub(crate) profiles: Option<HashMap<String, NodeProfile>>,
+}
+
+/// A reusable partial node template (hardware characteristics).
+#[derive(Clone, Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NodeProfile {
+    pub(super) resources: Option<Resources>,
+    pub(super) power_states: Option<HashMap<String, PowerRate>>,
+    pub(super) power_sources: Option<HashMap<String, PowerFlowDef>>,
+    pub(super) power_sinks: Option<HashMap<String, PowerFlowDef>>,
+    pub(super) channel_energy: Option<HashMap<String, ChannelEnergy>>,
 }
 
 #[derive(Debug, Default, Deserialize)]
@@ -68,7 +92,7 @@ pub struct Charge {
 /// A power rate used for per-node power states.
 /// `rate` is always positive; semantics (consumption vs. generation) are
 /// determined by the field it appears in.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct PowerRate {
     pub(super) rate: u64,
@@ -77,7 +101,7 @@ pub struct PowerRate {
 }
 
 /// A single breakpoint in a piecewise-linear power schedule.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Breakpoint {
     pub(super) at: String,
@@ -86,7 +110,7 @@ pub struct Breakpoint {
 
 /// A power flow definition that can be either constant or scheduled.
 /// Deserialized as untagged: presence of `schedule` distinguishes the two.
-#[derive(Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize)]
 #[serde(untagged)]
 pub enum PowerFlowDef {
     Scheduled {
@@ -103,7 +127,7 @@ pub enum PowerFlowDef {
 }
 
 /// One-time energy cost (e.g. per TX or RX on a channel).
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Energy {
     pub(super) quantity: u64,
@@ -111,7 +135,7 @@ pub struct Energy {
 }
 
 /// Optional TX/RX energy costs for a single channel within a protocol.
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct ChannelEnergy {
     pub(super) tx: Option<Energy>,
@@ -244,7 +268,7 @@ pub struct Coordinate {
     pub(super) unit: Option<Unit>,
 }
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Clone, Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Resources {
     pub(super) clock_rate: Option<NonZeroU64>,
@@ -257,6 +281,7 @@ pub struct Resources {
 #[derive(Debug, Default, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct Node {
+    pub(super) profile: Option<String>,
     pub(super) resources: Option<Resources>,
     pub(super) deployments: Option<Vec<Deployment>>,
     pub(super) internal_names: Option<Vec<ProtocolName>>,

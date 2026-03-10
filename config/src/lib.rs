@@ -6,6 +6,7 @@ use std::path::{Path, PathBuf};
 mod channel;
 mod helpers;
 mod medium;
+pub mod module;
 mod namespace;
 pub(crate) mod parse;
 mod position;
@@ -26,9 +27,14 @@ pub fn parse(mut config_root: PathBuf) -> Result<ast::Simulation> {
         "Unable to open file located at {}",
         config_root.to_string_lossy()
     ))?;
-    let parsed: parse::Simulation = toml::from_str(config_text.as_str())
+    let mut parsed: parse::Simulation = toml::from_str(config_text.as_str())
         .context("Failed to parse simulation parameters from config file.")?;
     config_root.pop();
+
+    // Resolve module imports and merge into the parsed simulation.
+    module::resolve_and_merge(&config_root, &mut parsed)
+        .context("Failed to resolve module imports.")?;
+
     let validated = ast::Simulation::validate(&config_root, parsed)
         .context("Failed to validate simulation parameters from config file.")?;
     Ok(validated)
