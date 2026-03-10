@@ -347,7 +347,7 @@ impl CgroupController {
                 // ignore small fluctuations
                 let (low, high) = cgroup.adjustment_threshold;
                 if ratio >= low && ratio <= high {
-                    return;
+                    continue;
                 }
                 cgroup.bandwidth = bandwidth;
                 cgroup.period = period;
