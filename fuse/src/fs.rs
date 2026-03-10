@@ -219,7 +219,13 @@ impl NexusFs {
                 root: root.clone(),
                 err,
             })?;
-        while !root.exists() {}
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !root.exists() {
+            if std::time::Instant::now() > deadline {
+                return Err(FsError::MountTimeout { root });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         Ok((sess, kernel_side))
     }
 
