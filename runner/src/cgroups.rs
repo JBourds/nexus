@@ -239,22 +239,21 @@ impl CgroupController {
         freeze(&self.nodes_limited.root, false);
     }
 
-    /// Freeze a single node's cgroup by name.
-    pub fn freeze_node(&mut self, name: &str) {
+    /// Set the frozen state of a single node's cgroup by name.
+    pub fn set_node_frozen(&mut self, name: &str, frozen: bool) {
         if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
-            freeze(&cgroup.path, true);
+            freeze(&cgroup.path, frozen);
         } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
-            freeze(&cgroup.path, true);
+            freeze(&cgroup.path, frozen);
         }
     }
 
-    /// Unfreeze a single node's cgroup by name.
+    pub fn freeze_node(&mut self, name: &str) {
+        self.set_node_frozen(name, true);
+    }
+
     pub fn unfreeze_node(&mut self, name: &str) {
-        if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
-            freeze(&cgroup.path, false);
-        } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
-            freeze(&cgroup.path, false);
-        }
+        self.set_node_frozen(name, false);
     }
 
     /// Unfreeze a node's cgroup, then respawn all its protocols.
