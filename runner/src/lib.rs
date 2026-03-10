@@ -83,7 +83,7 @@ fn build_protocol<'a>(
         })
 }
 
-fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::Error> {
+fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::RunnerDetail> {
     let mut errors = vec![];
     for mut ctx in contexts {
         let exit_code = ctx.handle.wait().expect("cannot wait for process");
@@ -92,7 +92,7 @@ fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::Error> {
             if errors.is_empty() {
                 eprintln!("\nError building programs:\n");
             }
-            errors.push(errors::Error::new(
+            errors.push(errors::RunnerDetail::new(
                 ctx.node.to_string(),
                 ctx.protocol.to_string(),
                 ctx.root.to_path_buf(),
