@@ -78,7 +78,7 @@ impl RoutingServer {
         let ber = bit_error.probability(rssi);
         if ber != 0.0 {
             let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())
-                .map(|_| unsafe { bit_error.sample_unchecked(ber, rng) });
+                .map(|_| bit_error.sample_unchecked(ber, rng));
             let _ = flip_bits(buf.to_mut(), flips);
         }
         Some(buf)

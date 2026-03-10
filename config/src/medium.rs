@@ -335,11 +335,10 @@ impl RssiProbExpr {
         self.probability(rssi) > rng.random_range(0.0..=1.0)
     }
 
-    /// # Safety
-    /// This function is entirely safe to use and will never cause major issues.
+    /// Sample using a pre-computed probability value.
     /// If the value for `prob` is not properly constrained from 0.0 - 1.0 this
-    /// will give bogus results though.
-    pub unsafe fn sample_unchecked(&self, prob: f64, rng: &mut rand::rngs::StdRng) -> bool {
+    /// will give bogus results.
+    pub fn sample_unchecked(&self, prob: f64, rng: &mut rand::rngs::StdRng) -> bool {
         prob > rng.random_range(0.0..=1.0)
     }
 
