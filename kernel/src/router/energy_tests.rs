@@ -97,6 +97,11 @@ mod tests {
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
             pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            sequence: 0,
         };
         (router, rx)
     }
@@ -502,6 +507,11 @@ mod tests {
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
             pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            sequence: 0,
         };
 
         // Write "active" to ctl.energy_state
@@ -566,6 +576,11 @@ mod tests {
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
             pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            sequence: 0,
         };
 
         // Write unknown state
@@ -1127,6 +1142,11 @@ mod tests {
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
             pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            sequence: 0,
         };
 
         // Write a source and a sink via control file (nj/ts passthrough)
@@ -1221,6 +1241,11 @@ mod tests {
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
             pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            sequence: 0,
         };
 
         // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep

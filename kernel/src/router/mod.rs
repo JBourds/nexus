@@ -111,6 +111,10 @@ pub(crate) struct RoutingServer {
     newly_recovered: Vec<usize>,
     /// Shared queue of (old_pid, new_pid) pairs for FUSE buffer migration.
     pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    /// Cached nanoseconds per timestep (constant for the simulation).
+    timestep_ns: u64,
+    /// Sequence counter for message ordering within a timestep.
+    sequence: usize,
 }
 
 impl RoutingServer {
@@ -132,6 +136,7 @@ impl RoutingServer {
                 let fuse_mapping = channels.make_fuse_mapping();
                 let handles_count = channels.handles.len();
                 let routes = RoutingTable::new(&channels);
+                let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
                 let mut router = Self {
                     // This makes all the `NonZeroU64`s happy
                     timestep: 1,
@@ -146,6 +151,8 @@ impl RoutingServer {
                     newly_depleted: Vec::new(),
                     newly_recovered: Vec::new(),
                     pending_remaps,
+                    timestep_ns,
+                    sequence: 0,
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -377,10 +384,9 @@ impl RoutingServer {
         }
     }
 
-    /// Microseconds per simulation step (derived from `ts_config`).
+    /// Microseconds per simulation step (derived from cached `timestep_ns`).
     fn us_per_step(&self) -> u64 {
-        let ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
-        ns / 1000
+        self.timestep_ns / 1000
     }
 
     /// Take a single step in the simulation, moving all queued messages to
