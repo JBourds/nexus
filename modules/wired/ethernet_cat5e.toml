@@ -1,0 +1,35 @@
+# Cat-5e Copper Ethernet
+#
+# Source: TIA/EIA-568-B.2 specification
+# - Data rate: 1 Gbps (1000BASE-T)
+# - Max segment length: 100 m
+# - RLGC values approximate for Cat-5e at 100 MHz
+#
+# Assumptions:
+# - Full-duplex operation
+# - Negligible bit errors on conforming cable lengths
+# - 1500 byte MTU (standard Ethernet)
+
+[links.ethernet_cat5e]
+medium.type = "wired"
+medium.rx_min_dbm = -30.0
+medium.tx_min_dbm = -10.0
+medium.tx_max_dbm = 0.0
+medium.r = 0.188
+medium.l = 0.000000525
+medium.c = 0.0000000000052
+medium.g = 0.000000001
+medium.f = 100000000.0
+packet_loss = "0"
+
+[links.ethernet_cat5e.delays]
+transmission.rate = 1
+transmission.data = "gB"
+transmission.time = "s"
+propagation.rate = "d / 200000"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.ethernet]
+link = "ethernet_cat5e"
+type = { type = "exclusive", ttl = 100, unit = "ms", max_size = 1500 }

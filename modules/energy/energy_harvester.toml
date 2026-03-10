@@ -1,0 +1,14 @@
+# Thermoelectric / Vibration Energy Harvester
+#
+# Source: Typical TEG or piezo harvester specs
+# - Continuous output: ~5 mW (from body heat or machinery vibration)
+# - Very low but constant energy source
+#
+# Assumptions:
+# - Constant output (no day/night variation)
+# - Suitable for ultra-low-power sensor nodes
+
+[profiles.energy_harvester]
+
+[profiles.energy_harvester.power_sources]
+harvester = { rate = 5, unit = "mw", time = "s" }

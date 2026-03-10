@@ -1,0 +1,35 @@
+# Semtech SX1276 LoRa transceiver at 915 MHz (Americas ISM band)
+#
+# Source: Semtech SX1276/77/78/79 datasheet, Rev 7 (May 2020)
+# - Frequency range: 137–1020 MHz
+# - Max TX power: +20 dBm (100 mW) with PA_BOOST
+# - Receiver sensitivity: -137 dBm @ SF12/BW125kHz
+# - Typical antenna gain: ~2 dBi (quarter-wave whip)
+# - Typical data rate: 300 bps (SF12) to 37.5 kbps (SF6)
+#
+# Assumptions:
+# - SF12 / BW 125 kHz (longest range, lowest data rate)
+# - Omnidirectional radiation pattern
+# - Packet loss modeled as logistic function of RSSI
+
+[links.lora_915]
+medium.type = "wireless"
+medium.wavelength_meters = 0.328      # 915 MHz → c / 915e6
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -137.0
+medium.tx_min_dbm = -4.0
+medium.tx_max_dbm = 20.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 120) / 5))"
+
+[links.lora_915.delays]
+transmission.rate = 300
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora]
+link = "lora_915"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }

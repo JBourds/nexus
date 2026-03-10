@@ -1,0 +1,9 @@
+# 1S LiPo Battery (500 mAh)
+#
+# Source: Generic 1S LiPo specs
+# - Nominal voltage: 3.7V
+# - Capacity: 500 mAh (~1850 mWh at nominal)
+# - Common in small drones, wearables, portable sensors
+
+[profiles.lipo_1s_500mah]
+# No resources — battery-only profile; combine with a board profile.

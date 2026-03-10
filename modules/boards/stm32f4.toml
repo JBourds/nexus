@@ -1,0 +1,26 @@
+# STM32F4 Discovery (STM32F407VG)
+#
+# Source: STM32F407xx Datasheet (DS8626 Rev 10)
+# - ARM Cortex-M4 @ 168 MHz
+# - 192 KB SRAM
+# - Run mode: ~93 mA @ 168 MHz, all peripherals on
+# - Sleep: ~33 mA
+# - Stop: ~0.4 mA
+# - Standby: ~2.5 uA
+
+[profiles.stm32f4]
+
+[profiles.stm32f4.resources]
+clock_rate = 168
+clock_units = "mhz"
+ram = 192
+ram_units = "kb"
+
+[profiles.stm32f4.power_states]
+standby = { rate = 3,   unit = "uw", time = "s" }
+stop    = { rate = 400, unit = "uw", time = "s" }
+sleep   = { rate = 110, unit = "mw", time = "s" }
+active  = { rate = 310, unit = "mw", time = "s" }
+
+[profiles.stm32f4.power_sinks]
+mcu = { rate = 50, unit = "mw", time = "s" }

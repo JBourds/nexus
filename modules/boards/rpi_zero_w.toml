@@ -1,0 +1,28 @@
+# Raspberry Pi Zero W
+#
+# Source: Raspberry Pi Zero W documentation, BCM2835 datasheet
+# - ARM1176JZF-S @ 1 GHz (single-core)
+# - 512 MB LPDDR2 SDRAM
+# - Active (no Wi-Fi): ~120 mA @ 5V (~600 mW)
+# - Active (Wi-Fi): ~170 mA @ 5V (~850 mW)
+# - Idle: ~80 mA @ 5V (~400 mW)
+#
+# Assumptions:
+# - Power states approximate typical measured values
+# - This is a full Linux SBC; "sleep" is idle with display off
+
+[profiles.rpi_zero_w]
+
+[profiles.rpi_zero_w.resources]
+clock_rate = 1
+clock_units = "ghz"
+ram = 512
+ram_units = "mb"
+
+[profiles.rpi_zero_w.power_states]
+idle        = { rate = 400, unit = "mw", time = "s" }
+active      = { rate = 600, unit = "mw", time = "s" }
+wifi_active = { rate = 850, unit = "mw", time = "s" }
+
+[profiles.rpi_zero_w.power_sinks]
+board = { rate = 350, unit = "mw", time = "s" }

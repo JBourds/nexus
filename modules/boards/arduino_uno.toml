@@ -1,0 +1,28 @@
+# Arduino Uno (ATmega328P)
+#
+# Source: Atmel ATmega328P datasheet (DS40001984A)
+# - 8-bit AVR @ 16 MHz
+# - 2 KB SRAM
+# - Active current: ~12 mA @ 5V, 16 MHz
+# - Idle mode: ~4 mA
+# - Power-down: ~1 uA
+#
+# Assumptions:
+# - Power states approximate datasheet typical values at 5V
+# - Board sink includes regulator + LED (~15 mA)
+
+[profiles.arduino_uno]
+
+[profiles.arduino_uno.resources]
+clock_rate = 16
+clock_units = "mhz"
+ram = 2
+ram_units = "kb"
+
+[profiles.arduino_uno.power_states]
+power_down = { rate = 1,  unit = "uw", time = "s" }
+idle       = { rate = 20, unit = "mw", time = "s" }
+active     = { rate = 60, unit = "mw", time = "s" }
+
+[profiles.arduino_uno.power_sinks]
+board = { rate = 75, unit = "mw", time = "s" }

@@ -1,0 +1,34 @@
+# Generic 802.11ac Wi-Fi at 5 GHz
+#
+# Source: IEEE 802.11ac standard, typical consumer hardware specs
+# - Frequency: 5 GHz (channel 36 = 5180 MHz)
+# - Data rate: up to 433 Mbps (single stream), modeled at 100 Mbps typical
+# - TX power: up to 17 dBm (50 mW) per FCC on some channels
+# - Receiver sensitivity: ~-80 dBm
+# - Shorter range than 2.4 GHz due to higher path loss
+#
+# Assumptions:
+# - Omnidirectional, single spatial stream
+# - 100 Mbps effective throughput
+
+[links.wifi_5]
+medium.type = "wireless"
+medium.wavelength_meters = 0.058      # 5180 MHz → c / 5.18e9
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -80.0
+medium.tx_min_dbm = 0.0
+medium.tx_max_dbm = 17.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 70) / 3))"
+
+[links.wifi_5.delays]
+transmission.rate = 100
+transmission.data = "mB"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.wifi_5ghz]
+link = "wifi_5"
+type = { type = "exclusive", ttl = 500, unit = "ms", max_size = 1500 }

@@ -1,0 +1,13 @@
+# CR2032 Coin Cell Battery
+#
+# Source: Energizer CR2032 datasheet
+# - Nominal voltage: 3.0V
+# - Typical capacity: 225 mAh (~675 mWh at nominal)
+# - Used in low-power IoT, sensors, key fobs
+#
+# Note: Capacity varies significantly with discharge rate.
+# At high drain (>1 mA), effective capacity may be 50-100 mAh.
+# The 675 mWh figure assumes light continuous drain.
+
+[profiles.cr2032]
+# No resources — battery-only profile; combine with a board profile.

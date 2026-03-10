@@ -1,0 +1,32 @@
+# ESP32 DevKit v1 (Espressif ESP32-WROOM-32)
+#
+# Source: ESP32 Technical Reference Manual v5.3, ESP32 Datasheet v4.6
+# - Dual-core Xtensa LX6 @ 240 MHz
+# - 520 KB SRAM
+# - Active current: ~80–240 mA @ 3.3V depending on peripherals
+# - Light sleep: ~0.8 mA
+# - Deep sleep: ~10 uA
+# - Modem sleep: ~20 mA (CPU on, Wi-Fi off)
+#
+# Assumptions:
+# - Single-core modeled (240 MHz)
+# - Power states approximate typical consumption at 3.3V supply
+# - MCU baseline sink represents always-on peripheral draw
+
+[profiles.esp32]
+
+[profiles.esp32.resources]
+clock_rate = 240
+clock_units = "mhz"
+ram = 520
+ram_units = "kb"
+
+[profiles.esp32.power_states]
+deep_sleep  = { rate = 10,  unit = "uw", time = "s" }
+light_sleep = { rate = 800, unit = "uw", time = "s" }
+modem_sleep = { rate = 20,  unit = "mw", time = "s" }
+active      = { rate = 100, unit = "mw", time = "s" }
+wifi_active = { rate = 180, unit = "mw", time = "s" }
+
+[profiles.esp32.power_sinks]
+mcu = { rate = 30, unit = "mw", time = "s" }

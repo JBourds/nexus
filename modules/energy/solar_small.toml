@@ -1,0 +1,24 @@
+# Small Solar Panel (~100 mW peak)
+#
+# Source: Typical small polycrystalline solar panel specs
+# - Peak output: ~100 mW (5V @ 20 mA in direct sunlight)
+# - Day/night cycle modeled as piecewise linear over 24 hours
+# - Dawn ramp: 6:00–8:00, peak: 8:00–16:00, dusk ramp: 16:00–18:00
+#
+# Assumptions:
+# - 24-hour repeating cycle
+# - Zero output at night
+# - Linear ramp during dawn/dusk transitions
+# - Peak = 100 mW sustained
+
+[profiles.solar_small]
+
+[profiles.solar_small.power_sources]
+solar = { unit = "mw", time = "s", repeat = "24h", schedule = [
+    { at = "0h",  rate = 0 },
+    { at = "6h",  rate = 0 },
+    { at = "8h",  rate = 100 },
+    { at = "16h", rate = 100 },
+    { at = "18h", rate = 0 },
+    { at = "24h", rate = 0 },
+]}

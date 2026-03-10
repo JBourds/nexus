@@ -1,0 +1,33 @@
+# Semtech SX1276 LoRa transceiver at 868 MHz (EU ISM band)
+#
+# Source: Semtech SX1276/77/78/79 datasheet, Rev 7 (May 2020)
+# - Same transceiver as sx1276_915mhz, tuned to 868 MHz
+# - EU duty cycle limits apply (not modeled here)
+# - Max TX power: +14 dBm (25 mW) per EU regulation
+# - Receiver sensitivity: -137 dBm @ SF12/BW125kHz
+#
+# Assumptions:
+# - SF12 / BW 125 kHz
+# - Omnidirectional radiation pattern
+
+[links.lora_868]
+medium.type = "wireless"
+medium.wavelength_meters = 0.346      # 868 MHz → c / 868e6
+medium.gain_dbi = 2.0
+medium.rx_min_dbm = -137.0
+medium.tx_min_dbm = -4.0
+medium.tx_max_dbm = 14.0
+medium.shape = "omni"
+packet_loss = "1 / (1 + exp((rssi + 120) / 5))"
+
+[links.lora_868.delays]
+transmission.rate = 300
+transmission.data = "bit"
+transmission.time = "s"
+propagation.rate = "d / 299792.458"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.lora_eu]
+link = "lora_868"
+type = { type = "exclusive", ttl = 2000, unit = "ms", max_size = 255 }

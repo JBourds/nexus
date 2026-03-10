@@ -1,0 +1,35 @@
+# USB 2.0 Full-Speed
+#
+# Source: USB 2.0 Specification
+# - Full-speed: 12 Mbps
+# - Max cable length: 5 m
+# - High-speed (480 Mbps) also available but not modeled here
+#
+# Assumptions:
+# - Full-speed mode (12 Mbps)
+# - Point-to-point exclusive channel
+# - 64 byte max packet (full-speed bulk endpoint)
+
+[links.usb2]
+medium.type = "wired"
+medium.rx_min_dbm = -40.0
+medium.tx_min_dbm = -10.0
+medium.tx_max_dbm = 0.0
+medium.r = 0.1
+medium.l = 0.0000005
+medium.c = 0.00000000005
+medium.g = 0.0000001
+medium.f = 12000000.0
+packet_loss = "0"
+
+[links.usb2.delays]
+transmission.rate = 12
+transmission.data = "mb"
+transmission.time = "s"
+propagation.rate = "d / 200000"
+propagation.distance = "km"
+propagation.time = "s"
+
+[channels.usb2]
+link = "usb2"
+type = { type = "exclusive", ttl = 100, unit = "ms", max_size = 64 }
