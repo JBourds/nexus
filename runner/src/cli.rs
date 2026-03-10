@@ -21,10 +21,6 @@ pub struct Cli {
     #[arg(long)]
     pub n: Option<usize>,
 
-    /// Configuration toml file for the simulation
-    #[arg(short, long)]
-    pub config: String,
-
     /// Location where the NexusFS should be mounted during simulation
     #[arg(short, long)]
     pub root: Option<PathBuf>,
@@ -66,10 +62,12 @@ impl Display for OutputDestination {
     }
 }
 
-#[derive(Subcommand, Debug, Default, Clone, PartialEq)]
+#[derive(Subcommand, Debug, Clone, PartialEq)]
 pub enum RunCmd {
-    #[default]
-    Simulate,
+    Simulate {
+        /// Configuration toml file for the simulation
+        config: PathBuf,
+    },
     Replay {
         logs: PathBuf,
     },
@@ -107,7 +105,7 @@ pub enum ModulesCmd {
 impl Display for RunCmd {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            RunCmd::Simulate => write!(f, "simulate"),
+            RunCmd::Simulate { .. } => write!(f, "simulate"),
             RunCmd::Replay { .. } => write!(f, "replay"),
             RunCmd::Logs { .. } => write!(f, "logs"),
             RunCmd::Fuzz => write!(f, "fuzz"),

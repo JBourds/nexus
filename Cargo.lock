@@ -904,6 +904,7 @@ dependencies = [
  "pretty_assertions",
  "rand 0.9.2",
  "serde",
+ "tempfile",
  "thiserror 2.0.12",
  "toml",
  "tracing",

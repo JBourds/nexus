@@ -28,17 +28,20 @@ const CONFIG: &str = "nexus.toml";
 
 fn main() -> Result<()> {
     let args = Cli::parse();
-    match args.cmd {
-        RunCmd::Simulate => simulate(args),
+    match &args.cmd {
+        RunCmd::Simulate { .. } => simulate(args),
         RunCmd::Replay { .. } => replay(args),
         RunCmd::Logs { .. } => print_logs(args),
-        RunCmd::Modules { ref action } => handle_modules(action),
+        RunCmd::Modules { action } => handle_modules(action),
         _ => todo!(),
     }
 }
 
 fn simulate(args: Cli) -> Result<()> {
-    let sim = config::parse((&args.config).into())?;
+    let RunCmd::Simulate { ref config } = args.cmd else {
+        unreachable!()
+    };
+    let sim = config::parse(config.clone())?;
     let root = make_sim_dir(&sim.params.root)?;
     config::serialize_config(&sim, &root.join(CONFIG))?;
     run(args, sim, root)
@@ -229,7 +232,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
     let trace_path = root.join("trace.nxs");
 
     // Build TraceLayer for binary logging (both tx and rx go into unified trace)
-    let trace_layer = if matches!(cmd, RunCmd::Simulate | RunCmd::Replay { .. }) {
+    let trace_layer = if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
         let header = trace::format::TraceHeader {
             node_names: {
                 let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
@@ -335,7 +338,7 @@ fn make_fs_channels(
             .into_iter()
         {
             let mode = match run_cmd {
-                RunCmd::Simulate => {
+                RunCmd::Simulate { .. } => {
                     let file_cmd = match (
                         protocol.subscribers.contains(channel),
                         protocol.publishers.contains(channel),

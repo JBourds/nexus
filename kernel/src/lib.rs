@@ -257,7 +257,7 @@ impl Kernel {
     #[instrument(skip_all)]
     fn get_write_source(rx: Receiver<fuse::FsMessage>, cmd: RunCmd) -> Result<Source, SourceError> {
         match cmd {
-            RunCmd::Simulate => Source::simulated(rx),
+            RunCmd::Simulate { .. } => Source::simulated(rx),
             RunCmd::Replay { logs } => {
                 // Prefer unified trace format if available, fall back to legacy
                 let trace_file = logs.join("trace.nxs");
