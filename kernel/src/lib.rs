@@ -13,7 +13,7 @@ use helpers::{make_handles, unzip};
 
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{
         Arc, Mutex,
@@ -142,7 +142,7 @@ impl Kernel {
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
         let (node_names, nodes) = unzip(sorted_nodes);
-        let node_handles: std::collections::HashMap<String, NodeHandle> = make_handles(node_names.clone())
+        let node_handles: HashMap<String, NodeHandle> = make_handles(node_names.clone())
             .into_iter()
             .map(|(name, idx)| (name, NodeIdx(idx)))
             .collect();
