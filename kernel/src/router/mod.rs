@@ -389,79 +389,87 @@ impl RoutingServer {
         self.timestep_ns / 1000
     }
 
-    /// Take a single step in the simulation, moving all queued messages to
-    /// their destination. Check for whether a channel's queue is full before
-    /// placing it in the mailbox.
+    /// Take a single step in the simulation.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
-
-        // Compute current simulation time in microseconds for piecewise flows
-        let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
-        let current_time_us = self.timestep * timestep_ns / 1000;
-
-        // Drain per-timestep energy for all nodes with batteries
-        for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
-            if let Some(energy) = &mut node.energy {
-                let was_dead = energy.is_dead;
-                // Always apply power sources (even when dead, e.g. solar charging)
-                let source_nj: u64 = energy
-                    .power_sources
-                    .iter()
-                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                    .sum();
-                energy.charge_nj += source_nj;
-                // Always apply power sinks (even when dead; saturating keeps charge at 0)
-                let sink_nj: u64 = energy
-                    .power_sinks
-                    .iter()
-                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                    .sum();
-                energy.charge_nj = energy.charge_nj.saturating_sub(sink_nj);
-                // Only drain power state if alive
-                if !was_dead {
-                    let drain = energy
-                        .current_state
-                        .as_deref()
-                        .and_then(|s| energy.power_states_nj.get(s).copied())
-                        .unwrap_or(0);
-                    energy.charge_nj = energy.charge_nj.saturating_sub(drain);
-                }
-                energy.charge_nj = energy.charge_nj.min(energy.max_nj);
-                // Detect transitions
-                if !was_dead && energy.charge_nj == 0 {
-                    energy.is_dead = true;
-                    self.newly_depleted.push(node_idx);
-                } else if was_dead {
-                    let recovered = energy
-                        .restart_threshold_nj
-                        .is_some_and(|t| energy.charge_nj >= t);
-                    if recovered {
-                        energy.is_dead = false;
-                        self.newly_recovered.push(node_idx);
-                    }
-                }
-                // Log battery snapshot for replay
-                let timestep = self.timestep;
-                let charge_nj = energy.charge_nj;
-                event!(target: "battery", Level::INFO, timestep, node = node_idx as u64, charge_nj);
-            }
-        }
-
-        // Advance positions of any nodes with active motion patterns and emit
-        // "movement" log events for each node that moved.
+        self.tick_energy();
         self.apply_all_motions_and_log();
+        self.expire_messages();
+        self.deliver_queued_messages()
+    }
 
-        // Clear all old messages
+    /// Apply per-timestep energy sources, sinks, and power-state drain.
+    /// Detects death (charge == 0) and recovery (charge >= threshold).
+    fn tick_energy(&mut self) {
+        let current_time_us = self.timestep * self.timestep_ns / 1000;
+        let timestep = self.timestep;
+
+        for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
+            let Some(energy) = &mut node.energy else {
+                continue;
+            };
+            let was_dead = energy.is_dead;
+
+            // Sources always apply (even when dead, e.g. solar charging)
+            let source_nj: u64 = energy
+                .power_sources
+                .iter()
+                .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
+                .sum();
+            energy.charge_nj += source_nj;
+
+            // Sinks always apply (saturating keeps charge at 0)
+            let sink_nj: u64 = energy
+                .power_sinks
+                .iter()
+                .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
+                .sum();
+            energy.charge_nj = energy.charge_nj.saturating_sub(sink_nj);
+
+            // Power state drain only when alive
+            if !was_dead {
+                let drain = energy
+                    .current_state
+                    .as_deref()
+                    .and_then(|s| energy.power_states_nj.get(s).copied())
+                    .unwrap_or(0);
+                energy.charge_nj = energy.charge_nj.saturating_sub(drain);
+            }
+            energy.charge_nj = energy.charge_nj.min(energy.max_nj);
+
+            // Detect transitions
+            if !was_dead && energy.charge_nj == 0 {
+                energy.is_dead = true;
+                self.newly_depleted.push(node_idx);
+            } else if was_dead
+                && energy
+                    .restart_threshold_nj
+                    .is_some_and(|t| energy.charge_nj >= t)
+            {
+                energy.is_dead = false;
+                self.newly_recovered.push(node_idx);
+            }
+
+            let charge_nj = energy.charge_nj;
+            event!(target: "battery", Level::INFO, timestep, node = node_idx as u64, charge_nj);
+        }
+    }
+
+    /// Remove expired messages from all mailboxes.
+    fn expire_messages(&mut self) {
+        let timestep = self.timestep;
         for mailbox in self.mailboxes.iter_mut() {
             while mailbox
                 .front()
-                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < self.timestep))
+                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < timestep))
             {
                 let _ = mailbox.pop_front();
             }
         }
+    }
 
-        // Deliver all messages which should now be active
+    /// Deliver all messages whose activation timestep has arrived.
+    fn deliver_queued_messages(&mut self) -> Result<(), RouterError> {
         while self
             .queued
             .peek()
@@ -471,12 +479,9 @@ impl RoutingServer {
                 return Err(RouterError::StepError);
             };
             let (_, dst_node, channel_handle) = self.channels.handles[frame.handle_ptr];
-            let channel_index = channel_handle;
             let mailbox = &mut self.mailboxes[frame.handle_ptr];
+            let channel = &mut self.channels.channels[channel_handle.0];
 
-            // Once the write to a shared channel has finished simulating the
-            // link delays, it resolves what should be in the medium
-            let channel = &mut self.channels.channels[channel_index.0];
             if channel
                 .r#type
                 .max_buffered()
@@ -501,7 +506,7 @@ impl RoutingServer {
                 event!(
                     target: "drop", Level::WARN,
                     timestep = self.timestep,
-                    channel = channel_index.0,
+                    channel = channel_handle.0,
                     node = frame.msg.src.0,
                     reason = "buffer_full"
                 );
