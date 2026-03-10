@@ -24,15 +24,15 @@ while True:
         f.write(f"DATA:{seq}:humidity={40 + seq % 20}")
         seq += 1
 
-    # Check remaining energy
+    # Check remaining energy (bounded read -- control files don't send EOF)
     with open(ctl_energy, "r") as f:
-        energy = f.read().strip()
+        energy = f.read(64).strip()
         if energy:
             print(f"Sensor energy: {energy}")
 
-    # Read any response from gateway
+    # Read any response from gateway (bounded read for same reason)
     with open(lora, "r") as f:
-        msg = f.read()
+        msg = f.read(4096)
         if msg:
             print(f"Sensor rx: {msg}")
 
