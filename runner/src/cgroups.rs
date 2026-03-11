@@ -11,6 +11,7 @@ use config::ast::{self, NodeProtocol, Resources};
 use crate::{
     ProtocolSummary,
     assignment::{Bandwidth, Relative},
+    errors::ProtocolError,
     run_protocol,
 };
 
@@ -109,7 +110,7 @@ impl ProtocolHandle {
         }
         self.process = None;
         // Spawn a fresh process
-        self.run(cgroup.clone());
+        self.run(cgroup.clone()).ok()?;
         let new_pid = self.pid()?;
         Some((old_pid, new_pid))
     }
@@ -130,29 +131,30 @@ impl ProtocolHandle {
         }
     }
 
-    pub fn finish(mut self) -> Option<ProtocolSummary> {
-        self.process.take().map(|mut p| {
-            p.kill().expect("Couldn't kill process.");
-            let output = p
-                .wait_with_output()
-                .expect("Expected process to be completed.");
-            ProtocolSummary {
-                node: self.node,
-                protocol: self.protocol,
-                output,
+    pub fn finish(mut self) -> Result<Option<ProtocolSummary>, io::Error> {
+        match self.process.take() {
+            Some(mut p) => {
+                p.kill()?;
+                let output = p.wait_with_output()?;
+                Ok(Some(ProtocolSummary {
+                    node: self.node,
+                    protocol: self.protocol,
+                    output,
+                }))
             }
-        })
+            None => Ok(None),
+        }
     }
 
-    pub fn run(&mut self, cgroup: impl AsRef<Path>) -> bool {
+    pub fn run(&mut self, cgroup: impl AsRef<Path>) -> Result<bool, ProtocolError> {
         if self.process.is_none() {
             let process =
-                run_protocol(&self.ast, cgroup.as_ref()).expect("couldn't execute process");
+                run_protocol(&self.ast, cgroup.as_ref()).map_err(ProtocolError::UnableToRun)?;
             move_process(cgroup.as_ref(), process.id());
             self.process = Some(process);
-            true
+            Ok(true)
         } else {
-            false
+            Ok(false)
         }
     }
 }
@@ -302,7 +304,7 @@ impl CgroupController {
         name: &str,
         protocol: &NodeProtocol,
         handle: &NodeHandle,
-    ) -> ProtocolHandle {
+    ) -> Result<ProtocolHandle, ProtocolError> {
         let node = self
             .get_node(handle)
             .expect("couldn't find node from handle.");
@@ -316,11 +318,9 @@ impl CgroupController {
             name.to_string(),
         );
         handle.cgroup_path = Some(cgroup.clone());
-        if !handle.run(&cgroup) {
-            panic!("error running protocol");
-        }
+        handle.run(&cgroup)?;
         node.add(cgroup);
-        handle
+        Ok(handle)
     }
 
     pub fn assign_cpu_weights(&mut self, relative_assignments: &Relative) {

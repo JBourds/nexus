@@ -137,7 +137,7 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone());
         for (protocol_name, protocol) in &node.protocols {
-            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
+            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
             affinity_builder.add_protocol(
                 node_name,
                 protocol_handle
