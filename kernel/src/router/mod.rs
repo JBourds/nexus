@@ -20,7 +20,6 @@ use config::ast::Position;
 use config::ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
 use rand::rngs::StdRng;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -108,8 +107,8 @@ pub(crate) struct RoutingServer {
     newly_depleted: Vec<usize>,
     /// Node indices that recovered above their restart threshold this timestep.
     newly_recovered: Vec<usize>,
-    /// Shared queue of (old_pid, new_pid) pairs for FUSE buffer migration.
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    /// Sender for (old_pid, new_pid) pairs consumed by the FUSE filesystem.
+    remap_tx: mpsc::Sender<(u32, u32)>,
     /// Cached nanoseconds per timestep (constant for the simulation).
     timestep_ns: u64,
     /// Sequence counter for message ordering within a timestep.
@@ -125,7 +124,7 @@ impl RoutingServer {
         ts_config: TimestepConfig,
         rng: StdRng,
         mut source: Source,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -149,7 +148,7 @@ impl RoutingServer {
                     tx,
                     newly_depleted: Vec::new(),
                     newly_recovered: Vec::new(),
-                    pending_remaps,
+                    remap_tx,
                     timestep_ns,
                     sequence: 0,
                 };
@@ -216,10 +215,12 @@ impl RoutingServer {
                 }
             }
         }
-        // Push remaps to shared FUSE queue
-        match self.pending_remaps.lock() {
-            Ok(mut queue) => queue.extend_from_slice(pairs),
-            Err(e) => warn!("pending_remaps mutex poisoned, PID remaps lost: {e}"),
+        // Send remaps to FUSE filesystem
+        for &pair in pairs {
+            if let Err(e) = self.remap_tx.send(pair) {
+                warn!("remap channel disconnected, PID remap lost: {e}");
+                break;
+            }
         }
     }
 

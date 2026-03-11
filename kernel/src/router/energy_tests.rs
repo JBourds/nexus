@@ -96,7 +96,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
-            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()
@@ -511,7 +511,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
-            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()
@@ -580,7 +580,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
-            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()
@@ -934,17 +934,18 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
-    // Test: apply_pid_remaps pushes pairs to shared FUSE queue
+    // Test: apply_pid_remaps sends pairs to FUSE remap channel
     // -----------------------------------------------------------------------
     #[test]
-    fn test_pid_remap_pushes_to_shared_queue() {
+    fn test_pid_remap_sends_to_channel() {
+        let (remap_tx, remap_rx) = std::sync::mpsc::channel();
         let (mut router, _rx) = make_single_node_router(basic_energy(1000, 10_000));
+        router.remap_tx = remap_tx;
 
-        let queue = router.pending_remaps.clone();
         router.apply_pid_remaps(&[(5, 6), (7, 8)]);
 
-        let pairs = queue.lock().unwrap();
-        assert_eq!(*pairs, vec![(5, 6), (7, 8)]);
+        let pairs: Vec<(u32, u32)> = remap_rx.try_iter().collect();
+        assert_eq!(pairs, vec![(5, 6), (7, 8)]);
     }
 
     // -----------------------------------------------------------------------
@@ -1155,7 +1156,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
-            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()
@@ -1254,7 +1255,7 @@ mod tests {
             tx,
             newly_depleted: Vec::new(),
             newly_recovered: Vec::new(),
-            pending_remaps: std::sync::Arc::new(std::sync::Mutex::new(Vec::new())),
+            remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()

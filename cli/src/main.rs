@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::stdout;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
@@ -164,7 +163,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     for _ in 0..args.n.unwrap_or(1) {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
-        let pending_remaps = Arc::new(Mutex::new(Vec::new()));
+        let (remap_tx, remap_rx) = std::sync::mpsc::channel();
         let pids: Vec<u32> = runc
             .handles
             .iter()
@@ -173,7 +172,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         let fs = args
             .root
             .clone()
-            .map(|root| NexusFs::new(root, pending_remaps.clone()))
+            .map(|root| NexusFs::new(root, remap_rx))
             .unwrap_or_default();
 
         #[allow(unused_variables)]
@@ -192,7 +191,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             file_handles,
             rx,
             tx,
-            pending_remaps.clone(),
+            remap_tx,
         )
         .build()?
         .run(args.cmd.clone())?;

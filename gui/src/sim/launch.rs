@@ -174,9 +174,9 @@ fn run_inner(
     let runc = runner::run(&sim)?;
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
-    let pending_remaps = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (remap_tx, remap_rx) = std::sync::mpsc::channel();
     let fs = fs_root
-        .map(|root| NexusFs::new(root, pending_remaps.clone()))
+        .map(|root| NexusFs::new(root, remap_rx))
         .unwrap_or_default();
 
     let file_handles = make_file_handles(&sim, &runc.handles);
@@ -194,7 +194,7 @@ fn run_inner(
         file_handles,
         rx,
         tx,
-        pending_remaps,
+        remap_tx,
     )
     .abort_flag(abort)
     .pause_flag(pause)

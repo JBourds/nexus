@@ -17,7 +17,7 @@ use std::{
     collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
@@ -73,7 +73,7 @@ pub struct Kernel {
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
 }
@@ -85,7 +85,7 @@ pub struct KernelBuilder {
     file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
     rx: mpsc::Receiver<fuse::FsMessage>,
     tx: mpsc::Sender<fuse::KernelMessage>,
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
     time_dilation: Option<Arc<AtomicU64>>,
@@ -98,7 +98,7 @@ impl KernelBuilder {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Self {
         Self {
             sim,
@@ -106,7 +106,7 @@ impl KernelBuilder {
             file_handles,
             rx,
             tx,
-            pending_remaps,
+            remap_tx,
             abort: None,
             pause: None,
             time_dilation: None,
@@ -157,7 +157,7 @@ impl KernelBuilder {
             runc: self.runc,
             rx: self.rx,
             tx: self.tx,
-            pending_remaps: self.pending_remaps,
+            remap_tx: self.remap_tx,
             abort: self.abort,
             pause: self.pause,
         })
@@ -179,14 +179,14 @@ impl Kernel {
             runc,
             tx,
             rx,
-            pending_remaps,
+            remap_tx,
             abort,
             pause,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source, pending_remaps)
+            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
         queue_event(
