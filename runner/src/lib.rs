@@ -6,6 +6,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
 };
 pub mod assignment;
+pub mod cgroupfs;
 pub mod cgroups;
 pub mod cli;
 pub mod errors;

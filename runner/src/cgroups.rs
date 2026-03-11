@@ -1,7 +1,6 @@
 use std::{
     collections::HashMap,
-    fs::{self, File, OpenOptions},
-    io::{self, Read, Write},
+    io,
     path::{Path, PathBuf},
     process::Child,
 };
@@ -11,6 +10,7 @@ use config::ast::{self, NodeProtocol, Resources};
 use crate::{
     ProtocolSummary,
     assignment::{Bandwidth, Relative},
+    cgroupfs::{CgroupFs, RealCgroupFs},
     errors::ProtocolError,
     run_protocol,
 };
@@ -46,6 +46,8 @@ pub struct CgroupController {
     pub nodes_limited: NodeBucket,
     /// cgroup with nodes that have no specified resource limit
     pub nodes_unlimited: NodeBucket,
+    /// filesystem abstraction for cgroup operations
+    fs: Box<dyn CgroupFs>,
 }
 
 #[derive(Clone, Debug)]
@@ -150,7 +152,7 @@ impl ProtocolHandle {
         if self.process.is_none() {
             let process =
                 run_protocol(&self.ast, cgroup.as_ref()).map_err(ProtocolError::UnableToRun)?;
-            move_process(cgroup.as_ref(), process.id());
+            move_process(&RealCgroupFs, cgroup.as_ref(), process.id());
             self.process = Some(process);
             Ok(true)
         } else {
@@ -191,9 +193,9 @@ impl NodeCgroup {
 }
 
 impl NodeBucket {
-    fn new(root: PathBuf) -> io::Result<Self> {
-        fs::create_dir(&root)?;
-        enable_subtree_control(&root);
+    fn new(fs: &dyn CgroupFs, root: PathBuf) -> io::Result<Self> {
+        fs.create_dir(&root)?;
+        enable_subtree_control(fs, &root);
         Ok(Self {
             root,
             nodes: HashMap::new(),
@@ -203,21 +205,26 @@ impl NodeBucket {
 
 impl CgroupController {
     pub fn new() -> io::Result<Self> {
+        Self::with_fs(Box::new(RealCgroupFs))
+    }
+
+    pub fn with_fs(fs: Box<dyn CgroupFs>) -> io::Result<Self> {
         let pid = std::process::id();
-        let root = make_root(pid)?;
+        let root = make_root(&*fs, pid)?;
 
         let kernel_cgroup_path = root.join(KERNEL);
-        fs::create_dir(&kernel_cgroup_path)?;
-        move_process(&kernel_cgroup_path, pid);
-        enable_subtree_control(&root);
+        fs.create_dir(&kernel_cgroup_path)?;
+        move_process(&*fs, &kernel_cgroup_path, pid);
+        enable_subtree_control(&*fs, &root);
 
-        let nodes_unlimited = NodeBucket::new(root.join(NODES_UNLIMITED))?;
-        let nodes_limited = NodeBucket::new(root.join(NODES_LIMITED))?;
+        let nodes_unlimited = NodeBucket::new(&*fs, root.join(NODES_UNLIMITED))?;
+        let nodes_limited = NodeBucket::new(&*fs, root.join(NODES_LIMITED))?;
 
         let mut obj = Self {
             root,
             nodes_limited,
             nodes_unlimited,
+            fs,
         };
         obj.freeze_nodes();
         Ok(obj)
@@ -225,22 +232,22 @@ impl CgroupController {
 
     /// Don't let any node process start until the FUSE fs has been setup
     pub fn freeze_nodes(&mut self) {
-        freeze(&self.nodes_unlimited.root, true);
-        freeze(&self.nodes_limited.root, true);
+        freeze(&*self.fs, &self.nodes_unlimited.root, true);
+        freeze(&*self.fs, &self.nodes_limited.root, true);
     }
 
     /// Don't let any node process start until the FUSE fs has been setup
     pub fn unfreeze_nodes(&mut self) {
-        freeze(&self.nodes_unlimited.root, false);
-        freeze(&self.nodes_limited.root, false);
+        freeze(&*self.fs, &self.nodes_unlimited.root, false);
+        freeze(&*self.fs, &self.nodes_limited.root, false);
     }
 
     /// Set the frozen state of a single node's cgroup by name.
     pub fn set_node_frozen(&mut self, name: &str, frozen: bool) {
         if let Some(cgroup) = self.nodes_unlimited.nodes.get(name) {
-            freeze(&cgroup.path, frozen);
+            freeze(&*self.fs, &cgroup.path, frozen);
         } else if let Some(cgroup) = self.nodes_limited.nodes.get(name) {
-            freeze(&cgroup.path, frozen);
+            freeze(&*self.fs, &cgroup.path, frozen);
         }
     }
 
@@ -271,9 +278,9 @@ impl CgroupController {
             &mut self.nodes_unlimited
         };
         let path = parent.root.join(name);
-        fs::create_dir(&path)?;
-        enable_subtree_control(&path);
-        uclamp_min(&path, b"max");
+        self.fs.create_dir(&path)?;
+        enable_subtree_control(&*self.fs, &path);
+        uclamp_min(&*self.fs, &path, b"max");
         let handle = NodeHandle {
             has_limited_resources,
             key: name.to_string(),
@@ -299,28 +306,38 @@ impl CgroupController {
         protocol: &NodeProtocol,
         handle: &NodeHandle,
     ) -> Result<ProtocolHandle, ProtocolError> {
-        let node = self
-            .get_node(handle)
-            .ok_or_else(|| ProtocolError::NodeNotFound(handle.key.clone()))?;
-        let cgroup = node.path.join(name);
-        fs::create_dir(&cgroup)?;
-        let mut handle = ProtocolHandle::new(
+        // Extract what we need before re-borrowing self
+        let (cgroup, protocol_count) = {
+            let node = self
+                .get_node(handle)
+                .ok_or_else(|| ProtocolError::NodeNotFound(handle.key.clone()))?;
+            (node.path.join(name), node.protocols.len())
+        };
+        self.fs.create_dir(&cgroup)?;
+        let mut proto_handle = ProtocolHandle::new(
             handle.clone(),
-            node.protocols.len(),
+            protocol_count,
             protocol.clone(),
             handle.key.clone(),
             name.to_string(),
         );
-        handle.cgroup_path = Some(cgroup.clone());
-        handle.run(&cgroup)?;
+        proto_handle.cgroup_path = Some(cgroup.clone());
+        proto_handle.run(&cgroup)?;
+        // Re-borrow to add the protocol cgroup
+        let node = self
+            .get_node(handle)
+            .expect("node was just looked up");
         node.add(cgroup);
-        Ok(handle)
+        Ok(proto_handle)
     }
 
     pub fn assign_cpu_weights(&mut self, relative_assignments: &Relative) {
         for (name, weight) in relative_assignments.weights() {
             let dir = self.nodes_limited.root.join(name);
-            if let Err(e) = write_cgroup_file(&dir, CPU_WEIGHT, weight.to_string().as_bytes()) {
+            if let Err(e) = self
+                .fs
+                .write_file(&dir, CPU_WEIGHT, weight.to_string().as_bytes())
+            {
                 eprintln!("Failed to write {CPU_WEIGHT} for {name}: {e}");
             }
         }
@@ -345,7 +362,7 @@ impl CgroupController {
                 cgroup.period = period;
                 cgroup.adjustment_threshold = (ratio - EPSILON, ratio + EPSILON);
 
-                if let Err(e) = write_cgroup_file(
+                if let Err(e) = self.fs.write_file(
                     &cgroup.path,
                     CPU_MAX,
                     format!("{bandwidth} {period}").as_bytes(),
@@ -357,7 +374,7 @@ impl CgroupController {
                 if bandwidth > period {
                     cgroup.uclamp_min = (cgroup.uclamp_min + 5.0).clamp(MIN_UCLAMP, MAX_UCLAMP);
                     let s = format!("{:.2}", cgroup.uclamp_min);
-                    uclamp_min(&cgroup.path, s.as_bytes());
+                    uclamp_min(&*self.fs, &cgroup.path, s.as_bytes());
                 }
             }
         }
@@ -372,24 +389,15 @@ impl CgroupController {
     }
 }
 
-/// Write data to a cgroup control file, creating no new file.
-fn write_cgroup_file(dir: &Path, filename: &str, data: &[u8]) -> io::Result<()> {
-    OpenOptions::new()
-        .write(true)
-        .open(dir.join(filename))
-        .and_then(|mut f| f.write_all(data))
-}
-
-fn uclamp_min(cgroup: &Path, bytes: &[u8]) {
-    if let Err(e) = write_cgroup_file(cgroup, UCLAMP_MIN, bytes) {
+fn uclamp_min(fs: &dyn CgroupFs, cgroup: &Path, bytes: &[u8]) {
+    if let Err(e) = fs.write_file(cgroup, UCLAMP_MIN, bytes) {
         eprintln!("Failed to write {UCLAMP_MIN}: {e}");
     }
 }
 
-fn make_root(pid: u32) -> io::Result<PathBuf> {
+fn make_root(fs: &dyn CgroupFs, pid: u32) -> io::Result<PathBuf> {
     let parent_cgroup = PathBuf::from(format!("/proc/{pid}/cgroup"));
-    let mut buf = String::new();
-    File::open(&parent_cgroup)?.read_to_string(&mut buf)?;
+    let buf = fs.read_to_string(&parent_cgroup)?;
 
     let suffix = buf
         .rsplit(':')
@@ -399,15 +407,15 @@ fn make_root(pid: u32) -> io::Result<PathBuf> {
     Ok(PathBuf::from(format!("/sys/fs/cgroup{suffix}")))
 }
 
-fn freeze(cgroup: &Path, status: bool) {
+fn freeze(fs: &dyn CgroupFs, cgroup: &Path, status: bool) {
     let data = if status { b"1" as &[u8] } else { b"0" };
-    if let Err(e) = write_cgroup_file(cgroup, FREEZE, data) {
+    if let Err(e) = fs.write_file(cgroup, FREEZE, data) {
         eprintln!("Failed to write {FREEZE} for {}: {e}", cgroup.display());
     }
 }
 
-fn enable_subtree_control(cgroup: &Path) {
-    if let Err(e) = write_cgroup_file(cgroup, SUBTREE, SUBTREE_SUBSYSTEMS.as_bytes()) {
+fn enable_subtree_control(fs: &dyn CgroupFs, cgroup: &Path) {
+    if let Err(e) = fs.write_file(cgroup, SUBTREE, SUBTREE_SUBSYSTEMS.as_bytes()) {
         eprintln!(
             "Failed to enable subtree control for {}: {e}",
             cgroup.display()
@@ -415,8 +423,8 @@ fn enable_subtree_control(cgroup: &Path) {
     }
 }
 
-fn move_process(cgroup: &Path, pid: u32) {
-    if let Err(e) = write_cgroup_file(cgroup, PROCS, pid.to_string().as_bytes()) {
+fn move_process(fs: &dyn CgroupFs, cgroup: &Path, pid: u32) {
+    if let Err(e) = fs.write_file(cgroup, PROCS, pid.to_string().as_bytes()) {
         eprintln!("Failed to move PID {pid} to {}: {e}", cgroup.display());
     }
 }
@@ -425,6 +433,103 @@ impl Drop for CgroupController {
     fn drop(&mut self) {
         // Clean up per-simulation cgroup directories. Errors are best-effort
         // since the kernel may still have processes in these groups.
-        let _ = fs::remove_dir_all(&self.root);
+        let _ = self.fs.remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::cgroupfs::mock::MockCgroupFs;
+    use config::ast::{Cpu, Mem};
+    use std::num::NonZeroU64;
+
+    fn make_test_controller(mock: MockCgroupFs) -> CgroupController {
+        let pid = std::process::id();
+        // Seed the /proc file so make_root works
+        mock.seed_file(
+            format!("/proc/{pid}/cgroup"),
+            "0::/test_cgroup\n",
+        );
+        // Seed the root cgroup dir so child dirs can be created
+        mock.seed_dir("/sys/fs/cgroup/test_cgroup");
+
+        CgroupController::with_fs(Box::new(mock)).expect("controller creation should succeed")
+    }
+
+    fn limited_resources() -> Resources {
+        Resources {
+            cpu: Cpu {
+                hertz: Some(NonZeroU64::new(1_000_000).unwrap()),
+                ..Cpu::default()
+            },
+            mem: Mem::default(),
+        }
+    }
+
+    #[test]
+    fn new_creates_expected_directory_structure() {
+        let mock = MockCgroupFs::new();
+        let ctrl = make_test_controller(mock);
+
+        assert_eq!(ctrl.root, PathBuf::from("/sys/fs/cgroup/test_cgroup"));
+    }
+
+    #[test]
+    fn add_node_limited_creates_dir_and_writes_uclamp() {
+        let mock = MockCgroupFs::new();
+        let mut ctrl = make_test_controller(mock);
+
+        let handle = ctrl.add_node("sensor_node", limited_resources()).unwrap();
+        assert!(handle.has_limited_resources);
+        assert!(ctrl.nodes_limited.nodes.contains_key("sensor_node"));
+    }
+
+    #[test]
+    fn add_node_unlimited_goes_to_correct_bucket() {
+        let mock = MockCgroupFs::new();
+        let mut ctrl = make_test_controller(mock);
+
+        let handle = ctrl.add_node("relay_node", Resources::default()).unwrap();
+        assert!(!handle.has_limited_resources);
+        assert!(ctrl.nodes_unlimited.nodes.contains_key("relay_node"));
+        assert!(!ctrl.nodes_limited.nodes.contains_key("relay_node"));
+    }
+
+    #[test]
+    fn freeze_writes_correct_values() {
+        let mock = MockCgroupFs::new();
+        let mut ctrl = make_test_controller(mock);
+
+        ctrl.add_node("n1", Resources::default()).unwrap();
+        ctrl.freeze_node("n1");
+        ctrl.unfreeze_node("n1");
+    }
+
+    #[test]
+    fn make_root_parses_cgroup_file() {
+        let mock = MockCgroupFs::new();
+        mock.seed_file("/proc/1234/cgroup", "0::/user.slice/session-1.scope\n");
+        let root = make_root(&mock, 1234).unwrap();
+        assert_eq!(
+            root,
+            PathBuf::from("/sys/fs/cgroup/user.slice/session-1.scope")
+        );
+    }
+
+    #[test]
+    fn make_root_handles_empty_suffix() {
+        let mock = MockCgroupFs::new();
+        mock.seed_file("/proc/5678/cgroup", "0::\n");
+        let root = make_root(&mock, 5678).unwrap();
+        assert_eq!(root, PathBuf::from("/sys/fs/cgroup"));
+    }
+
+    #[test]
+    fn drop_cleans_up() {
+        let mock = MockCgroupFs::new();
+        let ctrl = make_test_controller(mock);
+        drop(ctrl);
+        // Reaching here without panics confirms the cleanup path works.
     }
 }
