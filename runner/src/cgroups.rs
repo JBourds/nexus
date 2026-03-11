@@ -191,34 +191,28 @@ impl NodeCgroup {
 }
 
 impl NodeBucket {
-    fn new(root: PathBuf) -> Self {
-        fs::create_dir(&root).expect("unable to create parent cgroup for nodes.");
+    fn new(root: PathBuf) -> io::Result<Self> {
+        fs::create_dir(&root)?;
         enable_subtree_control(&root);
-        Self {
+        Ok(Self {
             root,
             nodes: HashMap::new(),
-        }
-    }
-}
-
-impl Default for CgroupController {
-    fn default() -> Self {
-        Self::new()
+        })
     }
 }
 
 impl CgroupController {
-    pub fn new() -> Self {
+    pub fn new() -> io::Result<Self> {
         let pid = std::process::id();
-        let root = make_root(pid);
+        let root = make_root(pid)?;
 
         let kernel_cgroup_path = root.join(KERNEL);
-        fs::create_dir(&kernel_cgroup_path).unwrap();
+        fs::create_dir(&kernel_cgroup_path)?;
         move_process(&kernel_cgroup_path, pid);
         enable_subtree_control(&root);
 
-        let nodes_unlimited = NodeBucket::new(root.join(NODES_UNLIMITED));
-        let nodes_limited = NodeBucket::new(root.join(NODES_LIMITED));
+        let nodes_unlimited = NodeBucket::new(root.join(NODES_UNLIMITED))?;
+        let nodes_limited = NodeBucket::new(root.join(NODES_LIMITED))?;
 
         let mut obj = Self {
             root,
@@ -226,7 +220,7 @@ impl CgroupController {
             nodes_unlimited,
         };
         obj.freeze_nodes();
-        obj
+        Ok(obj)
     }
 
     /// Don't let any node process start until the FUSE fs has been setup
@@ -269,7 +263,7 @@ impl CgroupController {
             .collect()
     }
 
-    pub fn add_node(&mut self, name: &str, resources: Resources) -> NodeHandle {
+    pub fn add_node(&mut self, name: &str, resources: Resources) -> io::Result<NodeHandle> {
         let has_limited_resources = resources.has_cpu_limit();
         let parent = if has_limited_resources {
             &mut self.nodes_limited
@@ -277,7 +271,7 @@ impl CgroupController {
             &mut self.nodes_unlimited
         };
         let path = parent.root.join(name);
-        fs::create_dir(&path).expect("couldn't create cgroup path when adding node");
+        fs::create_dir(&path)?;
         enable_subtree_control(&path);
         uclamp_min(&path, b"max");
         let handle = NodeHandle {
@@ -296,7 +290,7 @@ impl CgroupController {
                 adjustment_threshold: (0.0, 0.0),
             },
         );
-        handle
+        Ok(handle)
     }
 
     pub fn add_protocol(
@@ -392,20 +386,17 @@ fn uclamp_min(cgroup: &Path, bytes: &[u8]) {
     }
 }
 
-fn make_root(pid: u32) -> PathBuf {
+fn make_root(pid: u32) -> io::Result<PathBuf> {
     let parent_cgroup = PathBuf::from(format!("/proc/{pid}/cgroup"));
     let mut buf = String::new();
-    File::open(&parent_cgroup)
-        .unwrap_or_else(|e| panic!("Cannot open {}: {e}", parent_cgroup.display()))
-        .read_to_string(&mut buf)
-        .unwrap_or_else(|e| panic!("Cannot read {}: {e}", parent_cgroup.display()));
+    File::open(&parent_cgroup)?.read_to_string(&mut buf)?;
 
     let suffix = buf
         .rsplit(':')
         .next()
         .unwrap_or("")
         .trim_end();
-    PathBuf::from(format!("/sys/fs/cgroup{suffix}"))
+    Ok(PathBuf::from(format!("/sys/fs/cgroup{suffix}")))
 }
 
 fn freeze(cgroup: &Path, status: bool) {

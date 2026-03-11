@@ -128,24 +128,22 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
-    let mut cgroup_controller = CgroupController::new();
+    let mut cgroup_controller = CgroupController::new()?;
     let mut handles = Vec::new();
     let mut affinity_builder = AffinityBuilder::new();
     let mut relative_builder = RelativeBuilder::new();
     for (node_name, node) in &sim.nodes {
         affinity_builder.add_node(node_name, &node.resources);
         relative_builder.add_node(node_name, &node.resources);
-        let handle = cgroup_controller.add_node(node_name, node.resources.clone());
+        let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
         for (protocol_name, protocol) in &node.protocols {
             let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
-            affinity_builder.add_protocol(
-                node_name,
-                protocol_handle
-                    .process
-                    .as_ref()
-                    .expect("there should always be a process here")
-                    .id(),
-            );
+            let pid = protocol_handle.pid().ok_or_else(|| {
+                ProtocolError::UnableToRun(io::Error::other(
+                    format!("process not started for {node_name}/{protocol_name}"),
+                ))
+            })?;
+            affinity_builder.add_protocol(node_name, pid);
             handles.push(protocol_handle);
         }
     }
