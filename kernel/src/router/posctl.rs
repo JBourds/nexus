@@ -97,7 +97,7 @@ impl RoutingServer {
             .id
             .1
             .strip_prefix("ctl.pos.")
-            .expect("must be a pos control file");
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let val: f64 = match component {
             "x" => node.position.point.x,
             "y" => node.position.point.y,
@@ -140,7 +140,7 @@ impl RoutingServer {
             .id
             .1
             .strip_prefix("ctl.pos.")
-            .expect("must be a pos control file");
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
         match component {
             "x" => node.position.point.x = val,
@@ -177,7 +177,7 @@ impl RoutingServer {
             .id
             .1
             .strip_prefix("ctl.pos.d")
-            .expect("must be a delta pos control file");
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
         match axis {
             "x" => node.position.point.x += val,

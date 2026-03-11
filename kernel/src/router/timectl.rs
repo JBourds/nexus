@@ -18,7 +18,7 @@ impl RoutingServer {
         let s = String::from_utf8_lossy(&msg.data);
         let val: u64 = s
             .parse()
-            .map_err(|_| RouterError::InvalidString(msg.data))?;
+            .map_err(|_| RouterError::InvalidString(msg.data.clone()))?;
         let duration = match unit {
             TimeUnit::Seconds => Duration::from_secs(val),
             TimeUnit::Milliseconds => Duration::from_millis(val),
@@ -28,7 +28,7 @@ impl RoutingServer {
         };
         self.channels.nodes[node_index].start = SystemTime::UNIX_EPOCH
             .checked_add(duration)
-            .expect("couldn't add duration");
+            .ok_or(RouterError::InvalidString(msg.data))?;
         Ok(())
     }
 

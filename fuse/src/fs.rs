@@ -307,7 +307,7 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         }
-        let file = name.to_str().unwrap().to_string();
+        let file = name.to_string_lossy().into_owned();
         if let Some(file) = self.buffers.get(&(req.pid(), file)) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
@@ -490,7 +490,7 @@ impl Filesystem for NexusFs {
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
-    if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/")
+    if let Some(stripped) = path.to_string_lossy().strip_prefix("~/")
         && let Some(home_dir) = home::home_dir()
     {
         return home_dir.join(stripped);
