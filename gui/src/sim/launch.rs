@@ -147,7 +147,7 @@ fn run_simulation(
             names.sort();
             names
                 .iter()
-                .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
                 .collect()
         },
     };

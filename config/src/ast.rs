@@ -89,13 +89,10 @@ pub enum ChannelKind {
     },
 }
 
-#[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Node {
-    pub position: Position,
+/// Energy-related configuration for a node (battery, power states, flows, etc.).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct EnergyConfig {
     pub charge: Option<Charge>,
-    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
-    pub internal_names: Vec<ChannelHandle>,
-    pub resources: Resources,
     /// Named power consumption states the process can switch between
     /// via `ctl.energy_state`. Rates are positive = consumption.
     pub power_states: HashMap<String, PowerRate>,
@@ -111,6 +108,15 @@ pub struct Node {
     pub initial_state: Option<String>,
     /// Fraction of max charge (0..=1) at which a dead node restarts.
     pub restart_threshold: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Node {
+    pub position: Position,
+    pub energy: EnergyConfig,
+    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+    pub internal_names: Vec<ChannelHandle>,
+    pub resources: Resources,
     #[serde(with = "system_time_serde")]
     pub start: SystemTime,
 }

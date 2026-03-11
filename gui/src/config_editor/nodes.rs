@@ -20,16 +20,10 @@ pub fn show_nodes(
     if let Some(name) = add_item_ui(ui, "+ Node:", buf) {
         sim.nodes.entry(name).or_insert_with(|| ast::Node {
             position: ast::Position::default(),
-            charge: None,
+            energy: ast::EnergyConfig::default(),
             protocols: Default::default(),
             internal_names: Vec::new(),
             resources: ast::Resources::default(),
-            power_states: HashMap::new(),
-            power_sources: HashMap::new(),
-            power_sinks: HashMap::new(),
-            channel_energy: HashMap::new(),
-            initial_state: None,
-            restart_threshold: None,
             start: SystemTime::now(),
         });
     }

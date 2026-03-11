@@ -185,26 +185,27 @@ pub struct EnergyState {
 
 impl EnergyState {
     pub fn from_node(node: &ast::Node, ts_config: &TimestepConfig) -> Option<Self> {
-        let charge = node.charge.as_ref()?;
+        let energy = &node.energy;
+        let charge = energy.charge.as_ref()?;
         let max_nj = charge.unit.to_nj(charge.max);
         let charge_nj = charge.unit.to_nj(charge.quantity);
         let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
-        let power_sources = node
+        let power_sources = energy
             .power_sources
             .iter()
             .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
             .collect();
-        let power_sinks = node
+        let power_sinks = energy
             .power_sinks
             .iter()
             .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
             .collect();
-        let power_states_nj = node
+        let power_states_nj = energy
             .power_states
             .iter()
             .map(|(name, rate)| (name.clone(), rate.nj_per_timestep(timestep_ns)))
             .collect();
-        let restart_threshold_nj = node.restart_threshold.map(|t| (t * max_nj as f64) as u64);
+        let restart_threshold_nj = energy.restart_threshold.map(|t| (t * max_nj as f64) as u64);
         let is_dead = charge_nj == 0;
         Some(EnergyState {
             charge_nj,
@@ -212,7 +213,7 @@ impl EnergyState {
             power_sources,
             power_sinks,
             power_states_nj,
-            current_state: node.initial_state.clone(),
+            current_state: energy.initial_state.clone(),
             restart_threshold_nj,
             is_dead,
         })
@@ -393,6 +394,7 @@ impl Node {
         };
 
         let channel_energy = node
+            .energy
             .channel_energy
             .into_iter()
             .map(|(name, energy)| {

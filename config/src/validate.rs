@@ -1048,17 +1048,19 @@ impl Node {
             let charge = charge.map(Charge::validate).transpose()?;
 
             nodes.push(Node {
-                charge,
                 position,
+                energy: EnergyConfig {
+                    charge,
+                    power_states: power_states.clone(),
+                    power_sources: power_sources.clone(),
+                    power_sinks: power_sinks.clone(),
+                    channel_energy: channel_energy.clone(),
+                    initial_state,
+                    restart_threshold,
+                },
                 resources: resources.clone(),
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
-                power_states: power_states.clone(),
-                power_sources: power_sources.clone(),
-                power_sinks: power_sinks.clone(),
-                channel_energy: channel_energy.clone(),
-                initial_state,
-                restart_threshold,
                 start,
             });
         }

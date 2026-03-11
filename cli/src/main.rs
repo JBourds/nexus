@@ -255,7 +255,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
                 names.sort();
                 names
                     .iter()
-                    .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                    .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
                     .collect()
             },
         };

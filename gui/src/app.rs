@@ -710,13 +710,13 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
         .nodes
         .iter()
         .map(|(name, node)| {
-            let max_nj = node.charge.as_ref().map(|c| c.unit.to_nj(c.max));
+            let max_nj = node.energy.charge.as_ref().map(|c| c.unit.to_nj(c.max));
             NodeState {
                 name: name.clone(),
                 x: node.position.point.x,
                 y: node.position.point.y,
                 z: node.position.point.z,
-                charge_ratio: node.charge.as_ref().map(|c| {
+                charge_ratio: node.energy.charge.as_ref().map(|c| {
                     if c.max == 0 {
                         1.0
                     } else {
@@ -981,22 +981,19 @@ fn create_sim_from_trace_header(
                     },
                     ..Default::default()
                 },
-                charge: controller.node_max_nj().get(i).and_then(|opt| {
-                    opt.map(|max_nj| Charge {
-                        max: max_nj,
-                        quantity: max_nj,
-                        unit: EnergyUnit::NanoJoule,
-                    })
-                }),
+                energy: config::ast::EnergyConfig {
+                    charge: controller.node_max_nj().get(i).and_then(|opt| {
+                        opt.map(|max_nj| Charge {
+                            max: max_nj,
+                            quantity: max_nj,
+                            unit: EnergyUnit::NanoJoule,
+                        })
+                    }),
+                    ..Default::default()
+                },
                 protocols: HashMap::new(),
                 internal_names: Vec::new(),
                 resources: Resources::default(),
-                power_states: HashMap::new(),
-                power_sources: HashMap::new(),
-                power_sinks: HashMap::new(),
-                channel_energy: HashMap::new(),
-                initial_state: None,
-                restart_threshold: None,
                 start: SystemTime::now(),
             },
         );

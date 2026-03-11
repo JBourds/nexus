@@ -654,34 +654,36 @@ mod tests {
     fn test_from_node_basic() {
         let node = config::ast::Node {
             position: Position::default(),
-            charge: Some(config::ast::Charge {
-                max: 1000,
-                quantity: 500,
-                unit: EnergyUnit::MicroJoule,
-            }),
+            energy: config::ast::EnergyConfig {
+                charge: Some(config::ast::Charge {
+                    max: 1000,
+                    quantity: 500,
+                    unit: EnergyUnit::MicroJoule,
+                }),
+                power_states: HashMap::from([(
+                    "active".into(),
+                    config::ast::PowerRate {
+                        rate: 10,
+                        unit: config::ast::PowerUnit::MilliWatt,
+                        time: TimeUnit::Seconds,
+                    },
+                )]),
+                power_sources: HashMap::from([(
+                    "solar".into(),
+                    config::ast::PowerFlow::Constant(config::ast::PowerRate {
+                        rate: 2,
+                        unit: config::ast::PowerUnit::MilliWatt,
+                        time: TimeUnit::Seconds,
+                    }),
+                )]),
+                power_sinks: HashMap::new(),
+                channel_energy: HashMap::new(),
+                initial_state: Some("active".into()),
+                restart_threshold: Some(0.5),
+            },
             protocols: HashMap::new(),
             internal_names: vec![],
             resources: config::ast::Resources::default(),
-            power_states: HashMap::from([(
-                "active".into(),
-                config::ast::PowerRate {
-                    rate: 10,
-                    unit: config::ast::PowerUnit::MilliWatt,
-                    time: TimeUnit::Seconds,
-                },
-            )]),
-            power_sources: HashMap::from([(
-                "solar".into(),
-                config::ast::PowerFlow::Constant(config::ast::PowerRate {
-                    rate: 2,
-                    unit: config::ast::PowerUnit::MilliWatt,
-                    time: TimeUnit::Seconds,
-                }),
-            )]),
-            power_sinks: HashMap::new(),
-            channel_energy: HashMap::new(),
-            initial_state: Some("active".into()),
-            restart_threshold: Some(0.5),
             start: SystemTime::UNIX_EPOCH,
         };
         let ts = test_ts_config(); // 1 ms timesteps
@@ -708,16 +710,10 @@ mod tests {
     fn test_from_node_no_charge_returns_none() {
         let node = config::ast::Node {
             position: Position::default(),
-            charge: None,
+            energy: config::ast::EnergyConfig::default(),
             protocols: HashMap::new(),
             internal_names: vec![],
             resources: config::ast::Resources::default(),
-            power_states: HashMap::new(),
-            power_sources: HashMap::new(),
-            power_sinks: HashMap::new(),
-            channel_energy: HashMap::new(),
-            initial_state: None,
-            restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,
         };
         assert!(EnergyState::from_node(&node, &test_ts_config()).is_none());
@@ -727,20 +723,17 @@ mod tests {
     fn test_from_node_zero_charge_is_dead() {
         let node = config::ast::Node {
             position: Position::default(),
-            charge: Some(config::ast::Charge {
-                max: 100,
-                quantity: 0,
-                unit: EnergyUnit::NanoJoule,
-            }),
+            energy: config::ast::EnergyConfig {
+                charge: Some(config::ast::Charge {
+                    max: 100,
+                    quantity: 0,
+                    unit: EnergyUnit::NanoJoule,
+                }),
+                ..Default::default()
+            },
             protocols: HashMap::new(),
             internal_names: vec![],
             resources: config::ast::Resources::default(),
-            power_states: HashMap::new(),
-            power_sources: HashMap::new(),
-            power_sinks: HashMap::new(),
-            channel_energy: HashMap::new(),
-            initial_state: None,
-            restart_threshold: None,
             start: SystemTime::UNIX_EPOCH,
         };
         let e = EnergyState::from_node(&node, &test_ts_config()).unwrap();
