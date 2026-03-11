@@ -141,13 +141,15 @@ impl RoutingServer {
                     unit,
                     &mut self.rng,
                 ) {
-                    info!(
-                        "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                        format!("{}.{}.{}", node_name, pid, channel_name),
-                        format_u8_buf(&buf),
-                        timestep,
-                        msg.expiration,
-                    );
+                    if tracing::enabled!(Level::INFO) {
+                        info!(
+                            "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                            format!("{}.{}.{}", node_name, pid, channel_name),
+                            format_u8_buf(&buf),
+                            timestep,
+                            msg.expiration,
+                        );
+                    }
                     let msg = fuse::Message {
                         id: (pid, node_name.clone()),
                         data: buf.to_vec(),
@@ -224,13 +226,15 @@ impl RoutingServer {
             }
             let node_name = &self.channels.node_names[node_handle.0];
             let channel_name = &self.channels.channel_names[channel_handle.0];
-            info!(
-                "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                format!("{}.{}.{}", node_name, pid, channel_name),
-                format_u8_buf(&msg.buf),
-                self.timestep,
-                msg.expiration,
-            );
+            if tracing::enabled!(Level::INFO) {
+                info!(
+                    "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                    format!("{}.{}.{}", node_name, pid, channel_name),
+                    format_u8_buf(&msg.buf),
+                    self.timestep,
+                    msg.expiration,
+                );
+            }
             let msg = fuse::Message {
                 id: (pid, self.channels.node_names[node_handle.0].clone()),
                 data: msg.buf.to_vec(),

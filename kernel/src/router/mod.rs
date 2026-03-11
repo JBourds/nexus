@@ -279,14 +279,16 @@ impl RoutingServer {
         let (pid, src_node, channel_handle) = self.channels.handles[index];
         let channel_name = &self.channels.channel_names[channel_handle.0];
         let timestep = self.timestep;
-        info!(
-            "{:<30} [TX]: {}",
-            format!(
-                "{}.{pid}.{channel_name}",
-                self.channels.node_names[src_node.0]
-            ),
-            format_u8_buf(&msg.data)
-        );
+        if tracing::enabled!(Level::INFO) {
+            info!(
+                "{:<30} [TX]: {}",
+                format!(
+                    "{}.{pid}.{channel_name}",
+                    self.channels.node_names[src_node.0]
+                ),
+                format_u8_buf(&msg.data)
+            );
+        }
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, data = msg.data.as_slice());
 
         // Queue the message first; only drain TX energy on success so that
