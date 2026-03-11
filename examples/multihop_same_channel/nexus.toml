@@ -10,7 +10,7 @@ root = "~/simulations"
 [links.main]
 medium.type = "wireless"
 medium.wavelength_meters = 0.125
-medium.gain = 1.0
+medium.gain_dbi = 1.0
 medium.rx_min_dbm = -100.0
 medium.tx_min_dbm = -10.0
 medium.tx_max_dbm = 10.0

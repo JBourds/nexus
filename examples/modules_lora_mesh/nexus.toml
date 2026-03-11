@@ -24,7 +24,7 @@ root            = "~/simulations"
 # --- Nodes ---
 
 [nodes.sensor]
-deployments = [{ position = { point = [0, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 0, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.sensor.protocols]]
 name        = "fw"
@@ -33,7 +33,7 @@ runner_args = ["sensor.py"]
 publishers  = ["lora"]
 
 [nodes.relay]
-deployments = [{ position = { point = [5, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 5, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.relay.protocols]]
 name        = "fw"
@@ -43,7 +43,7 @@ publishers  = ["lora"]
 subscribers = ["lora"]
 
 [nodes.gateway]
-deployments = [{ position = { point = [10, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 10, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.gateway.protocols]]
 name        = "fw"

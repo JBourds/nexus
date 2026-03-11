@@ -18,10 +18,8 @@ link = "unreliable"
 
 [links]
 
-[links.unreliable.bit_error]
-rate = "0.01"
-
-[links.unreliable.packet_loss]
+[links.unreliable]
+bit_error = "0.01"
 
 [links.unreliable.delays.transmission]
 rate = 1

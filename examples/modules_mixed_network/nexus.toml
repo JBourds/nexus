@@ -33,7 +33,7 @@ root            = "~/simulations"
 
 [nodes.field_sensor]
 profile = "esp32"
-deployments = [{ position = { point = [-8, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = -8, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.field_sensor.protocols]]
 name        = "fw"
@@ -45,7 +45,7 @@ publishers  = ["lora"]
 
 [nodes.edge_gateway]
 profile = "rpi_zero_w"
-deployments = [{ position = { point = [0, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 0, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.edge_gateway.protocols]]
 name        = "fw"
@@ -58,7 +58,7 @@ publishers  = ["uart"]
 
 [nodes.indoor_node]
 profile = "esp32"
-deployments = [{ position = { point = [0.05, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 0.05, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.indoor_node.protocols]]
 name        = "fw"
@@ -70,7 +70,7 @@ publishers  = ["wifi"]
 
 [nodes.server]
 profile = "rpi_zero_w"
-deployments = [{ position = { point = [0.1, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 0.1, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.server.protocols]]
 name        = "fw"

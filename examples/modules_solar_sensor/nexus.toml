@@ -34,7 +34,7 @@ root            = "~/simulations"
 profile = ["esp32", "solar_small"]
 
 [[nodes.sensor.deployments]]
-position = { point = [-10, 5, 0], unit = "km" }
+position = { point = { x = -10, y = 5, z = 0 }, unit = "km" }
 charge = { max = 5000, quantity = 5000, unit = "mj" }
 initial_state = "active"
 restart_threshold = 0.10
@@ -55,7 +55,7 @@ subscribers = ["lora"]
 profile = "esp32"
 
 [[nodes.gateway.deployments]]
-position = { point = [0, 0, 0], unit = "km" }
+position = { point = { x = 0, y = 0, z = 0 }, unit = "km" }
 
 [nodes.gateway.resources]
 clock_rate  = 160

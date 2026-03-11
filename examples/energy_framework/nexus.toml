@@ -26,7 +26,7 @@ type = { type = "exclusive", ttl = 500, unit = "ms" }
 # --- Gateway (mains-powered, no battery) ---
 
 [nodes.gateway]
-deployments = [{ position = { point = [0, 0, 0], unit = "km" } }]
+deployments = [{ position = { point = { x = 0, y = 0, z = 0 }, unit = "km" } }]
 
 [[nodes.gateway.protocols]]
 name        = "gw"
@@ -38,7 +38,7 @@ subscribers = ["uplink"]
 # --- Sensor A: solar-assisted ---
 
 [nodes.sensor_a]
-deployments = [{ position = { point = [-20, 15, 0], unit = "km" }, charge = { max = 5000, quantity = 5000, unit = "mj" }, initial_state = "active", restart_threshold = 0.10 }]
+deployments = [{ position = { point = { x = -20, y = 15, z = 0 }, unit = "km" }, charge = { max = 5000, quantity = 5000, unit = "mj" }, initial_state = "active", restart_threshold = 0.10 }]
 
 [nodes.sensor_a.power_states]
 sleep  = { rate = 5,   unit = "mw", time = "s" }
@@ -63,7 +63,7 @@ subscribers = ["downlink"]
 # --- Sensor B: no solar, will die ---
 
 [nodes.sensor_b]
-deployments = [{ position = { point = [20, 15, 0], unit = "km" }, charge = { max = 3000, quantity = 3000, unit = "mj" }, initial_state = "active", restart_threshold = 0.15 }]
+deployments = [{ position = { point = { x = 20, y = 15, z = 0 }, unit = "km" }, charge = { max = 3000, quantity = 3000, unit = "mj" }, initial_state = "active", restart_threshold = 0.15 }]
 
 [nodes.sensor_b.power_states]
 sleep  = { rate = 5,   unit = "mw", time = "s" }
@@ -82,7 +82,7 @@ subscribers = ["downlink"]
 # --- Sensor C: high TX cost ---
 
 [nodes.sensor_c]
-deployments = [{ position = { point = [0, -20, 0], unit = "km" }, charge = { max = 4000, quantity = 4000, unit = "mj" }, initial_state = "active", restart_threshold = 0.05 }]
+deployments = [{ position = { point = { x = 0, y = -20, z = 0 }, unit = "km" }, charge = { max = 4000, quantity = 4000, unit = "mj" }, initial_state = "active", restart_threshold = 0.05 }]
 
 [nodes.sensor_c.power_states]
 sleep  = { rate = 5,   unit = "mw", time = "s" }
