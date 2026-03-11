@@ -103,18 +103,16 @@ fn handle_modules(action: &ModulesCmd) -> Result<()> {
             print!("{contents}");
             Ok(())
         }
-        ModulesCmd::Verify { config } => {
-            match config::parse(config.clone()) {
-                Ok(_) => {
-                    println!("OK: all modules resolved, no conflicts.");
-                    Ok(())
-                }
-                Err(e) => {
-                    eprintln!("ERROR: {e:#}");
-                    Err(e)
-                }
+        ModulesCmd::Verify { config } => match config::parse(config.clone()) {
+            Ok(_) => {
+                println!("OK: all modules resolved, no conflicts.");
+                Ok(())
             }
-        }
+            Err(e) => {
+                eprintln!("ERROR: {e:#}");
+                Err(e)
+            }
+        },
     }
 }
 
@@ -136,7 +134,9 @@ fn list_modules(dir: &Path, category: Option<&str>, prefix: &str) -> Result<()> 
             // If category filter is set, only recurse into matching dirs.
             if let Some(cat) = category
                 && !name_str.eq_ignore_ascii_case(cat)
-                && !sub_prefix.to_ascii_lowercase().starts_with(&cat.to_ascii_lowercase())
+                && !sub_prefix
+                    .to_ascii_lowercase()
+                    .starts_with(&cat.to_ascii_lowercase())
             {
                 continue;
             }

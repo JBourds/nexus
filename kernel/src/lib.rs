@@ -231,6 +231,7 @@ impl Kernel {
                     }
                     status::messages::StatusMessage::Respawned { .. } => {}
                 }
+
                 let router::RouterMessage::EnergyEvents {
                     depleted,
                     recovered,

@@ -157,16 +157,25 @@ mod tests {
 
     #[test]
     fn parse_flow_rate_invalid_unit() {
-        assert_eq!(RoutingServer::parse_flow_rate("100", "foo/s", 1_000_000), None);
+        assert_eq!(
+            RoutingServer::parse_flow_rate("100", "foo/s", 1_000_000),
+            None
+        );
     }
 
     #[test]
     fn parse_flow_rate_invalid_time() {
-        assert_eq!(RoutingServer::parse_flow_rate("100", "mw/yr", 1_000_000), None);
+        assert_eq!(
+            RoutingServer::parse_flow_rate("100", "mw/yr", 1_000_000),
+            None
+        );
     }
 
     #[test]
     fn parse_flow_rate_invalid_rate() {
-        assert_eq!(RoutingServer::parse_flow_rate("abc", "mw/s", 1_000_000), None);
+        assert_eq!(
+            RoutingServer::parse_flow_rate("abc", "mw/s", 1_000_000),
+            None
+        );
     }
 }

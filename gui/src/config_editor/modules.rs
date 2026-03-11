@@ -186,12 +186,7 @@ pub fn show_module_browser(
                                     && fuzzy_matches(&modules.browser_search, &e.spec)
                             })
                             .map(|e| {
-                                let short = e
-                                    .spec
-                                    .split('/')
-                                    .last()
-                                    .unwrap_or(&e.spec)
-                                    .to_string();
+                                let short = e.spec.split('/').next_back().unwrap_or(&e.spec).to_string();
                                 (e.spec.clone(), short)
                             })
                             .collect();
@@ -213,8 +208,7 @@ pub fn show_module_browser(
 
                         // Category collapsing header
                         let expanded = modules.browser_expanded.contains(cat);
-                        let cat_id =
-                            ui.make_persistent_id(format!("browser_cat_{cat}"));
+                        let cat_id = ui.make_persistent_id(format!("browser_cat_{cat}"));
                         let mut collapsing =
                             egui::collapsing_header::CollapsingState::load_with_default_open(
                                 ui.ctx(),
@@ -227,10 +221,7 @@ pub fn show_module_browser(
 
                         collapsing
                             .show_header(ui, |ui| {
-                                let label = format!(
-                                    "{cat} ({})",
-                                    cat_entries.len()
-                                );
+                                let label = format!("{cat} ({})", cat_entries.len());
                                 if ui.strong(label).clicked() {
                                     if modules.browser_expanded.contains(cat) {
                                         modules.browser_expanded.remove(cat);
@@ -240,11 +231,8 @@ pub fn show_module_browser(
                                 }
                             })
                             .body(|ui| {
-                                for (i, (spec, short_name)) in
-                                    cat_entries.iter().enumerate()
-                                {
-                                    let already_imported =
-                                        modules.use_list.contains(spec);
+                                for (i, (spec, short_name)) in cat_entries.iter().enumerate() {
+                                    let already_imported = modules.use_list.contains(spec);
 
                                     let resp = if already_imported {
                                         // Draw with green border to indicate imported
@@ -258,10 +246,7 @@ pub fn show_module_browser(
                                                 ui.painter().rect_filled(
                                                     rect,
                                                     2.0,
-                                                    ui.visuals()
-                                                        .widgets
-                                                        .hovered
-                                                        .bg_fill,
+                                                    ui.visuals().widgets.hovered.bg_fill,
                                                 );
                                             }
                                             // Green border
@@ -272,8 +257,7 @@ pub fn show_module_browser(
                                                 egui::StrokeKind::Inside,
                                             );
                                             ui.painter().text(
-                                                rect.left_center()
-                                                    + egui::vec2(6.0, 0.0),
+                                                rect.left_center() + egui::vec2(6.0, 0.0),
                                                 egui::Align2::LEFT_CENTER,
                                                 short_name,
                                                 egui::FontId::default(),
@@ -287,17 +271,12 @@ pub fn show_module_browser(
 
                                     if resp.clicked() {
                                         if already_imported {
-                                            modules
-                                                .use_list
-                                                .retain(|s| s != spec);
+                                            modules.use_list.retain(|s| s != spec);
                                         } else {
-                                            modules
-                                                .use_list
-                                                .push(spec.clone());
+                                            modules.use_list.push(spec.clone());
                                         }
                                         modules.resolve_profiles(config_dir);
-                                        modules.browser_selected =
-                                            Some(spec.clone());
+                                        modules.browser_selected = Some(spec.clone());
                                     }
                                     let desc = &descriptions[i];
                                     if !desc.is_empty() {
@@ -308,8 +287,8 @@ pub fn show_module_browser(
                     }
 
                     // Details section for selected module
-                    if let Some(ref selected) = modules.browser_selected.clone() {
-                        if let Some(entry) =
+                    if let Some(ref selected) = modules.browser_selected.clone()
+                        && let Some(entry) =
                             modules.stdlib_catalog.iter().find(|e| &e.spec == selected)
                         {
                             ui.add_space(8.0);
@@ -343,21 +322,17 @@ pub fn show_module_browser(
                             }
 
                             // Profile details
-                            if !entry.provides.profiles.is_empty() {
-                                if let Ok(path) =
+                            if !entry.provides.profiles.is_empty()
+                                && let Ok(path) =
                                     config::module::resolve_module_path(selected, None)
-                                {
-                                    if let Ok(module) = config::parse_module_file(&path) {
-                                        if let Some(profiles) = &module.profiles {
+                                    && let Ok(module) = config::parse_module_file(&path)
+                                        && let Some(profiles) = &module.profiles {
                                             for (pname, profile) in profiles {
                                                 ui.add_space(4.0);
                                                 ui.strong(format!("Profile: {pname}"));
                                                 show_profile_preview(ui, profile);
                                             }
                                         }
-                                    }
-                                }
-                            }
 
                             ui.add_space(4.0);
                             let already = modules.use_list.contains(selected);
@@ -367,7 +342,6 @@ pub fn show_module_browser(
                                 "Click in the list above to import"
                             });
                         }
-                    }
                 });
         });
     modules.browser_open = open;
@@ -390,11 +364,7 @@ pub fn show_profile_preview(ui: &mut Ui, profile: &NodeProfile) {
                 parts.push(format!("{cores} cores"));
             }
             if let Some(ram) = res.ram {
-                let unit = res
-                    .ram_units
-                    .as_ref()
-                    .map(|u| u.0.as_str())
-                    .unwrap_or("B");
+                let unit = res.ram_units.as_ref().map(|u| u.0.as_str()).unwrap_or("B");
                 parts.push(format!("{ram} {unit} RAM"));
             }
             if !parts.is_empty() {

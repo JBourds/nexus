@@ -191,35 +191,35 @@ fn resolve_path(base_dir: &Path, spec: &str) -> Result<PathBuf> {
 /// a module-defined `[links.lora]`.
 fn merge_into_simulation(sim: &mut parse::Simulation, modules: ResolvedModules) -> Result<()> {
     // Build a set of lowercased user-defined keys for case-insensitive override detection.
-    let user_link_keys: HashSet<String> = sim.links.keys().map(|k| k.to_ascii_lowercase()).collect();
+    let user_link_keys: HashSet<String> =
+        sim.links.keys().map(|k| k.to_ascii_lowercase()).collect();
     for (_key, (link, _origin, original_name)) in modules.links {
         if user_link_keys.contains(&original_name.to_ascii_lowercase()) {
-            warn!(
-                "Link \"{original_name}\" in nexus.toml overrides module definition",
-            );
+            warn!("Link \"{original_name}\" in nexus.toml overrides module definition",);
         } else {
             sim.links.insert(original_name, link);
         }
     }
 
-    let user_channel_keys: HashSet<String> = sim.channels.keys().map(|k| k.to_ascii_lowercase()).collect();
+    let user_channel_keys: HashSet<String> = sim
+        .channels
+        .keys()
+        .map(|k| k.to_ascii_lowercase())
+        .collect();
     for (_key, (channel, _origin, original_name)) in modules.channels {
         if user_channel_keys.contains(&original_name.to_ascii_lowercase()) {
-            warn!(
-                "Channel \"{original_name}\" in nexus.toml overrides module definition",
-            );
+            warn!("Channel \"{original_name}\" in nexus.toml overrides module definition",);
         } else {
             sim.channels.insert(original_name, channel);
         }
     }
 
     let profiles = sim.profiles.get_or_insert_with(HashMap::new);
-    let user_profile_keys: HashSet<String> = profiles.keys().map(|k| k.to_ascii_lowercase()).collect();
+    let user_profile_keys: HashSet<String> =
+        profiles.keys().map(|k| k.to_ascii_lowercase()).collect();
     for (_key, (profile, _origin, original_name)) in modules.profiles {
         if user_profile_keys.contains(&original_name.to_ascii_lowercase()) {
-            warn!(
-                "Profile \"{original_name}\" in nexus.toml overrides module definition",
-            );
+            warn!("Profile \"{original_name}\" in nexus.toml overrides module definition",);
         } else {
             // Store under the lowercased name so profile lookups are case-insensitive.
             profiles.insert(original_name.to_ascii_lowercase(), profile);
@@ -691,13 +691,25 @@ mod tests {
         // ESP32 DevKit: 3.3V board. Active = 100 mA * 3.3V = 330 mW.
         let esp32 = load_profile("boards/esp32_devkit.toml", "esp32");
         assert_eq!(esp32["active"].rate, 330, "esp32 active should be 330 mW");
-        assert_eq!(esp32["deep_sleep"].rate, 33, "esp32 deep_sleep should be 33 uW");
-        assert_eq!(esp32["light_sleep"].rate, 2640, "esp32 light_sleep should be 2640 uW");
+        assert_eq!(
+            esp32["deep_sleep"].rate, 33,
+            "esp32 deep_sleep should be 33 uW"
+        );
+        assert_eq!(
+            esp32["light_sleep"].rate, 2640,
+            "esp32 light_sleep should be 2640 uW"
+        );
 
         // ESP32-S3: 3.3V board. Active = 100 mA * 3.3V = 330 mW.
         let esp32s3 = load_profile("boards/esp32_s3.toml", "esp32_s3");
-        assert_eq!(esp32s3["active"].rate, 330, "esp32_s3 active should be 330 mW");
-        assert_eq!(esp32s3["deep_sleep"].rate, 23, "esp32_s3 deep_sleep should be 23 uW");
+        assert_eq!(
+            esp32s3["active"].rate, 330,
+            "esp32_s3 active should be 330 mW"
+        );
+        assert_eq!(
+            esp32s3["deep_sleep"].rate, 23,
+            "esp32_s3 deep_sleep should be 23 uW"
+        );
 
         // STM32F4: 3.3V board. Stop = 0.4 mA * 3.3V = 1320 uW.
         let stm32 = load_profile("boards/stm32f4.toml", "stm32f4");
@@ -706,16 +718,25 @@ mod tests {
 
         // RPi Pico: 3.3V board. Dormant = 0.18 mA * 3.3V = 594 uW.
         let pico = load_profile("boards/rpi_pico.toml", "rpi_pico");
-        assert_eq!(pico["dormant"].rate, 594, "rpi_pico dormant should be 594 uW");
+        assert_eq!(
+            pico["dormant"].rate, 594,
+            "rpi_pico dormant should be 594 uW"
+        );
         assert_eq!(pico["sleep"].rate, 4, "rpi_pico sleep should be 4 mW");
 
         // Arduino Mega: 5V board. Power-down = 5 uA * 5V = 25 uW.
         let mega = load_profile("boards/arduino_mega.toml", "arduino_mega");
-        assert_eq!(mega["power_down"].rate, 25, "arduino_mega power_down should be 25 uW");
+        assert_eq!(
+            mega["power_down"].rate, 25,
+            "arduino_mega power_down should be 25 uW"
+        );
 
         // Arduino Uno: 5V board. Power-down = 1 uA * 5V = 5 uW.
         let uno = load_profile("boards/arduino_uno.toml", "arduino_uno");
-        assert_eq!(uno["power_down"].rate, 5, "arduino_uno power_down should be 5 uW");
+        assert_eq!(
+            uno["power_down"].rate, 5,
+            "arduino_uno power_down should be 5 uW"
+        );
     }
 
     /// Verify that ethernet modules have correct RLGC capacitance (~50 pF/m, not 5 pF/m).
@@ -1121,10 +1142,7 @@ mod tests {
         sim.r#use = Some(vec!["./a".to_string(), "./b".to_string()]);
         let err = resolve_and_merge(dir.path(), &mut sim).unwrap_err();
         let msg = format!("{err:#}");
-        assert!(
-            msg.contains("Duplicate profile"),
-            "unexpected error: {msg}"
-        );
+        assert!(msg.contains("Duplicate profile"), "unexpected error: {msg}");
     }
 
     #[test]

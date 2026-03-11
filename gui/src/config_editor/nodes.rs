@@ -12,7 +12,12 @@ use super::widgets::{
 };
 use crate::state::ModuleState;
 
-pub fn show_nodes(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String, modules: &mut ModuleState) {
+pub fn show_nodes(
+    ui: &mut Ui,
+    sim: &mut ast::Simulation,
+    buf: &mut String,
+    modules: &mut ModuleState,
+) {
     if let Some(name) = add_item_ui(ui, "+ Node:", buf) {
         sim.nodes.entry(name).or_insert_with(|| ast::Node {
             position: ast::Position::default(),
@@ -76,11 +81,7 @@ fn show_node(
         ui.label("Profiles:");
 
         // Show current assignments with remove buttons
-        let current = modules
-            .node_profiles
-            .get(name)
-            .cloned()
-            .unwrap_or_default();
+        let current = modules.node_profiles.get(name).cloned().unwrap_or_default();
         let mut profile_removed = None;
         for (i, pname) in current.iter().enumerate() {
             ui.horizontal(|ui| {
@@ -107,20 +108,16 @@ fn show_node(
                 });
             }
         }
-        if let Some(i) = profile_removed {
-            if let Some(profiles) = modules.node_profiles.get_mut(name) {
+        if let Some(i) = profile_removed
+            && let Some(profiles) = modules.node_profiles.get_mut(name) {
                 profiles.remove(i);
                 if profiles.is_empty() {
                     modules.node_profiles.remove(name);
                 }
             }
-        }
 
         // Add profile dropdown
-        let assigned: HashSet<String> = current
-            .iter()
-            .map(|s| s.to_ascii_lowercase())
-            .collect();
+        let assigned: HashSet<String> = current.iter().map(|s| s.to_ascii_lowercase()).collect();
         let mut unassigned: Vec<_> = modules
             .available_profiles
             .keys()

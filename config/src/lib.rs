@@ -88,7 +88,9 @@ pub fn serialize_config(sim: &ast::Simulation, dest: &Path) -> Result<()> {
 
 /// Extract the raw `use` list and per-node profile assignments from TOML text
 /// before module resolution consumes them.
-pub fn extract_module_info(toml_text: &str) -> (Vec<String>, std::collections::HashMap<String, Vec<String>>) {
+pub fn extract_module_info(
+    toml_text: &str,
+) -> (Vec<String>, std::collections::HashMap<String, Vec<String>>) {
     let mut use_list = Vec::new();
     let mut node_profiles = std::collections::HashMap::new();
 
@@ -102,8 +104,8 @@ pub fn extract_module_info(toml_text: &str) -> (Vec<String>, std::collections::H
         }
         if let Some(toml::Value::Table(nodes)) = val.get("nodes") {
             for (name, node_val) in nodes {
-                if let toml::Value::Table(node_tbl) = node_val {
-                    if let Some(profile_val) = node_tbl.get("profile") {
+                if let toml::Value::Table(node_tbl) = node_val
+                    && let Some(profile_val) = node_tbl.get("profile") {
                         let profiles = match profile_val {
                             toml::Value::String(s) => vec![s.clone()],
                             toml::Value::Array(arr) => arr
@@ -116,7 +118,6 @@ pub fn extract_module_info(toml_text: &str) -> (Vec<String>, std::collections::H
                             node_profiles.insert(name.clone(), profiles);
                         }
                     }
-                }
             }
         }
     }

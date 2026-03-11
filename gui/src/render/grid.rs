@@ -81,7 +81,9 @@ impl GridView {
                 self.zoom = (self.zoom * pinch).clamp(0.01, 1000.0);
             }
 
-            let ctrl_held = response.ctx.input(|i| i.modifiers.ctrl || i.modifiers.mac_cmd);
+            let ctrl_held = response
+                .ctx
+                .input(|i| i.modifiers.ctrl || i.modifiers.mac_cmd);
             let scroll = response.ctx.input(|i| i.smooth_scroll_delta);
 
             if ctrl_held && scroll.y != 0.0 {
@@ -245,8 +247,7 @@ impl GridView {
 
         // Persistent drag state
         let drag_id = ui.id().with("scrollbar_drag");
-        let mut dragging: Option<ScrollbarEdge> =
-            ui.data(|d| d.get_temp(drag_id)).unwrap_or(None);
+        let mut dragging: Option<ScrollbarEdge> = ui.data(|d| d.get_temp(drag_id)).unwrap_or(None);
 
         if !pointer_down {
             dragging = None;
@@ -278,13 +279,8 @@ impl GridView {
             };
 
             // Compute geometry
-            let (track_rect, thumb_rect) = edge.geometry(
-                canvas_rect,
-                frac_start,
-                frac_end,
-                BAR_THICKNESS,
-                BAR_INSET,
-            );
+            let (track_rect, thumb_rect) =
+                edge.geometry(canvas_rect, frac_start, frac_end, BAR_THICKNESS, BAR_INSET);
 
             let near_edge = pointer_pos.is_some_and(|p| {
                 let expanded = track_rect.expand2(if is_horizontal {
@@ -298,21 +294,19 @@ impl GridView {
             let is_this_dragging = dragging == Some(edge);
 
             // Start drag on press (not just down) to avoid re-triggering
-            if pointer_pressed && dragging.is_none() {
-                if let Some(p) = pointer_pos {
+            if pointer_pressed && dragging.is_none()
+                && let Some(p) = pointer_pos {
                     if thumb_rect.expand(4.0).contains(p) {
                         dragging = Some(edge);
                     } else if near_edge && track_rect.contains(p) {
                         // Click on track: jump thumb center to click position
                         if is_horizontal {
-                            let click_frac =
-                                (p.x - canvas_rect.left()) / canvas_rect.width();
+                            let click_frac = (p.x - canvas_rect.left()) / canvas_rect.width();
                             let center_frac = (frac_start + frac_end) / 2.0;
                             let world_dx = (click_frac - center_frac) * content_w;
                             self.offset.x -= world_dx * self.zoom;
                         } else {
-                            let click_frac =
-                                (p.y - canvas_rect.top()) / canvas_rect.height();
+                            let click_frac = (p.y - canvas_rect.top()) / canvas_rect.height();
                             let center_frac = (frac_start + frac_end) / 2.0;
                             let world_dy = (click_frac - center_frac) * content_h;
                             self.offset.y -= world_dy * self.zoom;
@@ -320,7 +314,6 @@ impl GridView {
                         dragging = Some(edge);
                     }
                 }
-            }
 
             // Apply drag delta
             if is_this_dragging {
@@ -394,14 +387,8 @@ impl ScrollbarEdge {
                     Pos2::new(canvas.right(), y + thickness),
                 );
                 let thumb = Rect::from_min_max(
-                    Pos2::new(
-                        canvas.left() + frac_start * canvas.width(),
-                        y,
-                    ),
-                    Pos2::new(
-                        canvas.left() + frac_end * canvas.width(),
-                        y + thickness,
-                    ),
+                    Pos2::new(canvas.left() + frac_start * canvas.width(), y),
+                    Pos2::new(canvas.left() + frac_end * canvas.width(), y + thickness),
                 );
                 (track, thumb)
             }
@@ -412,14 +399,8 @@ impl ScrollbarEdge {
                     Pos2::new(canvas.right(), y + thickness),
                 );
                 let thumb = Rect::from_min_max(
-                    Pos2::new(
-                        canvas.left() + frac_start * canvas.width(),
-                        y,
-                    ),
-                    Pos2::new(
-                        canvas.left() + frac_end * canvas.width(),
-                        y + thickness,
-                    ),
+                    Pos2::new(canvas.left() + frac_start * canvas.width(), y),
+                    Pos2::new(canvas.left() + frac_end * canvas.width(), y + thickness),
                 );
                 (track, thumb)
             }
@@ -431,10 +412,7 @@ impl ScrollbarEdge {
                 );
                 let thumb = Rect::from_min_max(
                     Pos2::new(x, canvas.top() + frac_start * canvas.height()),
-                    Pos2::new(
-                        x + thickness,
-                        canvas.top() + frac_end * canvas.height(),
-                    ),
+                    Pos2::new(x + thickness, canvas.top() + frac_end * canvas.height()),
                 );
                 (track, thumb)
             }
@@ -446,10 +424,7 @@ impl ScrollbarEdge {
                 );
                 let thumb = Rect::from_min_max(
                     Pos2::new(x, canvas.top() + frac_start * canvas.height()),
-                    Pos2::new(
-                        x + thickness,
-                        canvas.top() + frac_end * canvas.height(),
-                    ),
+                    Pos2::new(x + thickness, canvas.top() + frac_end * canvas.height()),
                 );
                 (track, thumb)
             }

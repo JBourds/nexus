@@ -99,4 +99,3 @@ fn validate_config(sim: &ast::Simulation) -> Option<String> {
         Err(e) => Some(format!("{e:#}")),
     }
 }
-

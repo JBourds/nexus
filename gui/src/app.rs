@@ -146,8 +146,14 @@ impl NexusApp {
                 state.needs_fit = false;
             }
             let dist_unit = sim_distance_unit(&state.sim);
-            let (clicked, _hovered) =
-                grid::show_grid_panel(ui, &mut state.grid, &nodes, &state.selected_node, &[], dist_unit);
+            let (clicked, _hovered) = grid::show_grid_panel(
+                ui,
+                &mut state.grid,
+                &nodes,
+                &state.selected_node,
+                &[],
+                dist_unit,
+            );
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
