@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum KernelMessage {
     Shutdown,
     Poll(u64),
@@ -5,6 +6,7 @@ pub enum KernelMessage {
     RemapPids(Vec<(u32, u32)>),
 }
 
+#[derive(Debug)]
 pub enum RouterMessage {
     /// Nodes that newly depleted or recovered their charge this timestep.
     EnergyEvents {

@@ -1,3 +1,4 @@
+#[derive(Debug)]
 pub enum KernelMessage {
     HealthCheck,
     UpdateResources,
@@ -12,6 +13,7 @@ pub enum KernelMessage {
     Shutdown,
 }
 
+#[derive(Debug)]
 pub enum StatusMessage {
     Ok,
     PrematureExit,
