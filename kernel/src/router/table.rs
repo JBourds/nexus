@@ -54,7 +54,11 @@ impl Route {
     /// Determine all destination handles reachable by `src_node` on `src_ch`.
     /// Distance is intentionally not stored here; it is computed from live node
     /// positions at queue/deliver time to support mobile nodes.
-    fn outgoing(channels: &ResolvedChannels, src_ch: ChannelHandle, src_node: NodeHandle) -> Vec<Self> {
+    fn outgoing(
+        channels: &ResolvedChannels,
+        src_ch: ChannelHandle,
+        src_node: NodeHandle,
+    ) -> Vec<Self> {
         let ch = &channels.channels[src_ch.0];
         channels
             .handles

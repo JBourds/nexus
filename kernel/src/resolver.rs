@@ -46,7 +46,8 @@ impl ResolvedChannels {
         // Internal channels created with ideal links
         let mut internal_channels = vec![];
         // Mapping from a node's string name and the channel name to index
-        let mut internal_node_channel_handles: HashMap<(String, String), ChannelHandle> = HashMap::new();
+        let mut internal_node_channel_handles: HashMap<(String, String), ChannelHandle> =
+            HashMap::new();
 
         for (handle, (node_name, node)) in node_names.iter().zip(nodes.into_iter()).enumerate() {
             let handle = NodeIdx(handle);
@@ -72,7 +73,8 @@ impl ResolvedChannels {
             for (idx, internal_name) in
                 (channel_names.len() - 1..).zip(new_internal_names.into_iter())
             {
-                internal_node_channel_handles.insert((node_name.clone(), internal_name), ChannelIdx(idx));
+                internal_node_channel_handles
+                    .insert((node_name.clone(), internal_name), ChannelIdx(idx));
             }
         }
 
@@ -117,7 +119,9 @@ impl ResolvedChannels {
         self.handles
             .iter()
             .enumerate()
-            .map(|(index, (pid, _, channel))| ((*pid, self.channel_names[channel.0].clone()), index))
+            .map(|(index, (pid, _, channel))| {
+                ((*pid, self.channel_names[channel.0].clone()), index)
+            })
             .collect()
     }
 }

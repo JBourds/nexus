@@ -3726,6 +3726,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "serde",
+ "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
 ]

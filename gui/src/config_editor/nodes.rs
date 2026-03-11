@@ -1,14 +1,13 @@
 use std::collections::{HashMap, HashSet};
 use std::time::SystemTime;
 
-use config::ast::{self, ChannelEnergy, Charge, Cmd, Energy, NodeProtocol, PowerFlow, PowerRate};
+use config::ast::{self, ChannelEnergy, Cmd, Energy, NodeProtocol, PowerFlow, PowerRate};
 use egui::Ui;
 
 use super::modules::show_profile_preview;
 use super::widgets::{
-    CLOCK_UNIT_PAIRS, DATA_UNIT_PAIRS, DISTANCE_UNIT_PAIRS, ENERGY_UNIT_PAIRS, add_item_ui,
-    channel_multi_select, cmd_editor, enum_combo, optional_nonzero_u64, power_flow_editor,
-    power_rate_editor, remove_button,
+    ENERGY_UNIT_PAIRS, add_item_ui, channel_multi_select, cmd_editor, enum_combo,
+    power_flow_editor, power_rate_editor, remove_button,
 };
 use crate::state::ModuleState;
 
@@ -72,8 +71,8 @@ pub fn show_nodes(
 fn show_node(
     ui: &mut Ui,
     name: &str,
-    node: &mut ast::Node,
-    available_channels: &[String],
+    _node: &mut ast::Node,
+    _available_channels: &[String],
     modules: &mut ModuleState,
 ) {
     // --- Profiles ---
@@ -109,12 +108,13 @@ fn show_node(
             }
         }
         if let Some(i) = profile_removed
-            && let Some(profiles) = modules.node_profiles.get_mut(name) {
-                profiles.remove(i);
-                if profiles.is_empty() {
-                    modules.node_profiles.remove(name);
-                }
+            && let Some(profiles) = modules.node_profiles.get_mut(name)
+        {
+            profiles.remove(i);
+            if profiles.is_empty() {
+                modules.node_profiles.remove(name);
             }
+        }
 
         // Add profile dropdown
         let assigned: HashSet<String> = current.iter().map(|s| s.to_ascii_lowercase()).collect();
@@ -155,159 +155,6 @@ fn show_node(
         }
 
         ui.separator();
-    }
-
-    // --- Position ---
-    ui.label("Position:");
-    ui.horizontal(|ui| {
-        ui.label("x:");
-        ui.add(egui::DragValue::new(&mut node.position.point.x).speed(0.1));
-        ui.label("y:");
-        ui.add(egui::DragValue::new(&mut node.position.point.y).speed(0.1));
-        ui.label("z:");
-        ui.add(egui::DragValue::new(&mut node.position.point.z).speed(0.1));
-    });
-    ui.horizontal(|ui| {
-        ui.label("az:");
-        ui.add(egui::DragValue::new(&mut node.position.orientation.az).speed(0.1));
-        ui.label("el:");
-        ui.add(egui::DragValue::new(&mut node.position.orientation.el).speed(0.1));
-        ui.label("roll:");
-        ui.add(egui::DragValue::new(&mut node.position.orientation.roll).speed(0.1));
-    });
-    ui.horizontal(|ui| {
-        ui.label("Distance unit:");
-        enum_combo(
-            ui,
-            &format!("node_dunit_{name}"),
-            &mut node.position.unit,
-            DISTANCE_UNIT_PAIRS,
-        );
-    });
-
-    // --- Charge ---
-    ui.separator();
-    let mut has_charge = node.charge.is_some();
-    if ui.checkbox(&mut has_charge, "Charge").changed() {
-        node.charge = if has_charge {
-            Some(Charge::default())
-        } else {
-            None
-        };
-    }
-    if let Some(charge) = &mut node.charge {
-        ui.horizontal(|ui| {
-            ui.label("Max:");
-            ui.add(egui::DragValue::new(&mut charge.max));
-            ui.label("Qty:");
-            ui.add(egui::DragValue::new(&mut charge.quantity));
-            ui.label("Unit:");
-            enum_combo(
-                ui,
-                &format!("node_punit_{name}"),
-                &mut charge.unit,
-                ENERGY_UNIT_PAIRS,
-            );
-        });
-    }
-
-    // --- Resources ---
-    ui.separator();
-    ui.label("Resources:");
-    ui.indent(format!("node_res_{name}"), |ui| {
-        optional_nonzero_u64(ui, "CPU cores:", &mut node.resources.cpu.cores);
-        optional_nonzero_u64(ui, "CPU rate:", &mut node.resources.cpu.hertz);
-        if node.resources.cpu.hertz.is_some() {
-            ui.horizontal(|ui| {
-                ui.label("  Clock unit:");
-                enum_combo(
-                    ui,
-                    &format!("node_clku_{name}"),
-                    &mut node.resources.cpu.unit,
-                    CLOCK_UNIT_PAIRS,
-                );
-            });
-        }
-        optional_nonzero_u64(ui, "Memory:", &mut node.resources.mem.amount);
-        if node.resources.mem.amount.is_some() {
-            ui.horizontal(|ui| {
-                ui.label("  Memory unit:");
-                enum_combo(
-                    ui,
-                    &format!("node_memu_{name}"),
-                    &mut node.resources.mem.unit,
-                    DATA_UNIT_PAIRS,
-                );
-            });
-        }
-    });
-
-    // --- Protocols ---
-    ui.separator();
-    show_protocols(ui, name, &mut node.protocols, available_channels);
-
-    // --- Internal Channels ---
-    ui.separator();
-    show_internal_channels(ui, name, &mut node.internal_names);
-
-    // --- Power States ---
-    ui.separator();
-    show_power_rate_map(ui, name, "power_state", &mut node.power_states);
-
-    // --- Power Sources ---
-    ui.separator();
-    show_power_flow_map(ui, name, "power_source", &mut node.power_sources);
-
-    // --- Power Sinks ---
-    ui.separator();
-    show_power_flow_map(ui, name, "power_sink", &mut node.power_sinks);
-
-    // --- Channel Energy ---
-    ui.separator();
-    show_channel_energy(ui, name, &mut node.channel_energy, available_channels);
-
-    // --- Initial State ---
-    if !node.power_states.is_empty() {
-        ui.separator();
-        let state_names: Vec<String> = node.power_states.keys().cloned().collect();
-        ui.horizontal(|ui| {
-            ui.label("Initial State:");
-            let current = node.initial_state.clone().unwrap_or_default();
-            egui::ComboBox::from_id_salt(format!("node_init_state_{name}"))
-                .selected_text(&current)
-                .show_ui(ui, |ui| {
-                    if ui
-                        .selectable_label(node.initial_state.is_none(), "(none)")
-                        .clicked()
-                    {
-                        node.initial_state = None;
-                    }
-                    for s in &state_names {
-                        if ui
-                            .selectable_label(node.initial_state.as_ref() == Some(s), s)
-                            .clicked()
-                        {
-                            node.initial_state = Some(s.clone());
-                        }
-                    }
-                });
-        });
-    }
-
-    // --- Restart Threshold ---
-    ui.separator();
-    let mut has_threshold = node.restart_threshold.is_some();
-    if ui
-        .checkbox(&mut has_threshold, "Restart Threshold")
-        .changed()
-    {
-        node.restart_threshold = if has_threshold { Some(0.1) } else { None };
-    }
-    if let Some(threshold) = &mut node.restart_threshold {
-        ui.horizontal(|ui| {
-            ui.label("Threshold:");
-            ui.add(egui::Slider::new(threshold, 0.0..=1.0));
-        });
     }
 }
 

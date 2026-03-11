@@ -147,7 +147,9 @@ impl Source {
                         data,
                         ..
                     })) => {
-                        if let Err(e) = router.queue_message(NodeIdx(node), ChannelIdx(channel), data) {
+                        if let Err(e) =
+                            router.queue_message(NodeIdx(node), ChannelIdx(channel), data)
+                        {
                             break Err(SourceError::RouterError(e));
                         }
                     }
@@ -184,7 +186,11 @@ impl Source {
                 } = rec.event
             {
                 router
-                    .queue_message(NodeIdx(src_node as usize), ChannelIdx(channel as usize), data)
+                    .queue_message(
+                        NodeIdx(src_node as usize),
+                        ChannelIdx(channel as usize),
+                        data,
+                    )
                     .map_err(SourceError::RouterError)?;
             }
 
@@ -206,7 +212,11 @@ impl Source {
                         } = rec.event
                         {
                             router
-                                .queue_message(NodeIdx(src_node as usize), ChannelIdx(channel as usize), data)
+                                .queue_message(
+                                    NodeIdx(src_node as usize),
+                                    ChannelIdx(channel as usize),
+                                    data,
+                                )
                                 .map_err(SourceError::RouterError)?;
                         }
                     }

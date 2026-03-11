@@ -571,7 +571,10 @@ impl DistanceTimeVar {
         } else {
             def.distance
         };
-        let parsed_rate = Some(rate.parse::<meval::Expr>().context("Unable to parse rate expression")?);
+        let parsed_rate = Some(
+            rate.parse::<meval::Expr>()
+                .context("Unable to parse rate expression")?,
+        );
         Ok(Self {
             rate,
             parsed_rate,

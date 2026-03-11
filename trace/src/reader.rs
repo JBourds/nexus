@@ -60,8 +60,7 @@ impl TraceReader {
         let mut header_bytes = vec![0u8; header_len];
         file.read_exact(&mut header_bytes)?;
         let cfg = config::standard();
-        let (header, _): (TraceHeader, _) =
-            bincode::decode_from_slice(&header_bytes, cfg)?;
+        let (header, _): (TraceHeader, _) = bincode::decode_from_slice(&header_bytes, cfg)?;
 
         let data_start = (MAGIC.len() + size_of::<u16>() + size_of::<u32>() + header_len) as u64;
 

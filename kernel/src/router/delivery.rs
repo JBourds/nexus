@@ -140,7 +140,7 @@ impl RoutingServer {
                 };
 
                 let num = self.sequence;
-            self.sequence += 1;
+                self.sequence += 1;
                 self.queued.push((Reverse(becomes_active_at), num, msg));
             }
         }

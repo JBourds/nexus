@@ -71,7 +71,12 @@ fn show_channel_body(ui: &mut Ui, name: &str, channel: &mut ast::Channel) {
     if ct.ttl.is_some() {
         ui.horizontal(|ui| {
             ui.label("  TTL unit:");
-            enum_combo(ui, &format!("ch_ttlu_{name}"), &mut ct.unit, TIME_UNIT_PAIRS);
+            enum_combo(
+                ui,
+                &format!("ch_ttlu_{name}"),
+                &mut ct.unit,
+                TIME_UNIT_PAIRS,
+            );
         });
     }
     ui.horizontal(|ui| {

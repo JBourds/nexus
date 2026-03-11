@@ -444,13 +444,18 @@ mod tests {
         // Handles: (PID, node, channel)
         // handle 0: publisher (pid=1, node=0, ch=0)
         // handle 1: subscriber (pid=2, node=1, ch=0)
-        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)),
+            (2u32, NodeIdx(1), ChannelIdx(0)),
+        ];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         let initial_charge = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
 
         // Queue a message from node 0 to node 1 via channel 0
-        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB]).unwrap();
+        router
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB])
+            .unwrap();
 
         // Step to deliver the queued message (it becomes active at a future timestep)
         // The link default has zero delays, so it should arrive at current timestep
@@ -863,11 +868,16 @@ mod tests {
             subscribers: HashSet::from([NodeIdx(1)]),
             publishers: HashSet::from([NodeIdx(0)]),
         };
-        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)),
+            (2u32, NodeIdx(1), ChannelIdx(0)),
+        ];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Queue a message and deliver it
-        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB]).unwrap();
+        router
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB])
+            .unwrap();
         router.step().unwrap();
 
         // Subscriber mailbox should have the message
@@ -915,7 +925,10 @@ mod tests {
             subscribers: HashSet::from([NodeIdx(0), NodeIdx(1)]),
             publishers: HashSet::new(),
         };
-        let handles = vec![(10u32, NodeIdx(0), ChannelIdx(0)), (20u32, NodeIdx(1), ChannelIdx(0))];
+        let handles = vec![
+            (10u32, NodeIdx(0), ChannelIdx(0)),
+            (20u32, NodeIdx(1), ChannelIdx(0)),
+        ];
         let (mut router, _rx) = make_router(vec![node_a, node_b], vec![channel], handles);
 
         // Only remap PID 10 → 11
@@ -960,7 +973,10 @@ mod tests {
             publishers: HashSet::from([NodeIdx(0)]),
         };
         // Two handles with different PIDs for the same node (two protocols)
-        let handles = vec![(100u32, NodeIdx(0), ChannelIdx(0)), (101u32, NodeIdx(0), ChannelIdx(0))];
+        let handles = vec![
+            (100u32, NodeIdx(0), ChannelIdx(0)),
+            (101u32, NodeIdx(0), ChannelIdx(0)),
+        ];
         let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
 
         // Batch remap both
@@ -997,14 +1013,19 @@ mod tests {
             subscribers: HashSet::from([NodeIdx(1)]),
             publishers: HashSet::from([NodeIdx(0)]),
         };
-        let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0)), (2u32, NodeIdx(1), ChannelIdx(0))];
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)),
+            (2u32, NodeIdx(1), ChannelIdx(0)),
+        ];
         let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Remap subscriber's PID before any message delivery
         router.apply_pid_remaps(&[(2, 42)]);
 
         // Queue and deliver a message — should work with new PID in handle
-        router.queue_message(NodeIdx(0), ChannelIdx(0), vec![0xCD]).unwrap();
+        router
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xCD])
+            .unwrap();
         router.step().unwrap();
 
         // Subscriber mailbox should have received the message
