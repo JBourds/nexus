@@ -5,7 +5,6 @@ use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
 use config::ast::{self};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
-use std::process::Child;
 use std::sync::mpsc;
 use tracing::instrument;
 
@@ -126,13 +125,10 @@ impl NexusFs {
         }
     }
 
-    pub fn add_processes(mut self, handles: &[runner::ProtocolHandle]) -> Self {
+    pub fn add_processes(mut self, pids: &[u32]) -> Self {
         for (file, mode) in CONTROL_FILES.iter() {
             let inode = self.get_or_make_inode(file.to_string());
-            for pid in handles
-                .iter()
-                .filter_map(|h| h.process.as_ref().map(Child::id))
-            {
+            for &pid in pids {
                 self.buffers.insert(
                     (pid, file.to_string()),
                     NexusFile::new(NonZeroUsize::new(1000).unwrap(), *mode, inode),

@@ -180,9 +180,10 @@ fn run_inner(
         .unwrap_or_default();
 
     let file_handles = make_file_handles(&sim, &runc.handles);
+    let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
 
     let (sess, (tx, rx)) = fs
-        .add_processes(&runc.handles)
+        .add_processes(&pids)
         .add_channels(protocol_channels)?
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;

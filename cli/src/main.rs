@@ -165,6 +165,11 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
         let pending_remaps = Arc::new(Mutex::new(Vec::new()));
+        let pids: Vec<u32> = runc
+            .handles
+            .iter()
+            .filter_map(|h| h.pid())
+            .collect();
         let fs = args
             .root
             .clone()
@@ -173,7 +178,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
 
         #[allow(unused_variables)]
         let (sess, (tx, rx)) = fs
-            .add_processes(&runc.handles)
+            .add_processes(&pids)
             .add_channels(protocol_channels)?
             .mount()
             .expect("unable to mount file system");
@@ -214,7 +219,7 @@ fn fuzz(_args: Cli) -> Result<()> {
 fn get_output(handles: Vec<ProtocolHandle>) -> Vec<ProtocolSummary> {
     handles
         .into_iter()
-        .filter_map(ProtocolHandle::finish)
+        .filter_map(|h| h.finish().ok().flatten())
         .collect()
 }
 
