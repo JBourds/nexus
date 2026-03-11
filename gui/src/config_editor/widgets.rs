@@ -102,6 +102,7 @@ pub fn optional_nonzero_usize(ui: &mut Ui, label: &str, val: &mut Option<NonZero
 }
 
 /// Two text inputs: command string + args (comma-separated).
+#[allow(dead_code)]
 pub fn cmd_editor(ui: &mut Ui, id: &str, cmd: &mut Cmd) {
     ui.horizontal(|ui| {
         ui.label("cmd:");
@@ -124,6 +125,7 @@ pub fn cmd_editor(ui: &mut Ui, id: &str, cmd: &mut Cmd) {
 }
 
 /// Checkbox per available channel name.
+#[allow(dead_code)]
 pub fn channel_multi_select(
     ui: &mut Ui,
     id: &str,
@@ -159,6 +161,7 @@ pub fn data_rate_editor(ui: &mut Ui, id: &str, rate: &mut DataRate) {
 }
 
 /// PowerRate editor: rate DragValue + PowerUnit combo + TimeUnit combo.
+#[allow(dead_code)]
 pub fn power_rate_editor(ui: &mut Ui, id: &str, rate: &mut PowerRate) {
     ui.horizontal(|ui| {
         ui.add(egui::DragValue::new(&mut rate.rate));
@@ -235,6 +238,7 @@ pub const DATA_UNIT_PAIRS: &[(&str, DataUnit)] = &[
     ("Gigabyte", DataUnit::Gigabyte),
 ];
 
+#[allow(dead_code)]
 pub const POWER_UNIT_PAIRS: &[(&str, PowerUnit)] = &[
     ("NanoWatt", PowerUnit::NanoWatt),
     ("MicroWatt", PowerUnit::MicroWatt),
@@ -254,6 +258,7 @@ pub const DISTANCE_UNIT_PAIRS: &[(&str, DistanceUnit)] = &[
 
 use config::ast::ClockUnit;
 
+#[allow(dead_code)]
 pub const CLOCK_UNIT_PAIRS: &[(&str, ClockUnit)] = &[
     ("Hertz", ClockUnit::Hertz),
     ("Kilohertz", ClockUnit::Kilohertz),
@@ -269,6 +274,7 @@ pub const SIGNAL_SHAPE_PAIRS: &[(&str, SignalShape)] = &[
     ("Direct", SignalShape::Direct),
 ];
 
+#[allow(dead_code)]
 pub const ENERGY_UNIT_PAIRS: &[(&str, EnergyUnit)] = &[
     ("NanoJoule", EnergyUnit::NanoJoule),
     ("MicroJoule", EnergyUnit::MicroJoule),
@@ -281,7 +287,8 @@ pub const ENERGY_UNIT_PAIRS: &[(&str, EnergyUnit)] = &[
     ("KiloWattHour", EnergyUnit::KiloWattHour),
 ];
 
-/// Editor for a `PowerFlow` — switches between Constant and PiecewiseLinear.
+/// Editor for a `PowerFlow` -- switches between Constant and PiecewiseLinear.
+#[allow(dead_code)]
 pub fn power_flow_editor(ui: &mut Ui, id: &str, flow: &mut PowerFlow) {
     let is_constant = matches!(flow, PowerFlow::Constant(_));
     let mut mode = if is_constant { 0 } else { 1 };

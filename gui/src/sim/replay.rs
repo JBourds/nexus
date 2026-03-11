@@ -46,6 +46,7 @@ impl ReplayController {
         &self.reader.header.node_names
     }
 
+    #[allow(dead_code)]
     pub fn channel_names(&self) -> &[String] {
         &self.reader.header.channel_names
     }

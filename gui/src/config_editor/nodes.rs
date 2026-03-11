@@ -159,6 +159,7 @@ fn show_node(
 }
 
 /// CRUD editor for a `HashMap<String, PowerRate>` on a node.
+#[allow(dead_code)]
 fn show_power_rate_map(
     ui: &mut Ui,
     node_name: &str,
@@ -206,6 +207,7 @@ fn show_power_rate_map(
 }
 
 /// CRUD editor for a `HashMap<String, PowerFlow>` on a node.
+#[allow(dead_code)]
 fn show_power_flow_map(
     ui: &mut Ui,
     node_name: &str,
@@ -254,6 +256,7 @@ fn show_power_flow_map(
     }
 }
 
+#[allow(dead_code)]
 fn show_channel_energy(
     ui: &mut Ui,
     node_name: &str,
@@ -330,6 +333,7 @@ fn show_channel_energy(
     }
 }
 
+#[allow(dead_code)]
 fn energy_cost_editor(ui: &mut Ui, id: &str, label: &str, energy: &mut Option<Energy>) {
     ui.horizontal(|ui| {
         let mut has = energy.is_some();
@@ -350,6 +354,7 @@ fn energy_cost_editor(ui: &mut Ui, id: &str, label: &str, energy: &mut Option<En
     });
 }
 
+#[allow(dead_code)]
 fn show_protocols(
     ui: &mut Ui,
     node_name: &str,
@@ -420,6 +425,7 @@ fn show_protocols(
     }
 }
 
+#[allow(dead_code)]
 fn show_protocol(
     ui: &mut Ui,
     node_name: &str,
@@ -467,6 +473,7 @@ fn show_protocol(
     }
 }
 
+#[allow(dead_code)]
 fn show_internal_channels(ui: &mut Ui, node_name: &str, internal: &mut Vec<String>) {
     ui.label("Internal Channels:");
     // Add

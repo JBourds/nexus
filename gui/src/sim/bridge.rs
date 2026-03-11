@@ -10,6 +10,7 @@ use trace::writer::TraceWriter;
 
 /// Events sent from the simulation bridge to the GUI.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub enum GuiEvent {
     Trace(TraceRecord),
     TimestepAdvanced(u64),
