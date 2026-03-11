@@ -1,5 +1,7 @@
 #[cfg(test)]
 mod tests {
+    use std::sync::Arc;
+
     use crate::{
         resolver::ResolvedChannels,
         router::{RoutingServer, energy::EnergyManager, table::RoutingTable},
@@ -72,8 +74,8 @@ mod tests {
         handles: Vec<(u32, NodeIdx, ChannelIdx)>,
     ) -> (RoutingServer, mpsc::Receiver<fuse::KernelMessage>) {
         let (tx, rx) = mpsc::channel();
-        let node_names: Vec<String> = (0..nodes.len()).map(|i| format!("node_{i}")).collect();
-        let channel_names: Vec<String> = (0..channels.len()).map(|i| format!("ch_{i}")).collect();
+        let node_names: Vec<Arc<str>> = (0..nodes.len()).map(|i| Arc::from(format!("node_{i}").as_str())).collect();
+        let channel_names: Vec<Arc<str>> = (0..channels.len()).map(|i| Arc::from(format!("ch_{i}").as_str())).collect();
         let resolved = ResolvedChannels {
             nodes,
             node_names,
@@ -482,8 +484,8 @@ mod tests {
 
         // We need a control file handle. The channel_names need to include the control prefix.
         let (tx, _rx) = mpsc::channel();
-        let node_names = vec!["node_0".to_string()];
-        let channel_names = vec!["ctl.energy_state".to_string()];
+        let node_names = vec![Arc::from("node_0")];
+        let channel_names = vec![Arc::from("ctl.energy_state")];
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
@@ -556,14 +558,14 @@ mod tests {
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
-            node_names: vec!["node_0".to_string()],
+            node_names: vec![Arc::from("node_0")],
             channels: vec![types::Channel {
                 link: Link::default(),
                 r#type: ChannelType::new_internal(),
                 subscribers: HashSet::new(),
                 publishers: HashSet::new(),
             }],
-            channel_names: vec!["ctl.energy_state".to_string()],
+            channel_names: vec![Arc::from("ctl.energy_state")],
             handles: handles.clone(),
         };
         let fuse_mapping = resolved.make_fuse_mapping();
@@ -1132,14 +1134,14 @@ mod tests {
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
-            node_names: vec!["node_0".to_string()],
+            node_names: vec![Arc::from("node_0")],
             channels: vec![types::Channel {
                 link: Link::default(),
                 r#type: ChannelType::new_internal(),
                 subscribers: HashSet::new(),
                 publishers: HashSet::new(),
             }],
-            channel_names: vec!["ctl.power_flows".to_string()],
+            channel_names: vec![Arc::from("ctl.power_flows")],
             handles: handles.clone(),
         };
         let fuse_mapping = resolved.make_fuse_mapping();
@@ -1231,14 +1233,14 @@ mod tests {
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
-            node_names: vec!["node_0".to_string()],
+            node_names: vec![Arc::from("node_0")],
             channels: vec![types::Channel {
                 link: Link::default(),
                 r#type: ChannelType::new_internal(),
                 subscribers: HashSet::new(),
                 publishers: HashSet::new(),
             }],
-            channel_names: vec!["ctl.power_flows".to_string()],
+            channel_names: vec![Arc::from("ctl.power_flows")],
             handles: handles.clone(),
         };
         let fuse_mapping = resolved.make_fuse_mapping();

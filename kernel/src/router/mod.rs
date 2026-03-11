@@ -173,13 +173,13 @@ impl RoutingServer {
                                 .energy_mgr
                                 .newly_depleted
                                 .drain(..)
-                                .map(|i| router.channels.node_names[i].clone())
+                                .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
                             let recovered = router
                                 .energy_mgr
                                 .newly_recovered
                                 .drain(..)
-                                .map(|i| router.channels.node_names[i].clone())
+                                .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
                             if router_tx
                                 .send(RouterMessage::EnergyEvents {
@@ -210,7 +210,7 @@ impl RoutingServer {
                     handle.0 = new_pid;
                     self.mailboxes[idx].clear();
                     // Update fuse_mapping: remove old key, insert new one
-                    let channel_name = self.channels.channel_names[handle.2.0].clone();
+                    let channel_name = self.channels.channel_names[handle.2.0].to_string();
                     self.fuse_mapping.remove(&(old_pid, channel_name.clone()));
                     self.fuse_mapping.insert((new_pid, channel_name), idx);
                 }

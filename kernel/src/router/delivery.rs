@@ -151,7 +151,7 @@ impl RoutingServer {
                         );
                     }
                     let msg = fuse::Message {
-                        id: (pid, node_name.clone()),
+                        id: (pid, node_name.to_string()),
                         data: buf.to_vec(),
                     };
                     self.tx
@@ -194,7 +194,7 @@ impl RoutingServer {
                     node = node_handle.0, tx = false, data = buf.as_slice()
                 );
                 let msg = fuse::Message {
-                    id: (pid, node_name.clone()),
+                    id: (pid, node_name.to_string()),
                     data: buf,
                 };
                 self.tx
@@ -236,7 +236,7 @@ impl RoutingServer {
                 );
             }
             let msg = fuse::Message {
-                id: (pid, self.channels.node_names[node_handle.0].clone()),
+                id: (pid, self.channels.node_names[node_handle.0].to_string()),
                 data: msg.buf.to_vec(),
             };
             event!(
