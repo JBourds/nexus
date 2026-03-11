@@ -17,10 +17,7 @@ use crate::{
 };
 #[allow(unused_imports)] // Position is used by delivery.rs via `use super::*`
 use config::ast::Position;
-use config::{
-    CONTROL_PREFIX,
-    ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
-};
+use config::ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
 use rand::rngs::StdRng;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
@@ -31,11 +28,13 @@ use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
+mod control;
 mod energy_tests;
 mod posctl;
 mod powerctl;
 mod timectl;
 use crate::types::{ChannelHandle, ChannelIdx};
+use control::ControlFile;
 
 pub type Timestep = u64;
 pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, usize, AddressedMsg)>;
@@ -202,20 +201,21 @@ impl RoutingServer {
             .map(|handle| KernelServer::new(handle, kernel_tx, router_rx))
     }
 
-    /// Apply PID remaps: update handles, rebuild fuse_mapping, clear mailboxes
-    /// for affected handles, and push remaps to the shared FUSE queue.
+    /// Apply PID remaps: update handles and fuse_mapping entries, clear
+    /// mailboxes for affected handles, and push remaps to the shared FUSE queue.
     fn apply_pid_remaps(&mut self, pairs: &[(u32, u32)]) {
         for &(old_pid, new_pid) in pairs {
             for (idx, handle) in self.channels.handles.iter_mut().enumerate() {
                 if handle.0 == old_pid {
                     handle.0 = new_pid;
-                    // Clear mailbox — a real device losing power loses buffered frames
                     self.mailboxes[idx].clear();
+                    // Update fuse_mapping: remove old key, insert new one
+                    let channel_name = self.channels.channel_names[handle.2.0].clone();
+                    self.fuse_mapping.remove(&(old_pid, channel_name.clone()));
+                    self.fuse_mapping.insert((new_pid, channel_name), idx);
                 }
             }
         }
-        // Rebuild fuse_mapping from scratch
-        self.fuse_mapping = self.channels.make_fuse_mapping();
         // Push remaps to shared FUSE queue
         match self.pending_remaps.lock() {
             Ok(mut queue) => queue.extend_from_slice(pairs),
@@ -234,30 +234,39 @@ impl RoutingServer {
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let (_, node_index, _) = self.channels.handles[handle_index];
-        let remaining = msg
-            .id
-            .1
-            .strip_prefix(CONTROL_PREFIX)
-            .expect("must be a control file.");
-        let service: Vec<_> = remaining.split_terminator(".").collect();
-        match service.as_slice() {
-            ["time", ..] => self.update_time(node_index.0, msg),
-            ["energy_state"] => {
+        let ni = node_index.0;
+        let Some(ctl) = ControlFile::parse(&msg.id.1) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        match ctl {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+                self.update_time(ni, msg)
+            }
+            ControlFile::EnergyState => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
-                if let Some(energy) = &mut self.channels.nodes[node_index.0].energy
+                if let Some(energy) = &mut self.channels.nodes[ni].energy
                     && energy.power_states_nj.contains_key(&state)
                 {
                     energy.current_state = Some(state);
                 }
                 Ok(())
             }
-            ["pos", "dx" | "dy" | "dz"] => self.write_pos_delta(node_index.0, msg),
-            ["pos", "motion"] => self.write_pos_motion(node_index.0, msg),
-            ["pos", ..] => self.write_pos(node_index.0, msg),
-            ["power_flows"] => self.write_power_flows(node_index.0, msg),
-            _ => Err(RouterError::UnknownFile(format!(
-                "{CONTROL_PREFIX}{remaining}"
-            ))),
+            ControlFile::PosDx | ControlFile::PosDy | ControlFile::PosDz => {
+                self.write_pos_delta(ni, msg)
+            }
+            ControlFile::PosMotion => self.write_pos_motion(ni, msg),
+            ControlFile::PosX
+            | ControlFile::PosY
+            | ControlFile::PosZ
+            | ControlFile::PosAz
+            | ControlFile::PosEl
+            | ControlFile::PosRoll => self.write_pos(ni, msg),
+            ControlFile::PowerFlows => self.write_power_flows(ni, msg),
+            // Read-only files cannot be written
+            ControlFile::EnergyLeft
+            | ControlFile::ElapsedUs
+            | ControlFile::ElapsedMs
+            | ControlFile::ElapsedS => Err(RouterError::UnknownFile(msg.id.1.clone())),
         }
     }
 
@@ -304,7 +313,7 @@ impl RoutingServer {
         let Some(channel_index) = self.get_handle_index(&msg.id) else {
             return Err(RouterError::UnknownFile(msg.id.1));
         };
-        if msg.id.1.starts_with(CONTROL_PREFIX) {
+        if ControlFile::parse(&msg.id.1).is_some() {
             self.write_control_file(channel_index, msg)
         } else {
             self.write_channel_file(channel_index, msg)
@@ -317,17 +326,19 @@ impl RoutingServer {
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let (_, node_index, _) = self.channels.handles[handle_index];
-        let remaining = msg
-            .id
-            .1
-            .strip_prefix(CONTROL_PREFIX)
-            .expect("must be a control file.");
-        let service: Vec<_> = remaining.split_terminator(".").collect();
-        match service.as_slice() {
-            ["time", ..] => self.send_time(node_index.0, msg),
-            ["elapsed", ..] => self.send_elapsed(msg),
-            ["energy_left"] => {
-                let charge_nj = self.channels.nodes[node_index.0]
+        let ni = node_index.0;
+        let Some(ctl) = ControlFile::parse(&msg.id.1) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        match ctl {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+                self.send_time(ni, msg)
+            }
+            ControlFile::ElapsedUs | ControlFile::ElapsedMs | ControlFile::ElapsedS => {
+                self.send_elapsed(msg)
+            }
+            ControlFile::EnergyLeft => {
+                let charge_nj = self.channels.nodes[ni]
                     .energy
                     .as_ref()
                     .map_or(0, |e| e.charge_nj);
@@ -337,8 +348,8 @@ impl RoutingServer {
                     .send(fuse::KernelMessage::Exclusive(msg))
                     .map_err(RouterError::FuseSendError)
             }
-            ["energy_state"] => {
-                let state = self.channels.nodes[node_index.0]
+            ControlFile::EnergyState => {
+                let state = self.channels.nodes[ni]
                     .energy
                     .as_ref()
                     .and_then(|e| e.current_state.clone())
@@ -349,12 +360,18 @@ impl RoutingServer {
                     .send(fuse::KernelMessage::Exclusive(msg))
                     .map_err(RouterError::FuseSendError)
             }
-            ["pos", "motion"] => self.read_pos_motion(node_index.0, msg),
-            ["pos", ..] => self.read_pos(node_index.0, msg),
-            ["power_flows"] => self.read_power_flows(node_index.0, msg),
-            _ => Err(RouterError::UnknownFile(format!(
-                "{CONTROL_PREFIX}{remaining}"
-            ))),
+            ControlFile::PosMotion => self.read_pos_motion(ni, msg),
+            ControlFile::PosX
+            | ControlFile::PosY
+            | ControlFile::PosZ
+            | ControlFile::PosAz
+            | ControlFile::PosEl
+            | ControlFile::PosRoll => self.read_pos(ni, msg),
+            ControlFile::PowerFlows => self.read_power_flows(ni, msg),
+            // Write-only files cannot be read
+            ControlFile::PosDx | ControlFile::PosDy | ControlFile::PosDz => {
+                Err(RouterError::UnknownFile(msg.id.1.clone()))
+            }
         }
     }
 
@@ -380,7 +397,7 @@ impl RoutingServer {
         let Some(channel_index) = self.get_handle_index(&msg.id) else {
             return Err(RouterError::UnknownFile(msg.id.1));
         };
-        if msg.id.1.starts_with(CONTROL_PREFIX) {
+        if ControlFile::parse(&msg.id.1).is_some() {
             self.read_control_file(channel_index, msg)
         } else {
             self.read_channel_file(channel_index, msg)
