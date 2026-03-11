@@ -44,4 +44,8 @@ pub enum ProtocolError {
     BuildErrors(Vec<RunnerDetail>),
     #[error("Unable to run process: {0:#?}.")]
     UnableToRun(std::io::Error),
+    #[error("Cgroup error: {0}")]
+    CgroupError(#[from] std::io::Error),
+    #[error("Node not found for handle: {0}")]
+    NodeNotFound(String),
 }

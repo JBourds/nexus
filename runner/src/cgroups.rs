@@ -307,9 +307,9 @@ impl CgroupController {
     ) -> Result<ProtocolHandle, ProtocolError> {
         let node = self
             .get_node(handle)
-            .expect("couldn't find node from handle.");
+            .ok_or_else(|| ProtocolError::NodeNotFound(handle.key.clone()))?;
         let cgroup = node.path.join(name);
-        fs::create_dir(&cgroup).expect("couldn't create cgroup path when adding protocol");
+        fs::create_dir(&cgroup)?;
         let mut handle = ProtocolHandle::new(
             handle.clone(),
             node.protocols.len(),
