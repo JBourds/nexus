@@ -1157,3 +1157,202 @@ fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> Result<DateTime<Utc>> {
 fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> Result<SystemTime> {
     toml_datetime_to_chrono(dt).map(SystemTime::from)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parse;
+
+    fn u(s: &str) -> parse::Unit {
+        parse::Unit(s.to_string())
+    }
+
+    // -----------------------------------------------------------------------
+    // ClockUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn clock_unit_lowercase() {
+        assert!(matches!(ClockUnit::validate(u("hertz")), Ok(ClockUnit::Hertz)));
+        assert!(matches!(ClockUnit::validate(u("megahertz")), Ok(ClockUnit::Megahertz)));
+    }
+
+    #[test]
+    fn clock_unit_abbreviations() {
+        assert!(matches!(ClockUnit::validate(u("hz")), Ok(ClockUnit::Hertz)));
+        assert!(matches!(ClockUnit::validate(u("khz")), Ok(ClockUnit::Kilohertz)));
+        assert!(matches!(ClockUnit::validate(u("mhz")), Ok(ClockUnit::Megahertz)));
+        assert!(matches!(ClockUnit::validate(u("ghz")), Ok(ClockUnit::Gigahertz)));
+    }
+
+    #[test]
+    fn clock_unit_mixed_case() {
+        assert!(matches!(ClockUnit::validate(u("HERTZ")), Ok(ClockUnit::Hertz)));
+        assert!(matches!(ClockUnit::validate(u("MHz")), Ok(ClockUnit::Megahertz)));
+        assert!(matches!(ClockUnit::validate(u("GHZ")), Ok(ClockUnit::Gigahertz)));
+    }
+
+    #[test]
+    fn clock_unit_unknown() {
+        assert!(ClockUnit::validate(u("parsecs")).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // DataUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn data_unit_full_names() {
+        assert!(matches!(DataUnit::validate(u("bits")), Ok(DataUnit::Bit)));
+        assert!(matches!(DataUnit::validate(u("bytes")), Ok(DataUnit::Byte)));
+        assert!(matches!(DataUnit::validate(u("kilobytes")), Ok(DataUnit::Kilobyte)));
+    }
+
+    #[test]
+    fn data_unit_case_sensitive_abbreviations() {
+        // Lowercase = bits
+        assert!(matches!(DataUnit::validate(u("b")), Ok(DataUnit::Bit)));
+        assert!(matches!(DataUnit::validate(u("kb")), Ok(DataUnit::Kilobit)));
+        assert!(matches!(DataUnit::validate(u("mb")), Ok(DataUnit::Megabit)));
+        // Uppercase = bytes
+        assert!(matches!(DataUnit::validate(u("B")), Ok(DataUnit::Byte)));
+        assert!(matches!(DataUnit::validate(u("KB")), Ok(DataUnit::Kilobyte)));
+        assert!(matches!(DataUnit::validate(u("MB")), Ok(DataUnit::Megabyte)));
+        assert!(matches!(DataUnit::validate(u("GB")), Ok(DataUnit::Gigabyte)));
+    }
+
+    #[test]
+    fn data_unit_mixed_case_names() {
+        assert!(matches!(DataUnit::validate(u("BITS")), Ok(DataUnit::Bit)));
+        assert!(matches!(DataUnit::validate(u("BYTES")), Ok(DataUnit::Byte)));
+        assert!(matches!(DataUnit::validate(u("Kilobytes")), Ok(DataUnit::Kilobyte)));
+    }
+
+    #[test]
+    fn data_unit_unknown() {
+        assert!(DataUnit::validate(u("nibble")).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // TimeUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn time_unit_full_names_and_abbrevs() {
+        assert!(matches!(TimeUnit::validate(u("seconds")), Ok(TimeUnit::Seconds)));
+        assert!(matches!(TimeUnit::validate(u("ms")), Ok(TimeUnit::Milliseconds)));
+        assert!(matches!(TimeUnit::validate(u("us")), Ok(TimeUnit::Microseconds)));
+        assert!(matches!(TimeUnit::validate(u("ns")), Ok(TimeUnit::Nanoseconds)));
+        assert!(matches!(TimeUnit::validate(u("hours")), Ok(TimeUnit::Hours)));
+        assert!(matches!(TimeUnit::validate(u("m")), Ok(TimeUnit::Minutes)));
+    }
+
+    #[test]
+    fn time_unit_case_insensitive() {
+        assert!(matches!(TimeUnit::validate(u("SECONDS")), Ok(TimeUnit::Seconds)));
+        assert!(matches!(TimeUnit::validate(u("Ms")), Ok(TimeUnit::Milliseconds)));
+    }
+
+    // -----------------------------------------------------------------------
+    // DistanceUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn distance_unit_names_and_abbrevs() {
+        assert!(matches!(DistanceUnit::validate(u("meters")), Ok(DistanceUnit::Meters)));
+        assert!(matches!(DistanceUnit::validate(u("km")), Ok(DistanceUnit::Kilometers)));
+        assert!(matches!(DistanceUnit::validate(u("mm")), Ok(DistanceUnit::Millimeters)));
+        assert!(matches!(DistanceUnit::validate(u("cm")), Ok(DistanceUnit::Centimeters)));
+    }
+
+    #[test]
+    fn distance_unit_case_insensitive() {
+        assert!(matches!(DistanceUnit::validate(u("METERS")), Ok(DistanceUnit::Meters)));
+        assert!(matches!(DistanceUnit::validate(u("KM")), Ok(DistanceUnit::Kilometers)));
+    }
+
+    // -----------------------------------------------------------------------
+    // EnergyUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn energy_unit_joules() {
+        assert!(matches!(EnergyUnit::validate(u("nanojoule")), Ok(EnergyUnit::NanoJoule)));
+        assert!(matches!(EnergyUnit::validate(u("uj")), Ok(EnergyUnit::MicroJoule)));
+        assert!(matches!(EnergyUnit::validate(u("millijoules")), Ok(EnergyUnit::MilliJoule)));
+        assert!(matches!(EnergyUnit::validate(u("j")), Ok(EnergyUnit::Joule)));
+        assert!(matches!(EnergyUnit::validate(u("kj")), Ok(EnergyUnit::KiloJoule)));
+    }
+
+    #[test]
+    fn energy_unit_watt_hours() {
+        assert!(matches!(EnergyUnit::validate(u("uwh")), Ok(EnergyUnit::MicroWattHour)));
+        assert!(matches!(EnergyUnit::validate(u("mwh")), Ok(EnergyUnit::MilliWattHour)));
+        assert!(matches!(EnergyUnit::validate(u("wh")), Ok(EnergyUnit::WattHour)));
+        assert!(matches!(EnergyUnit::validate(u("kwh")), Ok(EnergyUnit::KiloWattHour)));
+    }
+
+    #[test]
+    fn energy_unit_case_insensitive() {
+        assert!(matches!(EnergyUnit::validate(u("NANOJOULE")), Ok(EnergyUnit::NanoJoule)));
+        assert!(matches!(EnergyUnit::validate(u("KWH")), Ok(EnergyUnit::KiloWattHour)));
+    }
+
+    // -----------------------------------------------------------------------
+    // PowerUnit validation
+    // -----------------------------------------------------------------------
+    #[test]
+    fn power_unit_si_abbreviations() {
+        assert!(matches!(PowerUnit::validate(u("nW")), Ok(PowerUnit::NanoWatt)));
+        assert!(matches!(PowerUnit::validate(u("uW")), Ok(PowerUnit::MicroWatt)));
+        assert!(matches!(PowerUnit::validate(u("mW")), Ok(PowerUnit::MilliWatt)));
+        assert!(matches!(PowerUnit::validate(u("W")), Ok(PowerUnit::Watt)));
+        assert!(matches!(PowerUnit::validate(u("kW")), Ok(PowerUnit::KiloWatt)));
+        assert!(matches!(PowerUnit::validate(u("MW")), Ok(PowerUnit::MegaWatt)));
+        assert!(matches!(PowerUnit::validate(u("GW")), Ok(PowerUnit::GigaWatt)));
+    }
+
+    #[test]
+    fn power_unit_full_names() {
+        assert!(matches!(PowerUnit::validate(u("nanowatt")), Ok(PowerUnit::NanoWatt)));
+        assert!(matches!(PowerUnit::validate(u("milliwatt")), Ok(PowerUnit::MilliWatt)));
+        assert!(matches!(PowerUnit::validate(u("kilowatt")), Ok(PowerUnit::KiloWatt)));
+        assert!(matches!(PowerUnit::validate(u("megawatt")), Ok(PowerUnit::MegaWatt)));
+    }
+
+    #[test]
+    fn power_unit_case_insensitive_names() {
+        assert!(matches!(PowerUnit::validate(u("NANOWATT")), Ok(PowerUnit::NanoWatt)));
+        assert!(matches!(PowerUnit::validate(u("Watt")), Ok(PowerUnit::Watt)));
+    }
+
+    #[test]
+    fn power_unit_lowercase_abbreviations() {
+        // Lowercase abbreviations should also work for unambiguous cases
+        assert!(matches!(PowerUnit::validate(u("nw")), Ok(PowerUnit::NanoWatt)));
+        assert!(matches!(PowerUnit::validate(u("mw")), Ok(PowerUnit::MilliWatt)));
+        assert!(matches!(PowerUnit::validate(u("kw")), Ok(PowerUnit::KiloWatt)));
+        assert!(matches!(PowerUnit::validate(u("gw")), Ok(PowerUnit::GigaWatt)));
+    }
+
+    #[test]
+    fn power_unit_unknown() {
+        assert!(PowerUnit::validate(u("hp")).is_err());
+    }
+
+    // -----------------------------------------------------------------------
+    // validate_optional helper
+    // -----------------------------------------------------------------------
+    #[test]
+    fn validate_optional_some() {
+        let result = validate_optional(Some(u("seconds")), TimeUnit::validate);
+        assert!(matches!(result, Ok(TimeUnit::Seconds)));
+    }
+
+    #[test]
+    fn validate_optional_none_returns_default() {
+        let result: Result<TimeUnit> = validate_optional(None, TimeUnit::validate);
+        assert!(matches!(result, Ok(TimeUnit::Seconds))); // TimeUnit default
+    }
+
+    #[test]
+    fn validate_optional_invalid_returns_err() {
+        let result = validate_optional(Some(u("invalid")), TimeUnit::validate);
+        assert!(result.is_err());
+    }
+}
