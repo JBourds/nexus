@@ -279,7 +279,10 @@ impl RoutingServer {
         );
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, data = msg.data.as_slice());
 
-        // Deduct TX channel energy cost before queuing
+        // Queue the message first; only drain TX energy on success so that
+        // a failed queue does not silently consume charge (BUG-9).
+        self.queue_message(src_node, channel_handle, msg.data)?;
+
         let tx_cost_nj: u64 = self.channels.nodes[src_node.0]
             .channel_energy
             .get(&channel_handle)
@@ -292,7 +295,7 @@ impl RoutingServer {
             energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
         }
 
-        self.queue_message(src_node, channel_handle, msg.data)
+        Ok(())
     }
 
     /// Receive a message from the FS and post it to the mailboxes of any
