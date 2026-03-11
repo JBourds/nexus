@@ -2,7 +2,7 @@
 mod tests {
     use crate::{
         resolver::ResolvedChannels,
-        router::{RoutingServer, table::RoutingTable},
+        router::{RoutingServer, energy::EnergyManager, table::RoutingTable},
         types::{self, ChannelIdx, EnergyState, NodeIdx, PowerFlowState},
     };
     use config::ast::{
@@ -84,6 +84,7 @@ mod tests {
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
         let mailbox_count = handles.len();
+        let energy_mgr = EnergyManager::new(&resolved.nodes);
         let router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
@@ -94,8 +95,7 @@ mod tests {
             mailboxes: vec![VecDeque::new(); mailbox_count],
             rng: StdRng::seed_from_u64(42),
             tx,
-            newly_depleted: Vec::new(),
-            newly_recovered: Vec::new(),
+            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
@@ -213,7 +213,7 @@ mod tests {
         assert_eq!(e.charge_nj, 0);
         assert!(e.is_dead, "Node should be dead when charge == 0");
         // step() pushes to newly_depleted (serve() drains it after each poll)
-        assert_eq!(router.newly_depleted, vec![0]);
+        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -230,7 +230,7 @@ mod tests {
         router.step().unwrap();
         // In the serve() loop, newly_depleted gets drained after each poll.
         // Since we call step() directly, it should still be there.
-        assert_eq!(router.newly_depleted, vec![0]);
+        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -281,7 +281,7 @@ mod tests {
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 5050);
         assert!(!e.is_dead, "Should restart when charge >= threshold");
-        assert_eq!(router.newly_recovered, vec![0]);
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -499,6 +499,7 @@ mod tests {
         };
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
+        let energy_mgr = EnergyManager::new(&resolved.nodes);
         let mut router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
@@ -509,8 +510,7 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
-            newly_depleted: Vec::new(),
-            newly_recovered: Vec::new(),
+            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
@@ -568,6 +568,7 @@ mod tests {
         };
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
+        let energy_mgr = EnergyManager::new(&resolved.nodes);
         let mut router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
@@ -578,8 +579,7 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
-            newly_depleted: Vec::new(),
-            newly_recovered: Vec::new(),
+            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
@@ -623,22 +623,22 @@ mod tests {
         assert!(!e.is_dead);
 
         // Step 2: 150 + 50 - 200 = 0 (dead! charge <= 0)
-        router.newly_depleted.clear();
+        router.energy_mgr.newly_depleted.clear();
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 0);
         assert!(e.is_dead);
-        assert_eq!(router.newly_depleted, vec![0]);
+        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
 
         // Steps 3-12: dead, only sources. 0 + 10*50 = 500 (at threshold!)
         for _ in 0..10 {
-            router.newly_recovered.clear();
+            router.energy_mgr.newly_recovered.clear();
             router.step().unwrap();
         }
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 500);
         assert!(!e.is_dead, "Should restart at threshold");
-        assert_eq!(router.newly_recovered, vec![0]);
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
 
         // Step 13: alive again, draining. 500 + 50 - 200 = 350
         router.step().unwrap();
@@ -1144,6 +1144,7 @@ mod tests {
         };
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
+        let energy_mgr = EnergyManager::new(&resolved.nodes);
         let mut router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
@@ -1154,8 +1155,7 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
-            newly_depleted: Vec::new(),
-            newly_recovered: Vec::new(),
+            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
@@ -1243,6 +1243,7 @@ mod tests {
         };
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
+        let energy_mgr = EnergyManager::new(&resolved.nodes);
         let mut router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
@@ -1253,8 +1254,7 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
-            newly_depleted: Vec::new(),
-            newly_recovered: Vec::new(),
+            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();

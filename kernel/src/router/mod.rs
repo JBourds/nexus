@@ -28,6 +28,7 @@ use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
 mod control;
+mod energy;
 mod energy_tests;
 mod posctl;
 mod powerctl;
@@ -103,10 +104,8 @@ pub(crate) struct RoutingServer {
     rng: StdRng,
     /// Channel which router delivers messages to file system
     tx: mpsc::Sender<fuse::KernelMessage>,
-    /// Node indices that newly ran out of charge this timestep.
-    newly_depleted: Vec<usize>,
-    /// Node indices that recovered above their restart threshold this timestep.
-    newly_recovered: Vec<usize>,
+    /// Energy subsystem: tracks battery nodes, death/recovery transitions.
+    energy_mgr: energy::EnergyManager,
     /// Sender for (old_pid, new_pid) pairs consumed by the FUSE filesystem.
     remap_tx: mpsc::Sender<(u32, u32)>,
     /// Cached nanoseconds per timestep (constant for the simulation).
@@ -135,6 +134,7 @@ impl RoutingServer {
                 let handles_count = channels.handles.len();
                 let routes = RoutingTable::new(&channels);
                 let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
+                let energy_mgr = energy::EnergyManager::new(&channels.nodes);
                 let mut router = Self {
                     // This makes all the `NonZeroU64`s happy
                     timestep: 1,
@@ -146,8 +146,7 @@ impl RoutingServer {
                     ts_config,
                     rng,
                     tx,
-                    newly_depleted: Vec::new(),
-                    newly_recovered: Vec::new(),
+                    energy_mgr,
                     remap_tx,
                     timestep_ns,
                     sequence: 0,
@@ -171,11 +170,13 @@ impl RoutingServer {
                                 break Err(KernelError::SourceError(e));
                             }
                             let depleted = router
+                                .energy_mgr
                                 .newly_depleted
                                 .drain(..)
                                 .map(|i| router.channels.node_names[i].clone())
                                 .collect();
                             let recovered = router
+                                .energy_mgr
                                 .newly_recovered
                                 .drain(..)
                                 .map(|i| router.channels.node_names[i].clone())
@@ -245,10 +246,8 @@ impl RoutingServer {
             }
             ControlFile::EnergyState => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
-                if let Some(energy) = &mut self.channels.nodes[ni].energy
-                    && energy.power_states_nj.contains_key(&state)
-                {
-                    energy.current_state = Some(state);
+                if let Some(energy) = &mut self.channels.nodes[ni].energy {
+                    energy::EnergyManager::set_state(energy, state);
                 }
                 Ok(())
             }
@@ -295,17 +294,11 @@ impl RoutingServer {
         // a failed queue does not silently consume charge (BUG-9).
         self.queue_message(src_node, channel_handle, msg.data)?;
 
-        let tx_cost_nj: u64 = self.channels.nodes[src_node.0]
-            .channel_energy
-            .get(&channel_handle)
-            .and_then(|ce| ce.tx.as_ref())
-            .map(|e| e.unit.to_nj(e.quantity))
-            .unwrap_or(0);
-        if tx_cost_nj > 0
-            && let Some(energy) = &mut self.channels.nodes[src_node.0].energy
-        {
-            energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
-        }
+        energy::EnergyManager::drain_tx(
+            &mut self.channels.nodes,
+            src_node.0,
+            &channel_handle,
+        );
 
         Ok(())
     }
@@ -341,10 +334,8 @@ impl RoutingServer {
                 self.send_elapsed(msg)
             }
             ControlFile::EnergyLeft => {
-                let charge_nj = self.channels.nodes[ni]
-                    .energy
-                    .as_ref()
-                    .map_or(0, |e| e.charge_nj);
+                let charge_nj =
+                    energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
                 let mut msg = msg;
                 msg.data = charge_nj.to_string().into_bytes();
                 self.tx
@@ -352,11 +343,11 @@ impl RoutingServer {
                     .map_err(RouterError::FuseSendError)
             }
             ControlFile::EnergyState => {
-                let state = self.channels.nodes[ni]
-                    .energy
-                    .as_ref()
-                    .and_then(|e| e.current_state.clone())
-                    .unwrap_or_default();
+                let state = energy::EnergyManager::current_state(
+                    &self.channels.nodes,
+                    ni,
+                )
+                .unwrap_or_default();
                 let mut msg = msg;
                 msg.data = state.into_bytes();
                 self.tx
@@ -415,67 +406,11 @@ impl RoutingServer {
     /// Take a single step in the simulation.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
-        self.tick_energy();
+        self.energy_mgr
+            .tick(&mut self.channels.nodes, self.timestep, self.timestep_ns);
         self.apply_all_motions_and_log();
         self.expire_messages();
         self.deliver_queued_messages()
-    }
-
-    /// Apply per-timestep energy sources, sinks, and power-state drain.
-    /// Detects death (charge == 0) and recovery (charge >= threshold).
-    fn tick_energy(&mut self) {
-        let current_time_us = self.timestep * self.timestep_ns / 1000;
-        let timestep = self.timestep;
-
-        for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
-            let Some(energy) = &mut node.energy else {
-                continue;
-            };
-            let was_dead = energy.is_dead;
-
-            // Sources always apply (even when dead, e.g. solar charging)
-            let source_nj: u64 = energy
-                .power_sources
-                .iter()
-                .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                .sum();
-            energy.charge_nj += source_nj;
-
-            // Sinks always apply (saturating keeps charge at 0)
-            let sink_nj: u64 = energy
-                .power_sinks
-                .iter()
-                .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                .sum();
-            energy.charge_nj = energy.charge_nj.saturating_sub(sink_nj);
-
-            // Power state drain only when alive
-            if !was_dead {
-                let drain = energy
-                    .current_state
-                    .as_deref()
-                    .and_then(|s| energy.power_states_nj.get(s).copied())
-                    .unwrap_or(0);
-                energy.charge_nj = energy.charge_nj.saturating_sub(drain);
-            }
-            energy.charge_nj = energy.charge_nj.min(energy.max_nj);
-
-            // Detect transitions
-            if !was_dead && energy.charge_nj == 0 {
-                energy.is_dead = true;
-                self.newly_depleted.push(node_idx);
-            } else if was_dead
-                && energy
-                    .restart_threshold_nj
-                    .is_some_and(|t| energy.charge_nj >= t)
-            {
-                energy.is_dead = false;
-                self.newly_recovered.push(node_idx);
-            }
-
-            let charge_nj = energy.charge_nj;
-            event!(target: "battery", Level::INFO, timestep, node = node_idx as u64, charge_nj);
-        }
     }
 
     /// Remove expired messages from all mailboxes.
@@ -513,17 +448,11 @@ impl RoutingServer {
                 mailbox.push_back(frame.msg);
 
                 // Deduct RX channel energy cost on delivery
-                let rx_cost_nj: u64 = self.channels.nodes[dst_node.0]
-                    .channel_energy
-                    .get(&channel_handle)
-                    .and_then(|ce| ce.rx.as_ref())
-                    .map(|e| e.unit.to_nj(e.quantity))
-                    .unwrap_or(0);
-                if rx_cost_nj > 0
-                    && let Some(energy) = &mut self.channels.nodes[dst_node.0].energy
-                {
-                    energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
-                }
+                energy::EnergyManager::drain_rx(
+                    &mut self.channels.nodes,
+                    dst_node.0,
+                    &channel_handle,
+                );
             } else {
                 warn!("Message dropped due to full queue!");
                 event!(
