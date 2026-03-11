@@ -401,8 +401,8 @@ fn make_root(pid: u32) -> PathBuf {
         .unwrap_or_else(|e| panic!("Cannot read {}: {e}", parent_cgroup.display()));
 
     let suffix = buf
-        .split(':')
-        .last()
+        .rsplit(':')
+        .next()
         .unwrap_or("")
         .trim_end();
     PathBuf::from(format!("/sys/fs/cgroup{suffix}"))
