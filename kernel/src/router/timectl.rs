@@ -19,15 +19,20 @@ impl RoutingServer {
         let val: u64 = s
             .parse()
             .map_err(|_| RouterError::InvalidString(msg.data.clone()))?;
-        let duration = match unit {
+        let to_units = |val| match unit {
             TimeUnit::Seconds => Duration::from_secs(val),
             TimeUnit::Milliseconds => Duration::from_millis(val),
             TimeUnit::Microseconds => Duration::from_micros(val),
             TimeUnit::Nanoseconds => Duration::from_nanos(val),
             _ => unreachable!(),
         };
+        // Updating time requires updating the node's "start time" based on the
+        // specified time and time elapsed
+        let time_from_epoch = to_units(val);
+        let node_start = &self.channels.nodes[node_index].start;
+        let elapsed = to_units(self.ts_config.time_from(self.timestep, unit, node_start));
         self.channels.nodes[node_index].start = SystemTime::UNIX_EPOCH
-            .checked_add(duration)
+            .checked_add(time_from_epoch - elapsed)
             .ok_or(RouterError::InvalidString(msg.data))?;
         Ok(())
     }
