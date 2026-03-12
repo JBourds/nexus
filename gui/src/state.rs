@@ -268,6 +268,10 @@ pub struct LiveSimState {
     pub last_sender: Vec<Option<usize>>,
     /// Shared time dilation value (f64 bits in AtomicU64) for live kernel adjustment.
     pub time_dilation: Arc<AtomicU64>,
+    /// When true, arrow animations are frozen (not expired) due to a run-until trigger.
+    pub arrows_frozen: bool,
+    /// One-shot run-until condition. Cleared after triggering.
+    pub run_until: Option<BreakpointKind>,
     /// Event-level stepping: index into accumulated events. None = timestep mode.
     pub event_cursor: Option<usize>,
     /// Whether event-stepping mode is active.
@@ -312,6 +316,10 @@ pub struct ReplayState {
     pub last_sender: Vec<Option<usize>>,
     /// Fractional timestep accumulator for real-time replay.
     pub time_accumulator: f64,
+    /// When true, arrow animations are frozen (not expired) due to a run-until trigger.
+    pub arrows_frozen: bool,
+    /// One-shot run-until condition. Cleared after triggering.
+    pub run_until: Option<BreakpointKind>,
     /// Event-level stepping: index into the flat record array. None = timestep mode.
     pub event_cursor: Option<usize>,
     /// Whether event-stepping mode is active (vs timestep mode).

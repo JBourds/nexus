@@ -7,10 +7,20 @@ pub enum BreakpointsAction {
     None,
     /// Add a new breakpoint.
     Add(Breakpoint),
+    /// Set a one-shot "run until" condition.
+    RunUntil(BreakpointKind),
 }
 
 /// Show the breakpoints panel/section.
-pub fn show_breakpoints(ui: &mut Ui, breakpoints: &mut Vec<Breakpoint>) -> BreakpointsAction {
+///
+/// `run_until` is the current one-shot condition (shown and clearable).
+/// `current_timestep` is used for default values in quick-add.
+pub fn show_breakpoints(
+    ui: &mut Ui,
+    breakpoints: &mut Vec<Breakpoint>,
+    run_until: &mut Option<BreakpointKind>,
+    current_timestep: u64,
+) -> BreakpointsAction {
     let mut action = BreakpointsAction::None;
     let mut to_remove = Vec::new();
 
@@ -56,14 +66,45 @@ pub fn show_breakpoints(ui: &mut Ui, breakpoints: &mut Vec<Breakpoint>) -> Break
     // Quick-add section
     ui.horizontal(|ui| {
         ui.label("Add:");
-        if ui.button("Timestep...").clicked() {
-            // Add a timestep breakpoint at current timestep (caller can set the value)
+        if ui.button("Timestep").on_hover_text("Break at current timestep").clicked() {
             action = BreakpointsAction::Add(Breakpoint {
-                kind: BreakpointKind::Timestep(0),
+                kind: BreakpointKind::Timestep(current_timestep),
                 enabled: true,
             });
         }
     });
+
+    ui.separator();
+
+    // Run-Until section
+    ui.label("Run Until");
+    let has_run_until = run_until.is_some();
+    if has_run_until {
+        let desc = match run_until.as_ref().unwrap() {
+            BreakpointKind::Timestep(ts) => format!("t={ts}"),
+            BreakpointKind::NodeEvent(name) => format!("node: {name}"),
+            BreakpointKind::ChannelActivity(ch) => format!("channel: {ch}"),
+        };
+        let mut clear = false;
+        ui.horizontal(|ui| {
+            ui.colored_label(egui::Color32::from_rgb(255, 200, 80), desc);
+            if ui.small_button("Clear").clicked() {
+                clear = true;
+            }
+        });
+        if clear {
+            *run_until = None;
+        }
+    } else {
+        ui.horizontal(|ui| {
+            ui.label("(none)");
+            if ui.button("Set...").on_hover_text("Run until this timestep").clicked() {
+                action = BreakpointsAction::RunUntil(
+                    BreakpointKind::Timestep(current_timestep + 10),
+                );
+            }
+        });
+    }
 
     action
 }
