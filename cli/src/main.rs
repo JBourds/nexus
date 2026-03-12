@@ -157,7 +157,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
 
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
-    let trace_path = setup_logging(root.as_path(), &args.cmd, &sim)?;
+    let (trace_path, _trace_handle) = setup_logging(root.as_path(), &args.cmd, &sim)?;
     runner::build(&sim)?;
     let mut summaries = vec![];
     for _ in 0..args.n.unwrap_or(1) {
@@ -232,36 +232,44 @@ fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<PathBuf> {
+fn setup_logging(
+    root: &Path,
+    cmd: &RunCmd,
+    sim: &ast::Simulation,
+) -> Result<(PathBuf, Option<trace::layer::TraceHandle>)> {
     let trace_path = root.join("trace.nxs");
 
     // Build TraceLayer for binary logging (both tx and rx go into unified trace)
-    let trace_layer = if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
-        let header = trace::format::TraceHeader {
-            node_names: {
-                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
-                names.sort();
-                names
-            },
-            channel_names: {
-                let mut names: Vec<_> = sim.channels.keys().cloned().collect();
-                names.sort();
-                names
-            },
-            timestep_count: sim.params.timestep.count.get(),
-            node_max_nj: {
-                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
-                names.sort();
-                names
-                    .iter()
-                    .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
-                    .collect()
-            },
+    let (trace_layer, trace_handle) =
+        if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
+            let header = trace::format::TraceHeader {
+                node_names: {
+                    let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                    names.sort();
+                    names
+                },
+                channel_names: {
+                    let mut names: Vec<_> = sim.channels.keys().cloned().collect();
+                    names.sort();
+                    names
+                },
+                timestep_count: sim.params.timestep.count.get(),
+                node_max_nj: {
+                    let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                    names.sort();
+                    names
+                        .iter()
+                        .map(|n| {
+                            sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max))
+                        })
+                        .collect()
+                },
+            };
+            let (layer, handle) = trace::layer::TraceLayer::new(&trace_path, &header)?;
+            (Some(layer), Some(handle))
+        } else {
+            (None, None)
         };
-        Some(trace::layer::TraceLayer::new(&trace_path, &header)?)
-    } else {
-        None
-    };
 
     tracing_subscriber::registry()
         .with(
@@ -283,7 +291,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
             }))
         }))
         .init();
-    Ok(trace_path)
+    Ok((trace_path, trace_handle))
 }
 
 fn make_file_handles(

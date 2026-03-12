@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use tracing::field::Visit;
 use tracing::{Event, Subscriber};
@@ -8,44 +8,40 @@ use tracing_subscriber::layer::{Context, Layer};
 use crate::format::{TraceEvent, TraceHeader, TraceRecord};
 use crate::writer::TraceWriter;
 
-/// Generate a `Visit` impl with a `record_u64` method that matches field names
-/// to struct fields. Each arm is specified as `"field_name" => self.field: type`.
-/// A no-op `record_debug` is always included. Additional visitor methods (e.g.
-/// `record_str`, `record_bool`, `record_bytes`, `record_f64`) can be provided
-/// in an `extras` block.
-macro_rules! impl_visitor {
-    (
-        $ty:ty,
-        u64_fields: { $( $name:literal => $field:ident : $cast:ty ),* $(,)? }
-        $(, extras: { $($extra:tt)* })?
-    ) => {
-        impl Visit for $ty {
-            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+/// A handle to the trace writer that flushes on drop.
+///
+/// The global tracing subscriber set by `.init()` is never dropped, so the
+/// `TraceWriter`'s `BufWriter` would never be flushed. This handle keeps a
+/// clone of the shared writer and flushes it when dropped, ensuring all
+/// buffered trace records reach disk.
+pub struct TraceHandle(Arc<Mutex<TraceWriter>>);
 
-            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
-                match field.name() {
-                    $( $name => self.$field = value as $cast, )*
-                    _ => {}
-                }
-            }
-
-            $( $($extra)* )?
+impl Drop for TraceHandle {
+    fn drop(&mut self) {
+        if let Ok(mut w) = self.0.lock() {
+            let _ = w.flush();
         }
-    };
+    }
 }
 
 /// A `tracing_subscriber::Layer` that captures `tx` and `rx` target events
 /// and writes them as `TraceRecord`s to a unified trace file.
 pub struct TraceLayer {
-    writer: Mutex<TraceWriter>,
+    writer: Arc<Mutex<TraceWriter>>,
 }
 
 impl TraceLayer {
-    pub fn new(path: impl AsRef<Path>, header: &TraceHeader) -> std::io::Result<Self> {
-        let writer = TraceWriter::create(path, header)?;
-        Ok(Self {
-            writer: Mutex::new(writer),
-        })
+    /// Create a new trace layer and a [`TraceHandle`] that must be held alive
+    /// until the simulation ends. Dropping the handle flushes all buffered
+    /// records to disk.
+    pub fn new(path: impl AsRef<Path>, header: &TraceHeader) -> std::io::Result<(Self, TraceHandle)> {
+        let writer = Arc::new(Mutex::new(TraceWriter::create(path, header)?));
+        Ok((
+            Self {
+                writer: Arc::clone(&writer),
+            },
+            TraceHandle(writer),
+        ))
     }
 }
 
@@ -58,26 +54,30 @@ struct TraceVisitor {
     data: Vec<u8>,
 }
 
-impl_visitor!(TraceVisitor,
-    u64_fields: {
-        "timestep" => timestep: u64,
-        "channel" => channel: u32,
-        "node" => node: u32,
-    },
-    extras: {
-        fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-            if field.name() == "tx" {
-                self.is_tx = value;
-            }
-        }
+impl Visit for TraceVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
 
-        fn record_bytes(&mut self, field: &tracing::field::Field, value: &[u8]) {
-            if field.name() == "data" {
-                self.data = value.to_vec();
-            }
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "channel" => self.channel = value as u32,
+            "node" => self.node = value as u32,
+            _ => {}
         }
     }
-);
+
+    fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
+        if field.name() == "tx" {
+            self.is_tx = value;
+        }
+    }
+
+    fn record_bytes(&mut self, field: &tracing::field::Field, value: &[u8]) {
+        if field.name() == "data" {
+            self.data = value.to_vec();
+        }
+    }
+}
 
 impl<S: Subscriber> Layer<S> for TraceLayer {
     fn on_event(&self, event: &Event<'_>, _ctx: Context<'_, S>) {
@@ -164,20 +164,24 @@ struct DropVisitor {
     reason: String,
 }
 
-impl_visitor!(DropVisitor,
-    u64_fields: {
-        "timestep" => timestep: u64,
-        "channel" => channel: u32,
-        "node" => node: u32,
-    },
-    extras: {
-        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-            if field.name() == "reason" {
-                self.reason = value.to_string();
-            }
+impl Visit for DropVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "channel" => self.channel = value as u32,
+            "node" => self.node = value as u32,
+            _ => {}
         }
     }
-);
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "reason" {
+            self.reason = value.to_string();
+        }
+    }
+}
 
 impl DropVisitor {
     fn into_event(self) -> TraceEvent {
@@ -203,13 +207,18 @@ struct BatteryVisitor {
     charge_nj: u64,
 }
 
-impl_visitor!(BatteryVisitor,
-    u64_fields: {
-        "timestep" => timestep: u64,
-        "node" => node: u32,
-        "charge_nj" => charge_nj: u64,
+impl Visit for BatteryVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            "charge_nj" => self.charge_nj = value,
+            _ => {}
+        }
     }
-);
+}
 
 #[derive(Debug, Default)]
 struct MovementVisitor {
@@ -220,22 +229,26 @@ struct MovementVisitor {
     z: f64,
 }
 
-impl_visitor!(MovementVisitor,
-    u64_fields: {
-        "timestep" => timestep: u64,
-        "node" => node: u32,
-    },
-    extras: {
-        fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
-            match field.name() {
-                "x" => self.x = value,
-                "y" => self.y = value,
-                "z" => self.z = value,
-                _ => {}
-            }
+impl Visit for MovementVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            _ => {}
         }
     }
-);
+
+    fn record_f64(&mut self, field: &tracing::field::Field, value: f64) {
+        match field.name() {
+            "x" => self.x = value,
+            "y" => self.y = value,
+            "z" => self.z = value,
+            _ => {}
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 struct MotionVisitor {
@@ -244,16 +257,20 @@ struct MotionVisitor {
     spec: String,
 }
 
-impl_visitor!(MotionVisitor,
-    u64_fields: {
-        "timestep" => timestep: u64,
-        "node" => node: u32,
-    },
-    extras: {
-        fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
-            if field.name() == "spec" {
-                self.spec = value.to_string();
-            }
+impl Visit for MotionVisitor {
+    fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+
+    fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+        match field.name() {
+            "timestep" => self.timestep = value,
+            "node" => self.node = value as u32,
+            _ => {}
         }
     }
-);
+
+    fn record_str(&mut self, field: &tracing::field::Field, value: &str) {
+        if field.name() == "spec" {
+            self.spec = value.to_string();
+        }
+    }
+}
