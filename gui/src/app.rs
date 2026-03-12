@@ -188,19 +188,25 @@ impl NexusApp {
             }
         }
 
-        // Inspector panel (only rendered when visible — no panel at all when hidden)
+        // Inspector panel (only rendered when visible -- no panel at all when hidden)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
                 .default_width(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    inspector::show_inspector(
+                    let insp_action = inspector::show_inspector(
                         ui,
                         &state.sim,
                         &state.node_states,
                         &state.selected_node,
                         &mut state.expanded_nodes,
+                        &state.messages,
+                        state.event_cursor,
                     );
+                    if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
+                        state.event_cursor = Some(idx);
+                        state.event_stepping = true;
+                    }
                 });
         }
 
@@ -441,13 +447,19 @@ impl NexusApp {
                 .default_width(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    inspector::show_inspector(
+                    let insp_action = inspector::show_inspector(
                         ui,
                         &state.sim,
                         &state.node_states,
                         &state.selected_node,
                         &mut state.expanded_nodes,
+                        &state.messages,
+                        state.event_cursor,
                     );
+                    if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
+                        state.event_cursor = Some(idx);
+                        state.event_stepping = true;
+                    }
                 });
         }
 
