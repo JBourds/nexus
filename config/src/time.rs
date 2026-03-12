@@ -1,6 +1,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::ast::{DataUnit, DelayCalculator, DistanceUnit, TimeUnit, TimestepConfig};
+use crate::units::DecimalScaled;
 
 impl TimestepConfig {
     /// Get the time elapsed from a specific point in the desired units
@@ -107,11 +108,13 @@ impl DelayCalculator {
         let mut ctx = meval::Context::new();
         ctx.var("distance", distance);
         ctx.var("d", distance);
-        let time_units = self
+        let expr = self
             .propagation
-            .rate
-            .parse::<meval::Expr>()
-            .expect("unable to parse meval expression")
+            .parsed_rate
+            .as_ref()
+            .expect("parsed_rate should be populated after validation")
+            .clone();
+        let time_units = expr
             .eval_with_context(ctx)
             .expect("could not evaluate distance time var");
 
@@ -169,10 +172,15 @@ mod tests {
             data: DataUnit::Bit,
             time: TimeUnit::Seconds,
         };
-        let propagation = DistanceTimeVar {
-            rate: "5 * d".parse().unwrap(),
-            time: TimeUnit::Seconds,
-            distance: DistanceUnit::Kilometers,
+        let propagation = {
+            let rate: String = "5 * d".parse().unwrap();
+            let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
+            DistanceTimeVar {
+                rate,
+                parsed_rate,
+                time: TimeUnit::Seconds,
+                distance: DistanceUnit::Kilometers,
+            }
         };
         let delays = Delays {
             transmission,
@@ -231,15 +239,15 @@ mod tests {
             (1.0, 0, Bit, Millimeters, 1),
             (100.0, 0, Bit, Millimeters, 1),
             (100.0 * 100.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 99.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 100.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 200.0, 0, Bit, Millimeters, 1),
-            (100.0 * 100.0 * 201.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 300.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 400.0, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 400.0001, 0, Bit, Millimeters, 2),
-            (100.0 * 100.0 * 1000.0, 0, Bit, Millimeters, 5),
-            (100.0 * 100.0 * 1001.0, 0, Bit, Millimeters, 6),
+            (100.0 * 100.0 * 99.0, 0, Bit, Millimeters, 5),
+            (100.0 * 100.0 * 100.0, 0, Bit, Millimeters, 5),
+            (100.0 * 100.0 * 200.0, 0, Bit, Millimeters, 10),
+            (100.0 * 100.0 * 201.0, 0, Bit, Millimeters, 11),
+            (100.0 * 100.0 * 300.0, 0, Bit, Millimeters, 15),
+            (100.0 * 100.0 * 400.0, 0, Bit, Millimeters, 20),
+            (100.0 * 100.0 * 400.0001, 0, Bit, Millimeters, 20),
+            (100.0 * 100.0 * 1000.0, 0, Bit, Millimeters, 50),
+            (100.0 * 100.0 * 1001.0, 0, Bit, Millimeters, 51),
             // Full pipeline (numerator/denominator conversions)
             (0.0001, 0, Bit, Kilometers, 1),
             (0.0, 1, Bit, Kilometers, 1),
@@ -287,17 +295,22 @@ mod tests {
         }
 
         // Test nonlinear expressions
-        calculator.propagation = DistanceTimeVar {
-            rate: "5 * d^2".parse().unwrap(),
-            time: TimeUnit::Seconds,
-            distance: DistanceUnit::Meters,
+        calculator.propagation = {
+            let rate: String = "5 * d^2".parse().unwrap();
+            let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
+            DistanceTimeVar {
+                rate,
+                parsed_rate,
+                time: TimeUnit::Seconds,
+                distance: DistanceUnit::Meters,
+            }
         };
         let tests = [
             // Distance conversions (propagation distances)
             (0.1, 0, Bit, Millimeters, 1),
             (1.0, 0, Bit, Millimeters, 1),
             (100.0, 0, Bit, Millimeters, 1),
-            (10000.0, 0, Bit, Millimeters, 5),
+            (10000.0, 0, Bit, Millimeters, 500),
             (0.1, 0, Bit, Centimeters, 1),
             (1.0, 0, Bit, Centimeters, 1),
             (100.0, 0, Bit, Centimeters, 5),

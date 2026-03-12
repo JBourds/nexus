@@ -19,4 +19,6 @@ pub enum FsError {
     CreateDirError { dir: PathBuf, err: io::Error },
     #[error("Kernel shutdown. Error on read request: {0:#?}")]
     KernelShutdown(Box<dyn std::error::Error>),
+    #[error("FUSE mount at \"{root}\" timed out after 5 seconds")]
+    MountTimeout { root: PathBuf },
 }

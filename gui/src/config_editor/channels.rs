@@ -1,6 +1,6 @@
 use std::num::NonZeroUsize;
 
-use config::ast::{self, ChannelType, TimeUnit};
+use config::ast::{self, ChannelKind};
 use egui::Ui;
 
 use super::links;
@@ -46,7 +46,7 @@ pub fn show_channels(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
 
 fn show_channel_body(ui: &mut Ui, name: &str, channel: &mut ast::Channel) {
     // Type switcher
-    let is_shared = matches!(channel.r#type, ChannelType::Shared { .. });
+    let is_shared = matches!(channel.r#type.kind, ChannelKind::Shared);
     let mut type_idx: usize = if is_shared { 0 } else { 1 };
     ui.horizontal(|ui| {
         ui.label("Type:");
@@ -60,71 +60,41 @@ fn show_channel_body(ui: &mut Ui, name: &str, channel: &mut ast::Channel) {
 
     // Switch type if changed
     if type_idx == 0 && !is_shared {
-        channel.r#type = ChannelType::Shared {
-            ttl: None,
-            unit: TimeUnit::Seconds,
-            read_own_writes: false,
-            max_size: NonZeroUsize::new(256).unwrap(),
-        };
+        channel.r#type.kind = ChannelKind::Shared;
     } else if type_idx == 1 && is_shared {
-        channel.r#type = ChannelType::default();
+        channel.r#type.kind = ChannelKind::Exclusive { nbuffered: None };
     }
 
-    match &mut channel.r#type {
-        ChannelType::Shared {
-            ttl,
-            unit,
-            read_own_writes,
-            max_size,
-        } => {
-            optional_nonzero_u64(ui, "TTL:", ttl);
-            if ttl.is_some() {
-                ui.horizontal(|ui| {
-                    ui.label("  TTL unit:");
-                    enum_combo(ui, &format!("ch_ttlu_{name}"), unit, TIME_UNIT_PAIRS);
-                });
-            }
-            ui.horizontal(|ui| {
-                ui.label("Max size:");
-                let mut sz = max_size.get();
-                if ui
-                    .add(egui::DragValue::new(&mut sz).range(1..=usize::MAX))
-                    .changed()
-                    && let Some(v) = NonZeroUsize::new(sz)
-                {
-                    *max_size = v;
-                }
-            });
-            ui.checkbox(read_own_writes, "Read own writes");
+    // Common fields
+    let ct = &mut channel.r#type;
+    optional_nonzero_u64(ui, "TTL:", &mut ct.ttl);
+    if ct.ttl.is_some() {
+        ui.horizontal(|ui| {
+            ui.label("  TTL unit:");
+            enum_combo(
+                ui,
+                &format!("ch_ttlu_{name}"),
+                &mut ct.unit,
+                TIME_UNIT_PAIRS,
+            );
+        });
+    }
+    ui.horizontal(|ui| {
+        ui.label("Max size:");
+        let mut sz = ct.max_size.get();
+        if ui
+            .add(egui::DragValue::new(&mut sz).range(1..=usize::MAX))
+            .changed()
+            && let Some(v) = NonZeroUsize::new(sz)
+        {
+            ct.max_size = v;
         }
-        ChannelType::Exclusive {
-            ttl,
-            unit,
-            max_size,
-            nbuffered,
-            read_own_writes,
-        } => {
-            optional_nonzero_u64(ui, "TTL:", ttl);
-            if ttl.is_some() {
-                ui.horizontal(|ui| {
-                    ui.label("  TTL unit:");
-                    enum_combo(ui, &format!("ch_ttlu_{name}"), unit, TIME_UNIT_PAIRS);
-                });
-            }
-            ui.horizontal(|ui| {
-                ui.label("Max size:");
-                let mut sz = max_size.get();
-                if ui
-                    .add(egui::DragValue::new(&mut sz).range(1..=usize::MAX))
-                    .changed()
-                    && let Some(v) = NonZeroUsize::new(sz)
-                {
-                    *max_size = v;
-                }
-            });
-            optional_nonzero_usize(ui, "Buffered:", nbuffered);
-            ui.checkbox(read_own_writes, "Read own writes");
-        }
+    });
+    ui.checkbox(&mut ct.read_own_writes, "Read own writes");
+
+    // Kind-specific fields
+    if let ChannelKind::Exclusive { nbuffered } = &mut ct.kind {
+        optional_nonzero_usize(ui, "Buffered:", nbuffered);
     }
 
     // Inline link editor

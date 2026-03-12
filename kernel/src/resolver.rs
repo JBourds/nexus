@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use config::ast;
 use fuse::{PID, fs::CONTROL_FILES};
@@ -6,16 +7,16 @@ use fuse::{PID, fs::CONTROL_FILES};
 use crate::{
     errors::{ConversionError, KernelError},
     helpers::{make_handles, unzip},
-    types::{self, Channel, ChannelHandle, Node, NodeHandle},
+    types::{self, Channel, ChannelHandle, ChannelIdx, Node, NodeHandle, NodeIdx},
 };
 
 /// Struct which resolves all strings within AST structs to integers.
 #[derive(Debug)]
 pub(crate) struct ResolvedChannels {
     pub(crate) nodes: Vec<types::Node>,
-    pub(crate) node_names: Vec<String>,
+    pub(crate) node_names: Vec<Arc<str>>,
     pub(crate) channels: Vec<types::Channel>,
-    pub(crate) channel_names: Vec<String>,
+    pub(crate) channel_names: Vec<Arc<str>>,
     pub(crate) handles: Vec<(PID, NodeHandle, ChannelHandle)>,
 }
 
@@ -28,24 +29,29 @@ impl ResolvedChannels {
         channels: HashMap<String, config::ast::Channel>,
         node_names: Vec<String>,
         nodes: Vec<config::ast::Node>,
-        node_handles: &HashMap<String, usize>,
+        node_handles: &HashMap<String, NodeHandle>,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ProtocolHandle)>,
         ts_config: &ast::TimestepConfig,
     ) -> Result<Self, KernelError> {
-        let (mut channel_names, channels) = unzip(channels);
+        let (mut channel_names_str, channels) = unzip(channels);
         // Inject control files here so that FUSE mappings get made for them too
         let control_files = CONTROL_FILES.into_iter().map(|(name, _)| name.to_string());
-        channel_names.extend(control_files);
-        let channel_handles = make_handles(channel_names.clone());
+        channel_names_str.extend(control_files);
+        let channel_handles: HashMap<_, ChannelHandle> = make_handles(channel_names_str.clone())
+            .into_iter()
+            .map(|(name, idx)| (name, ChannelIdx(idx)))
+            .collect();
 
         // Validate nodes so they all use indices rather than strings
         let mut new_nodes = vec![];
         // Internal channels created with ideal links
         let mut internal_channels = vec![];
         // Mapping from a node's string name and the channel name to index
-        let mut internal_node_channel_handles = HashMap::new();
+        let mut internal_node_channel_handles: HashMap<(String, String), ChannelHandle> =
+            HashMap::new();
 
         for (handle, (node_name, node)) in node_names.iter().zip(nodes.into_iter()).enumerate() {
+            let handle = NodeIdx(handle);
             // Validate each node and convert to use indices rather than strings
             // Get all (name, object) pairs for internal channels
             let (new_node, new_internals) =
@@ -60,15 +66,16 @@ impl ResolvedChannels {
 
             // Extend vectors with the new channel objects and their matching
             // names (FIXME: Use an RC here to avoid a bunch of string clones)
-            channel_names.extend(new_internal_names.clone());
+            channel_names_str.extend(new_internal_names.clone());
             internal_channels.extend(new_internal_channels);
 
             // Update record mapping (node name, channel name) pairs to vector
             // index where its info can be found
-            for (handle, internal_name) in
-                (channel_names.len() - 1..).zip(new_internal_names.into_iter())
+            for (idx, internal_name) in
+                (channel_names_str.len() - 1..).zip(new_internal_names.into_iter())
             {
-                internal_node_channel_handles.insert((node_name.clone(), internal_name), handle);
+                internal_node_channel_handles
+                    .insert((node_name.clone(), internal_name), ChannelIdx(idx));
             }
         }
 
@@ -91,9 +98,9 @@ impl ResolvedChannels {
             .map_err(KernelError::KernelInit)
             .map(|channels| Self {
                 nodes: new_nodes,
-                node_names,
+                node_names: node_names.into_iter().map(Arc::from).collect(),
                 channels,
-                channel_names,
+                channel_names: channel_names_str.into_iter().map(Arc::from).collect(),
                 handles,
             })
     }
@@ -113,7 +120,9 @@ impl ResolvedChannels {
         self.handles
             .iter()
             .enumerate()
-            .map(|(index, (pid, _, channel))| ((*pid, self.channel_names[*channel].clone()), index))
+            .map(|(index, (pid, _, channel))| {
+                ((*pid, self.channel_names[channel.0].to_string()), index)
+            })
             .collect()
     }
 }

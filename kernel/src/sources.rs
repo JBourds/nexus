@@ -9,6 +9,7 @@ use std::{fs::File, io::BufReader};
 
 use crate::log::{LogRecord, MessageRecord};
 use crate::router::RoutingServer;
+use crate::types::{ChannelIdx, NodeIdx};
 use crate::{errors::SourceError, router::Timestep};
 use trace::format::{TraceEvent, TraceRecord};
 use trace::reader::TraceReader;
@@ -121,7 +122,7 @@ impl Source {
             // Queue the previously peeked record if it's due.
             if let Some(rec) = next_log.take() {
                 router
-                    .queue_message(rec.node, rec.channel, rec.data)
+                    .queue_message(NodeIdx(rec.node), ChannelIdx(rec.channel), rec.data)
                     .map_err(SourceError::RouterError)?;
             }
 
@@ -146,7 +147,9 @@ impl Source {
                         data,
                         ..
                     })) => {
-                        if let Err(e) = router.queue_message(node, channel, data) {
+                        if let Err(e) =
+                            router.queue_message(NodeIdx(node), ChannelIdx(channel), data)
+                        {
                             break Err(SourceError::RouterError(e));
                         }
                     }
@@ -183,7 +186,11 @@ impl Source {
                 } = rec.event
             {
                 router
-                    .queue_message(src_node as usize, channel as usize, data)
+                    .queue_message(
+                        NodeIdx(src_node as usize),
+                        ChannelIdx(channel as usize),
+                        data,
+                    )
                     .map_err(SourceError::RouterError)?;
             }
 
@@ -205,7 +212,11 @@ impl Source {
                         } = rec.event
                         {
                             router
-                                .queue_message(src_node as usize, channel as usize, data)
+                                .queue_message(
+                                    NodeIdx(src_node as usize),
+                                    ChannelIdx(channel as usize),
+                                    data,
+                                )
                                 .map_err(SourceError::RouterError)?;
                         }
                     }

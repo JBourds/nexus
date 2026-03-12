@@ -60,8 +60,7 @@ impl TraceReader {
         let mut header_bytes = vec![0u8; header_len];
         file.read_exact(&mut header_bytes)?;
         let cfg = config::standard();
-        let (header, _): (TraceHeader, _) =
-            bincode::decode_from_slice(&header_bytes, cfg).map_err(TraceReadError::Decode)?;
+        let (header, _): (TraceHeader, _) = bincode::decode_from_slice(&header_bytes, cfg)?;
 
         let data_start = (MAGIC.len() + size_of::<u16>() + size_of::<u32>() + header_len) as u64;
 
@@ -128,7 +127,7 @@ impl TraceReader {
             {
                 Ok(None)
             }
-            Err(e) => Err(TraceReadError::Decode(e)),
+            Err(e) => Err(e.into()),
         }
     }
 
@@ -164,29 +163,14 @@ impl TraceReader {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, thiserror::Error)]
 pub enum TraceReadError {
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[from] std::io::Error),
+    #[error("Invalid trace file magic bytes")]
     InvalidMagic,
+    #[error("Unsupported trace version: {0}")]
     UnsupportedVersion(u16),
-    Decode(bincode::error::DecodeError),
+    #[error("Decode error: {0}")]
+    Decode(#[from] bincode::error::DecodeError),
 }
-
-impl From<std::io::Error> for TraceReadError {
-    fn from(e: std::io::Error) -> Self {
-        Self::Io(e)
-    }
-}
-
-impl std::fmt::Display for TraceReadError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            Self::Io(e) => write!(f, "IO error: {e}"),
-            Self::InvalidMagic => write!(f, "Invalid trace file magic bytes"),
-            Self::UnsupportedVersion(v) => write!(f, "Unsupported trace version: {v}"),
-            Self::Decode(e) => write!(f, "Decode error: {e}"),
-        }
-    }
-}
-
-impl std::error::Error for TraceReadError {}

@@ -3,6 +3,7 @@ use std::f64::consts::PI;
 use rand::Rng;
 
 use crate::ast::{DistanceUnit, Medium, RssiProbExpr};
+use crate::units::DecimalScaled;
 
 impl Medium {
     pub fn noise_floor_dbm(&self) -> f64 {
@@ -335,11 +336,10 @@ impl RssiProbExpr {
         self.probability(rssi) > rng.random_range(0.0..=1.0)
     }
 
-    /// # Safety
-    /// This function is entirely safe to use and will never cause major issues.
+    /// Sample using a pre-computed probability value.
     /// If the value for `prob` is not properly constrained from 0.0 - 1.0 this
-    /// will give bogus results though.
-    pub unsafe fn sample_unchecked(&self, prob: f64, rng: &mut rand::rngs::StdRng) -> bool {
+    /// will give bogus results.
+    pub fn sample_unchecked(&self, prob: f64, rng: &mut rand::rngs::StdRng) -> bool {
         prob > rng.random_range(0.0..=1.0)
     }
 
@@ -347,10 +347,12 @@ impl RssiProbExpr {
         let mut ctx = meval::Context::new();
         ctx.var("rssi", rssi);
         ctx.var("snr", rssi - self.noise_floor_dbm);
-        self.expr
-            .parse::<meval::Expr>()
-            .expect("this gets checked in validation")
-            .eval_with_context(ctx)
+        let expr = self
+            .parsed_expr
+            .as_ref()
+            .expect("parsed_expr should be populated after validation")
+            .clone();
+        expr.eval_with_context(ctx)
             .expect("couldn't evaluate expression")
             .clamp(0.0, 1.0)
     }
@@ -358,8 +360,11 @@ impl RssiProbExpr {
 
 impl Default for RssiProbExpr {
     fn default() -> Self {
+        let expr: String = "0".parse().unwrap();
+        let parsed_expr = Some(expr.parse::<meval::Expr>().unwrap());
         Self {
-            expr: "0".parse().unwrap(),
+            expr,
+            parsed_expr,
             noise_floor_dbm: f64::MIN,
         }
     }

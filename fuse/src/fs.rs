@@ -1,11 +1,10 @@
 use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
-use crate::file::NexusFile;
+use crate::file::{NexusFile, default_attr};
 use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
 use config::ast::{self};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
-use std::process::Child;
 use std::sync::mpsc;
 use tracing::instrument;
 
@@ -20,7 +19,6 @@ use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
@@ -71,30 +69,24 @@ pub struct NexusFs {
     buffers: HashMap<ChannelId, NexusFile>,
     fs_side: FsChannels,
     kernel_side: Option<KernelChannels>,
-    /// Shared queue of (old_pid, new_pid) pairs pushed by the router.
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    /// Receiver for (old_pid, new_pid) pairs sent by the router.
+    remap_rx: mpsc::Receiver<(u32, u32)>,
 }
 
 impl NexusFs {
-    pub fn new(root: PathBuf, pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>) -> Self {
+    pub fn new(root: PathBuf, remap_rx: mpsc::Receiver<(u32, u32)>) -> Self {
         Self {
             root,
             attr: Self::root_attr(),
-            pending_remaps,
+            remap_rx,
             ..Default::default()
         }
     }
 
-    /// Drain the shared remap queue and migrate FUSE buffer entries from
+    /// Drain the remap channel and migrate FUSE buffer entries from
     /// old PIDs to new PIDs.
     fn apply_pending_remaps(&mut self) {
-        let pairs: Vec<(u32, u32)> = {
-            let Ok(mut queue) = self.pending_remaps.lock() else {
-                return;
-            };
-            queue.drain(..).collect()
-        };
-        for (old_pid, new_pid) in pairs {
+        while let Ok((old_pid, new_pid)) = self.remap_rx.try_recv() {
             let keys_to_migrate: Vec<String> = self
                 .buffers
                 .keys()
@@ -110,24 +102,7 @@ impl NexusFs {
     }
 
     fn root_attr() -> FileAttr {
-        let now = SystemTime::now();
-        FileAttr {
-            ino: FUSE_ROOT_ID,
-            size: 0,
-            blocks: 0,
-            atime: now,
-            mtime: now,
-            ctime: now,
-            crtime: now,
-            kind: FileType::Directory,
-            perm: 0o755,
-            nlink: 2,
-            uid: unsafe { libc::getuid() },
-            gid: unsafe { libc::getgid() },
-            rdev: 0,
-            flags: 0,
-            blksize: 512,
-        }
+        default_attr(FUSE_ROOT_ID, FileType::Directory, 0o755, 0, 0)
     }
 
     pub fn root(&self) -> &PathBuf {
@@ -143,13 +118,10 @@ impl NexusFs {
         }
     }
 
-    pub fn add_processes(mut self, handles: &[runner::ProtocolHandle]) -> Self {
+    pub fn add_processes(mut self, pids: &[u32]) -> Self {
         for (file, mode) in CONTROL_FILES.iter() {
             let inode = self.get_or_make_inode(file.to_string());
-            for pid in handles
-                .iter()
-                .filter_map(|h| h.process.as_ref().map(Child::id))
-            {
+            for &pid in pids {
                 self.buffers.insert(
                     (pid, file.to_string()),
                     NexusFile::new(NonZeroUsize::new(1000).unwrap(), *mode, inode),
@@ -219,7 +191,13 @@ impl NexusFs {
                 root: root.clone(),
                 err,
             })?;
-        while !root.exists() {}
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while !root.exists() {
+            if std::time::Instant::now() > deadline {
+                return Err(FsError::MountTimeout { root });
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
         Ok((sess, kernel_side))
     }
 
@@ -287,7 +265,7 @@ impl Default for NexusFs {
             buffers: HashMap::default(),
             fs_side: (fs_tx, fs_rx),
             kernel_side: Some((kernel_tx, kernel_rx)),
-            pending_remaps: Arc::new(Mutex::new(Vec::new())),
+            remap_rx: mpsc::channel().1,
         }
     }
 }
@@ -322,7 +300,7 @@ impl Filesystem for NexusFs {
             reply.error(ENOENT);
             return;
         }
-        let file = name.to_str().unwrap().to_string();
+        let file = name.to_string_lossy().into_owned();
         if let Some(file) = self.buffers.get(&(req.pid(), file)) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
@@ -496,7 +474,6 @@ impl Filesystem for NexusFs {
         for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
-                eprintln!("break!");
                 break;
             }
         }
@@ -506,7 +483,7 @@ impl Filesystem for NexusFs {
 }
 
 fn expand_home(path: &PathBuf) -> PathBuf {
-    if let Some(stripped) = path.as_os_str().to_str().unwrap().strip_prefix("~/")
+    if let Some(stripped) = path.to_string_lossy().strip_prefix("~/")
         && let Some(home_dir) = home::home_dir()
     {
         return home_dir.join(stripped);
@@ -532,7 +509,6 @@ mod tests {
     use crate::channel::ChannelMode;
     use crate::file::NexusFile;
     use std::num::NonZeroUsize;
-    use std::sync::{Arc, Mutex};
 
     fn test_file() -> NexusFile {
         NexusFile::new(
@@ -544,9 +520,9 @@ mod tests {
 
     #[test]
     fn test_apply_pending_remaps_migrates_buffers() {
-        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel();
         let mut fs = NexusFs {
-            pending_remaps: remaps.clone(),
+            remap_rx: rx,
             ..Default::default()
         };
 
@@ -556,8 +532,8 @@ mod tests {
         // Insert buffer for a different PID that should not move
         fs.buffers.insert((200, "ch_a".into()), test_file());
 
-        // Push a remap: 100 → 300
-        remaps.lock().unwrap().push((100, 300));
+        // Send a remap: 100 -> 300
+        tx.send((100, 300)).unwrap();
 
         fs.apply_pending_remaps();
 
@@ -569,15 +545,15 @@ mod tests {
         assert!(fs.buffers.contains_key(&(300, "ch_b".into())));
         // Unrelated PID untouched
         assert!(fs.buffers.contains_key(&(200, "ch_a".into())));
-        // Queue should be drained
-        assert!(remaps.lock().unwrap().is_empty());
+        // Channel should be drained
+        assert!(rx_is_empty(&fs.remap_rx));
     }
 
     #[test]
     fn test_apply_pending_remaps_empty_queue_is_noop() {
-        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let (_tx, rx) = mpsc::channel();
         let mut fs = NexusFs {
-            pending_remaps: remaps,
+            remap_rx: rx,
             ..Default::default()
         };
 
@@ -590,16 +566,17 @@ mod tests {
 
     #[test]
     fn test_apply_pending_remaps_multiple_pairs() {
-        let remaps = Arc::new(Mutex::new(Vec::new()));
+        let (tx, rx) = mpsc::channel();
         let mut fs = NexusFs {
-            pending_remaps: remaps.clone(),
+            remap_rx: rx,
             ..Default::default()
         };
 
         fs.buffers.insert((10, "ch_x".into()), test_file());
         fs.buffers.insert((20, "ch_x".into()), test_file());
 
-        remaps.lock().unwrap().extend([(10, 11), (20, 21)]);
+        tx.send((10, 11)).unwrap();
+        tx.send((20, 21)).unwrap();
         fs.apply_pending_remaps();
 
         assert!(fs.buffers.contains_key(&(11, "ch_x".into())));
@@ -610,9 +587,10 @@ mod tests {
 
     #[test]
     fn test_apply_pending_remaps_nonexistent_pid_is_harmless() {
-        let remaps = Arc::new(Mutex::new(vec![(999, 1000)]));
+        let (tx, rx) = mpsc::channel();
+        tx.send((999, 1000)).unwrap();
         let mut fs = NexusFs {
-            pending_remaps: remaps,
+            remap_rx: rx,
             ..Default::default()
         };
 
@@ -622,5 +600,9 @@ mod tests {
         // Original buffer still there, no panic
         assert!(fs.buffers.contains_key(&(50, "ch_a".into())));
         assert!(!fs.buffers.contains_key(&(1000, "ch_a".into())));
+    }
+
+    fn rx_is_empty(rx: &mpsc::Receiver<(u32, u32)>) -> bool {
+        rx.try_recv().is_err()
     }
 }

@@ -1,14 +1,12 @@
 use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
-use kernel::{self, Kernel, sources::Source};
-use libc::{O_RDONLY, O_RDWR, O_WRONLY};
+use kernel::{self, KernelBuilder, sources::Source};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};
 use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::stdout;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
 use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
@@ -159,22 +157,27 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
 
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
-    let trace_path = setup_logging(root.as_path(), &args.cmd, &sim)?;
+    let (trace_path, _trace_handle) = setup_logging(root.as_path(), &args.cmd, &sim)?;
     runner::build(&sim)?;
     let mut summaries = vec![];
     for _ in 0..args.n.unwrap_or(1) {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
-        let pending_remaps = Arc::new(Mutex::new(Vec::new()));
+        let (remap_tx, remap_rx) = std::sync::mpsc::channel();
+        let pids: Vec<u32> = runc
+            .handles
+            .iter()
+            .filter_map(|h| h.pid())
+            .collect();
         let fs = args
             .root
             .clone()
-            .map(|root| NexusFs::new(root, pending_remaps.clone()))
+            .map(|root| NexusFs::new(root, remap_rx))
             .unwrap_or_default();
 
         #[allow(unused_variables)]
         let (sess, (tx, rx)) = fs
-            .add_processes(&runc.handles)
+            .add_processes(&pids)
             .add_channels(protocol_channels)?
             .mount()
             .expect("unable to mount file system");
@@ -182,14 +185,15 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles = Kernel::new(
+        let protocol_handles = KernelBuilder::new(
             sim.clone(),
             runc,
             file_handles,
             rx,
             tx,
-            pending_remaps.clone(),
-        )?
+            remap_tx,
+        )
+        .build()?
         .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));
     }
@@ -214,7 +218,7 @@ fn fuzz(_args: Cli) -> Result<()> {
 fn get_output(handles: Vec<ProtocolHandle>) -> Vec<ProtocolSummary> {
     handles
         .into_iter()
-        .filter_map(ProtocolHandle::finish)
+        .filter_map(|h| h.finish().ok().flatten())
         .collect()
 }
 
@@ -228,36 +232,44 @@ fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {
     Ok(root)
 }
 
-fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<PathBuf> {
+fn setup_logging(
+    root: &Path,
+    cmd: &RunCmd,
+    sim: &ast::Simulation,
+) -> Result<(PathBuf, Option<trace::layer::TraceHandle>)> {
     let trace_path = root.join("trace.nxs");
 
     // Build TraceLayer for binary logging (both tx and rx go into unified trace)
-    let trace_layer = if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
-        let header = trace::format::TraceHeader {
-            node_names: {
-                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
-                names.sort();
-                names
-            },
-            channel_names: {
-                let mut names: Vec<_> = sim.channels.keys().cloned().collect();
-                names.sort();
-                names
-            },
-            timestep_count: sim.params.timestep.count.get(),
-            node_max_nj: {
-                let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
-                names.sort();
-                names
-                    .iter()
-                    .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
-                    .collect()
-            },
+    let (trace_layer, trace_handle) =
+        if matches!(cmd, RunCmd::Simulate { .. } | RunCmd::Replay { .. }) {
+            let header = trace::format::TraceHeader {
+                node_names: {
+                    let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                    names.sort();
+                    names
+                },
+                channel_names: {
+                    let mut names: Vec<_> = sim.channels.keys().cloned().collect();
+                    names.sort();
+                    names
+                },
+                timestep_count: sim.params.timestep.count.get(),
+                node_max_nj: {
+                    let mut names: Vec<_> = sim.nodes.keys().cloned().collect();
+                    names.sort();
+                    names
+                        .iter()
+                        .map(|n| {
+                            sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max))
+                        })
+                        .collect()
+                },
+            };
+            let (layer, handle) = trace::layer::TraceLayer::new(&trace_path, &header)?;
+            (Some(layer), Some(handle))
+        } else {
+            (None, None)
         };
-        Some(trace::layer::TraceLayer::new(&trace_path, &header)?)
-    } else {
-        None
-    };
 
     tracing_subscriber::registry()
         .with(
@@ -279,7 +291,7 @@ fn setup_logging(root: &Path, cmd: &RunCmd, sim: &ast::Simulation) -> Result<Pat
             }))
         }))
         .init();
-    Ok(trace_path)
+    Ok((trace_path, trace_handle))
 }
 
 fn make_file_handles(
@@ -338,18 +350,10 @@ fn make_fs_channels(
             .into_iter()
         {
             let mode = match run_cmd {
-                RunCmd::Simulate { .. } => {
-                    let file_cmd = match (
-                        protocol.subscribers.contains(channel),
-                        protocol.publishers.contains(channel),
-                    ) {
-                        (true, true) => O_RDWR,
-                        (true, _) => O_RDONLY,
-                        (_, true) => O_WRONLY,
-                        _ => unreachable!(),
-                    };
-                    ChannelMode::try_from(file_cmd)?
-                }
+                RunCmd::Simulate { .. } => ChannelMode::from_permissions(
+                    protocol.subscribers.contains(channel),
+                    protocol.publishers.contains(channel),
+                ),
                 RunCmd::Replay { .. } => ChannelMode::ReplayWrites,
                 RunCmd::Fuzz => ChannelMode::FuzzWrites,
                 _ => unreachable!(),

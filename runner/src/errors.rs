@@ -1,16 +1,16 @@
+use std::fmt;
 use std::path::PathBuf;
 use thiserror::Error;
 
 #[derive(Debug)]
-#[allow(dead_code)]
-pub struct Error {
-    node: String,
-    protocol: String,
-    root: PathBuf,
-    msg: String,
+pub struct RunnerDetail {
+    pub node: String,
+    pub protocol: String,
+    pub root: PathBuf,
+    pub msg: String,
 }
 
-impl Error {
+impl RunnerDetail {
     pub(crate) fn new(node: String, protocol: String, root: PathBuf, msg: String) -> Self {
         Self {
             node,
@@ -21,14 +21,31 @@ impl Error {
     }
 }
 
+impl fmt::Display for RunnerDetail {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "[{}/{}] {}: {}",
+            self.node,
+            self.protocol,
+            self.root.display(),
+            self.msg
+        )
+    }
+}
+
 #[derive(Error, Debug)]
 pub enum ProtocolError {
-    #[error("Runner Error: {0:?}")]
-    RunnerError(Error),
-    #[error("Build Error: {0:?}")]
-    BuildError(Error),
-    #[error("{0:#?}")]
-    BuildErrors(Vec<Error>),
+    #[error("Runner Error: {0}")]
+    RunnerError(RunnerDetail),
+    #[error("Build Error: {0}")]
+    BuildError(RunnerDetail),
+    #[error("Build Errors:\n{}", .0.iter().map(|e| format!("  - {e}")).collect::<Vec<_>>().join("\n"))]
+    BuildErrors(Vec<RunnerDetail>),
     #[error("Unable to run process: {0:#?}.")]
     UnableToRun(std::io::Error),
+    #[error("Cgroup error: {0}")]
+    CgroupError(#[from] std::io::Error),
+    #[error("Node not found for handle: {0}")]
+    NodeNotFound(String),
 }

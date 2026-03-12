@@ -8,6 +8,7 @@ use tracing::warn;
 use crate::parse;
 
 const STDLIB_DIR: &str = env!("NEXUS_STDLIB_DIR");
+const MAX_MODULE_DEPTH: usize = 64;
 
 /// Origin of a definition for conflict error messages.
 #[derive(Debug, Clone)]
@@ -37,11 +38,32 @@ pub(crate) fn resolve_and_merge(config_dir: &Path, sim: &mut parse::Simulation) 
     let mut result = ResolvedModules::default();
 
     for spec in &use_list {
-        resolve_recursive(config_dir, spec, &mut visited, &mut stack, &mut result)
+        resolve_recursive(config_dir, spec, &mut visited, &mut stack, &mut result, 0)
             .with_context(|| format!("Failed to resolve module \"{spec}\""))?;
     }
 
     merge_into_simulation(sim, result)
+}
+
+/// Merge named items into a target map, rejecting duplicates across modules.
+fn merge_named_items<T>(
+    target: &mut HashMap<String, (T, Origin, String)>,
+    items: impl IntoIterator<Item = (String, T)>,
+    kind: &str,
+    origin: &Origin,
+) -> Result<()> {
+    for (name, item) in items {
+        let key = name.to_ascii_lowercase();
+        if let Some((_, existing, _)) = target.get(&key) {
+            bail!(
+                "Duplicate {kind} \"{name}\" defined in both \"{}\" and \"{}\"",
+                existing.path.display(),
+                origin.path.display()
+            );
+        }
+        target.insert(key, (item, origin.clone(), name));
+    }
+    Ok(())
 }
 
 /// Resolve a single module spec and recurse into its transitive dependencies.
@@ -51,11 +73,19 @@ fn resolve_recursive(
     visited: &mut HashSet<PathBuf>,
     stack: &mut HashSet<PathBuf>,
     result: &mut ResolvedModules,
+    depth: usize,
 ) -> Result<()> {
+    if depth >= MAX_MODULE_DEPTH {
+        bail!(
+            "Module import depth exceeds maximum of {MAX_MODULE_DEPTH}; \
+             check for excessively deep transitive imports"
+        );
+    }
+
     let path = resolve_path(base_dir, spec)
         .with_context(|| format!("Could not resolve module path for \"{spec}\""))?;
 
-    // Already loaded — skip.
+    // Already loaded -- skip.
     if visited.contains(&path) {
         return Ok(());
     }
@@ -75,61 +105,22 @@ fn resolve_recursive(
     let module_dir = path.parent().unwrap_or(base_dir);
     if let Some(ref uses) = module.r#use {
         for child_spec in uses {
-            resolve_recursive(module_dir, child_spec, visited, stack, result).with_context(
-                || {
+            resolve_recursive(module_dir, child_spec, visited, stack, result, depth + 1)
+                .with_context(|| {
                     format!(
                         "While loading transitive dependency \"{child_spec}\" from \"{}\"",
                         path.display()
                     )
-                },
-            )?;
+                })?;
         }
     }
 
     let origin = Origin { path: path.clone() };
 
-    // Merge links.
-    for (name, link) in module.links {
-        let key = name.to_ascii_lowercase();
-        if let Some((_, existing, _)) = result.links.get(&key) {
-            bail!(
-                "Duplicate link \"{}\" defined in both \"{}\" and \"{}\"",
-                name,
-                existing.path.display(),
-                origin.path.display()
-            );
-        }
-        result.links.insert(key, (link, origin.clone(), name));
-    }
-
-    // Merge channels.
-    for (name, channel) in module.channels {
-        let key = name.to_ascii_lowercase();
-        if let Some((_, existing, _)) = result.channels.get(&key) {
-            bail!(
-                "Duplicate channel \"{}\" defined in both \"{}\" and \"{}\"",
-                name,
-                existing.path.display(),
-                origin.path.display()
-            );
-        }
-        result.channels.insert(key, (channel, origin.clone(), name));
-    }
-
-    // Merge profiles.
+    merge_named_items(&mut result.links, module.links, "link", &origin)?;
+    merge_named_items(&mut result.channels, module.channels, "channel", &origin)?;
     if let Some(profiles) = module.profiles {
-        for (name, profile) in profiles {
-            let key = name.to_ascii_lowercase();
-            if let Some((_, existing, _)) = result.profiles.get(&key) {
-                bail!(
-                    "Duplicate profile \"{}\" defined in both \"{}\" and \"{}\"",
-                    name,
-                    existing.path.display(),
-                    origin.path.display()
-                );
-            }
-            result.profiles.insert(key, (profile, origin.clone(), name));
-        }
+        merge_named_items(&mut result.profiles, profiles, "profile", &origin)?;
     }
 
     stack.remove(&path);

@@ -1,3 +1,6 @@
+mod units;
+use units::{ValidateUnit, validate_optional};
+
 use super::namespace::Namespace;
 use super::parse;
 use crate::CONTROL_PREFIX;
@@ -5,7 +8,7 @@ use crate::RESERVED_LINKS;
 use crate::ast::*;
 use crate::helpers::*;
 use crate::parse::Deployment;
-use crate::units::parse_duration_to_us;
+use crate::units::{DecimalScaled, parse_duration_to_us};
 use anyhow::ensure;
 use anyhow::{Context, Result, bail};
 use chrono::DateTime;
@@ -16,149 +19,6 @@ use std::{
     collections::{HashMap, HashSet},
     num::NonZeroU64,
 };
-
-impl ClockUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "hertz" | "hz" => Self::Hertz,
-            "kilohertz" | "khz" => Self::Kilohertz,
-            "megahertz" | "mhz" => Self::Megahertz,
-            "gigahertz" | "ghz" => Self::Gigahertz,
-            s => {
-                bail!("Expected a clock unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl DataUnit {
-    fn validate_byte_aligned(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "bytes" | "byte" | "b" => Self::Byte,
-            "kilobytes" | "kilobyte" | "kb" => Self::Kilobyte,
-            "megabytes" | "megabyte" | "mb" => Self::Megabyte,
-            "gigabytes" | "gigabyte" | "gb" => Self::Gigabyte,
-            s => {
-                bail!("Expected a valid data unit aligned to bytes but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        let case_insensitive_len = val.0.len() - 1;
-        val.0[..case_insensitive_len].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "bits" | "bit" | "b" => Self::Bit,
-            "kilobits" | "kilobit" | "kb" => Self::Kilobit,
-            "megabits" | "megabit" | "mb" => Self::Megabit,
-            "gigabits" | "gigabit" | "gb" => Self::Gigabit,
-            "bytes" | "byte" | "B" => Self::Byte,
-            "kilobytes" | "kilobyte" | "kB" => Self::Kilobyte,
-            "megabytes" | "megabyte" | "mB" => Self::Megabyte,
-            "gigabytes" | "gigabyte" | "gB" => Self::Gigabyte,
-            s => {
-                bail!("Expected a valid data unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl EnergyUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "nanojoule" | "nanojoules" | "nj" => Self::NanoJoule,
-            "microjoule" | "microjoules" | "uj" => Self::MicroJoule,
-            "millijoule" | "millijoules" | "mj" => Self::MilliJoule,
-            "joule" | "joules" | "j" => Self::Joule,
-            "kilojoule" | "kilojoules" | "kj" => Self::KiloJoule,
-            "microwatthour" | "microwatthours" | "uwh" => Self::MicroWattHour,
-            "milliwatthour" | "milliwatthours" | "mwh" => Self::MilliWattHour,
-            "watthour" | "watthours" | "wh" => Self::WattHour,
-            "kilowatthour" | "kilowatthours" | "kwh" => Self::KiloWattHour,
-            s => {
-                bail!("Expected a valid energy unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl PowerUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0[1..].make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "Nanowatt" | "nanowatt" | "nw" | "Nw" => Self::NanoWatt,
-            "Microwatt" | "microwatt" | "uw" | "Uw" => Self::MicroWatt,
-            "Milliwatt" | "milliwatt" | "mw" => Self::MilliWatt,
-            "Watt" | "watt" | "w" => Self::Watt,
-            "Kilowatt" | "kilowatt" | "Kw" | "kw" => Self::KiloWatt,
-            "Megawatt" | "megawatt" | "Mw" => Self::MegaWatt,
-            "Gigawatt" | "gigawatt" | "Gw" | "gw" => Self::GigaWatt,
-            s => {
-                bail!("Expected to find a valid power unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl TimeUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "hours" | "h" => Self::Hours,
-            "minutes" | "m" => Self::Minutes,
-            "seconds" | "s" => Self::Seconds,
-            "milliseconds" | "ms" => Self::Milliseconds,
-            "microseconds" | "us" => Self::Microseconds,
-            "nanoseconds" | "ns" => Self::Nanoseconds,
-            s => {
-                bail!("Expected to find a valid time unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl DistanceUnit {
-    fn validate(mut val: parse::Unit) -> Result<Self> {
-        val.0.make_ascii_lowercase();
-        let variant = match val.0.as_str() {
-            "millimeters" | "mm" => Self::Millimeters,
-            "centimeters" | "cm" => Self::Centimeters,
-            "meters" | "m" => Self::Meters,
-            "kilometers" | "km" => Self::Kilometers,
-            s => {
-                bail!("Expected to find a valid distance unit but found \"{s}\"");
-            }
-        };
-        Ok(variant)
-    }
-}
-
-impl DataRate {
-    fn validate(val: parse::Rate) -> Result<Self> {
-        let data = val
-            .data
-            .map(DataUnit::validate)
-            .unwrap_or(Ok(DataUnit::default()))
-            .context("Unable to validate rate's data unit")?;
-        let time = val
-            .time
-            .map(TimeUnit::validate)
-            .unwrap_or(Ok(TimeUnit::default()))
-            .context("Unable to validate rate's time unit")?;
-        let rate = val.rate.unwrap_or(i64::MAX as u64);
-        Ok(Self { rate, data, time })
-    }
-}
 
 impl Channel {
     fn validate(val: parse::Channel, links: &HashMap<LinkHandle, Link>) -> Result<Self> {
@@ -174,49 +34,38 @@ impl Channel {
 
 impl ChannelType {
     fn validate(val: parse::ChannelType) -> Result<Self> {
-        let val = match val {
+        let (ttl, unit, max_size, read_own_writes, kind) = match val {
             parse::ChannelType::Shared {
                 ttl,
                 unit,
                 max_size,
                 read_own_writes,
-            } => {
-                let unit = unit
-                    .map(TimeUnit::validate)
-                    .unwrap_or(Ok(TimeUnit::default()))
-                    .context("Failed to validate time unit when parsing channel type.")?;
-                let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
-                let read_own_writes = read_own_writes.unwrap_or_default();
-                Self::Shared {
-                    ttl,
-                    unit,
-                    read_own_writes,
-                    max_size,
-                }
-            }
+            } => (ttl, unit, max_size, read_own_writes, ChannelKind::Shared),
             parse::ChannelType::Exclusive {
                 ttl,
                 unit,
                 nbuffered,
                 max_size,
                 read_own_writes,
-            } => {
-                let unit = unit
-                    .map(TimeUnit::validate)
-                    .unwrap_or(Ok(TimeUnit::default()))
-                    .context("Failed to validate time unit when parsing channel type.")?;
-                let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
-                let read_own_writes = read_own_writes.unwrap_or_default();
-                Self::Exclusive {
-                    ttl,
-                    unit,
-                    nbuffered,
-                    max_size,
-                    read_own_writes,
-                }
-            }
+            } => (
+                ttl,
+                unit,
+                max_size,
+                read_own_writes,
+                ChannelKind::Exclusive { nbuffered },
+            ),
         };
-        Ok(val)
+        let unit = validate_optional(unit, TimeUnit::validate)
+            .context("Failed to validate time unit when parsing channel type.")?;
+        let max_size = max_size.unwrap_or(Self::MSG_MAX_DEFAULT);
+        let read_own_writes = read_own_writes.unwrap_or_default();
+        Ok(Self {
+            ttl,
+            unit,
+            read_own_writes,
+            max_size,
+            kind,
+        })
     }
 }
 
@@ -412,15 +261,9 @@ impl Mem {
 
 impl Resources {
     fn validate(val: parse::Resources) -> Result<Self> {
-        let clock_units = val
-            .clock_units
-            .map(ClockUnit::validate)
-            .unwrap_or(Ok(ClockUnit::default()))
+        let clock_units = validate_optional(val.clock_units, ClockUnit::validate)
             .context("Failed to validate clock rate. Please provide in hz, khz, mhz, or ghz.")?;
-        let ram_units = val
-            .ram_units
-            .map(DataUnit::validate_byte_aligned)
-            .unwrap_or(Ok(DataUnit::default()))
+        let ram_units = validate_optional(val.ram_units, DataUnit::validate_byte_aligned)
             .context("Failed to validate ram units.")?;
         let cpu = Cpu::new(val.cores, val.clock_rate, clock_units);
         let mem = Mem::new(val.ram, ram_units);
@@ -433,10 +276,7 @@ impl TimestepConfig {
     pub(crate) const DEFAULT_TIMESTEP_COUNT: NonZeroU64 = NonZeroU64::new(1_000_000).unwrap();
 
     fn validate(val: parse::TimestepConfig) -> Result<Self> {
-        let unit = val
-            .unit
-            .map(TimeUnit::validate)
-            .unwrap_or(Ok(TimeUnit::default()))
+        let unit = validate_optional(val.unit, TimeUnit::validate)
             .context("Unable to validate time unit in timestep config")?;
         if matches!(unit, TimeUnit::Minutes | TimeUnit::Hours) {
             bail!("Simulation timestamp must be in seconds or smaller.");
@@ -454,6 +294,8 @@ impl TimestepConfig {
         let start = val
             .start
             .map(toml_datetime_to_system_time)
+            .transpose()
+            .context("Unable to validate start time in timestep config")?
             .unwrap_or(SystemTime::now());
         Ok(Self {
             length,
@@ -467,10 +309,7 @@ impl TimestepConfig {
 impl Params {
     fn validate(config_root: &PathBuf, val: parse::Params) -> Result<Self> {
         let root = resolve_directory(config_root, &PathBuf::from(val.root))?;
-        let timestep = val
-            .timestep
-            .map(TimestepConfig::validate)
-            .unwrap_or(Ok(TimestepConfig::default()))
+        let timestep = validate_optional(val.timestep, TimestepConfig::validate)
             .context("Unable to validate timestep configuration in simulation config.")?;
         let time_dilation = val.time_dilation.unwrap_or(1.0);
         Ok(Self {
@@ -484,20 +323,11 @@ impl Params {
 
 impl Delays {
     fn validate(val: parse::Delays) -> Result<Self> {
-        let transmission = val
-            .transmission
-            .map(DataRate::validate)
-            .unwrap_or(Ok(DataRate::default()))
+        let transmission = validate_optional(val.transmission, DataRate::validate)
             .context("Unable to validate transmission delay rate.")?;
-        let processing = val
-            .processing
-            .map(DataRate::validate)
-            .unwrap_or(Ok(DataRate::default()))
+        let processing = validate_optional(val.processing, DataRate::validate)
             .context("Unable to validate processing delay rate.")?;
-        let propagation = val
-            .propagation
-            .map(DistanceTimeVar::validate)
-            .unwrap_or(Ok(DistanceTimeVar::default()))
+        let propagation = validate_optional(val.propagation, DistanceTimeVar::validate)
             .context("Unable to validate propagation delay rate.")?;
         Ok(Self {
             transmission,
@@ -509,13 +339,13 @@ impl Delays {
 
 impl DelayCalculator {
     pub(crate) fn validate(delays: Delays, ts_config: TimestepConfig) -> Result<Self> {
-        if delays
+        let parsed = delays
             .propagation
-            .rate
-            .parse::<meval::Expr>()?
-            .bind2("d", "distance")
-            .is_err()
-        {
+            .parsed_rate
+            .as_ref()
+            .expect("parsed_rate should be set by DistanceTimeVar::validate")
+            .clone();
+        if parsed.bind2("d", "distance").is_err() {
             bail!("Link rates must be a one variable function of distance \"x\"");
         };
         Ok(Self {
@@ -580,8 +410,13 @@ impl DistanceTimeVar {
         } else {
             def.distance
         };
+        let parsed_rate = Some(
+            rate.parse::<meval::Expr>()
+                .context("Unable to parse rate expression")?,
+        );
         Ok(Self {
             rate,
+            parsed_rate,
             time,
             distance,
         })
@@ -592,11 +427,13 @@ impl RssiProbExpr {
     fn validate(val: parse::RssiProbExpr, noise_floor_dbm: f64) -> Result<Self> {
         let def = Self::default();
         let expr = val.0.unwrap_or(def.expr);
-        if expr.parse::<meval::Expr>()?.bind2("snr", "rssi").is_err() {
+        let parsed_expr = expr.parse::<meval::Expr>()?;
+        if parsed_expr.clone().bind2("snr", "rssi").is_err() {
             bail!("Distance probability variable must be a function of \"x\" (rssi)");
         }
         Ok(Self {
             expr,
+            parsed_expr: Some(parsed_expr),
             noise_floor_dbm,
         })
     }
@@ -661,9 +498,7 @@ impl Medium {
                 if tx_min_dbm > tx_max_dbm {
                     bail!("cannot have tx_min_dbm > tx_max_dbm [{tx_min_dbm}, {tx_max_dbm}]");
                 }
-                let shape = shape
-                    .map(SignalShape::validate)
-                    .unwrap_or(Ok(SignalShape::default()))
+                let shape = validate_optional(shape, SignalShape::validate)
                     .context("unable to validate signal shape in wireless link")?;
                 Ok(Self::Wireless {
                     shape,
@@ -745,10 +580,7 @@ impl Position {
             .orientation
             .map(Orientation::validate)
             .unwrap_or_default();
-        let unit = val
-            .unit
-            .map(DistanceUnit::validate)
-            .unwrap_or(Ok(DistanceUnit::default()))
+        let unit = validate_optional(val.unit, DistanceUnit::validate)
             .context("Unable to validate distance units for node position")?;
         Ok(Self {
             point,
@@ -857,10 +689,7 @@ impl Node {
         default_start: &SystemTime,
         channel_handles: &HashSet<ChannelHandle>,
     ) -> Result<Vec<Self>> {
-        let resources = val
-            .resources
-            .map(Resources::validate)
-            .unwrap_or(Ok(Resources::default()))
+        let resources = validate_optional(val.resources, Resources::validate)
             .context("Failed to validate node resource allocation.")?;
         // No duplicate internal names
         let mut internal_names = HashSet::new();
@@ -988,6 +817,8 @@ impl Node {
         {
             let start = start
                 .map(toml_datetime_to_system_time)
+                .transpose()
+                .context("Unable to validate deployment start time")?
                 .unwrap_or(*default_start);
 
             // Validate restart_threshold is in [0, 1]
@@ -1036,24 +867,24 @@ impl Node {
                     (name, protocol)
                 })
                 .collect::<HashMap<_, _>>();
-            let position = position
-                .map(Position::validate)
-                .unwrap_or(Ok(Position::default()))
+            let position = validate_optional(position, Position::validate)
                 .context("Failed to validate node coordinates.")?;
             let charge = charge.map(Charge::validate).transpose()?;
 
             nodes.push(Node {
-                charge,
                 position,
+                energy: EnergyConfig {
+                    charge,
+                    power_states: power_states.clone(),
+                    power_sources: power_sources.clone(),
+                    power_sinks: power_sinks.clone(),
+                    channel_energy: channel_energy.clone(),
+                    initial_state,
+                    restart_threshold,
+                },
                 resources: resources.clone(),
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
-                power_states: power_states.clone(),
-                power_sources: power_sources.clone(),
-                power_sinks: power_sinks.clone(),
-                channel_energy: channel_energy.clone(),
-                initial_state,
-                restart_threshold,
                 start,
             });
         }
@@ -1141,12 +972,12 @@ impl NodeProtocol {
     }
 }
 
-fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> DateTime<Utc> {
+fn toml_datetime_to_chrono(dt: toml::value::Datetime) -> Result<DateTime<Utc>> {
     let s = dt.to_string();
-    let chrono_dt: chrono::DateTime<Utc> = s.parse().expect("invalid date format in toml file");
-    chrono_dt
+    s.parse::<chrono::DateTime<Utc>>()
+        .context(format!("Invalid date format: \"{s}\""))
 }
 
-fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> SystemTime {
-    SystemTime::from(toml_datetime_to_chrono(dt))
+fn toml_datetime_to_system_time(dt: toml::value::Datetime) -> Result<SystemTime> {
+    toml_datetime_to_chrono(dt).map(SystemTime::from)
 }

@@ -64,44 +64,35 @@ pub struct Channel {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub enum ChannelType {
-    /// No channel buffering other than transmission & propagation time (because
-    /// this is a shared medium, there can only be one source of truth for what
-    /// data can be read). If multiple nodes write at once or during overlapping
-    /// periods, the result is the bitwise OR of writes.
-    Shared {
-        /// Time to live once it has reached destination
-        ttl: Option<NonZeroU64>,
-        /// Time unit `ttl` is in
-        unit: TimeUnit,
-        /// Should a sender be able to read their own writes?
-        read_own_writes: bool,
-        /// Maximum message size in bytes.
-        max_size: NonZeroUsize,
-    },
-    /// Buffer some number of messages at a time for each node.
-    Exclusive {
-        /// Time to live once it has reached destination
-        ttl: Option<NonZeroU64>,
-        /// Time unit `ttl` is in
-        unit: TimeUnit,
-        /// Maximum message size in bytes.
-        max_size: NonZeroUsize,
-        /// Number of buffered messages per node. If None, is infinite.
-        nbuffered: Option<NonZeroUsize>,
-        /// Should a sender be able to read their own writes?
-        /// eg. In an internal link.
-        read_own_writes: bool,
-    },
+pub struct ChannelType {
+    /// Time to live once it has reached destination
+    pub ttl: Option<NonZeroU64>,
+    /// Time unit `ttl` is in
+    pub unit: TimeUnit,
+    /// Should a sender be able to read their own writes?
+    pub read_own_writes: bool,
+    /// Maximum message size in bytes.
+    pub max_size: NonZeroUsize,
+    /// The channel kind (shared vs exclusive).
+    pub kind: ChannelKind,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
-pub struct Node {
-    pub position: Position,
+pub enum ChannelKind {
+    /// No channel buffering other than transmission & propagation time.
+    /// If multiple nodes write at once, the result is the bitwise OR of writes.
+    Shared,
+    /// Buffer some number of messages at a time for each node.
+    Exclusive {
+        /// Number of buffered messages per node. If None, is infinite.
+        nbuffered: Option<NonZeroUsize>,
+    },
+}
+
+/// Energy-related configuration for a node (battery, power states, flows, etc.).
+#[derive(Serialize, Deserialize, Clone, Debug, Default)]
+pub struct EnergyConfig {
     pub charge: Option<Charge>,
-    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
-    pub internal_names: Vec<ChannelHandle>,
-    pub resources: Resources,
     /// Named power consumption states the process can switch between
     /// via `ctl.energy_state`. Rates are positive = consumption.
     pub power_states: HashMap<String, PowerRate>,
@@ -117,6 +108,15 @@ pub struct Node {
     pub initial_state: Option<String>,
     /// Fraction of max charge (0..=1) at which a dead node restarts.
     pub restart_threshold: Option<f64>,
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct Node {
+    pub position: Position,
+    pub energy: EnergyConfig,
+    pub protocols: HashMap<ProtocolHandle, NodeProtocol>,
+    pub internal_names: Vec<ChannelHandle>,
+    pub resources: Resources,
     #[serde(with = "system_time_serde")]
     pub start: SystemTime,
 }
@@ -295,6 +295,8 @@ pub struct Delays {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct DistanceTimeVar {
     pub rate: String,
+    #[serde(skip)]
+    pub parsed_rate: Option<meval::Expr>,
     pub time: TimeUnit,
     pub distance: DistanceUnit,
 }
@@ -303,6 +305,8 @@ pub struct DistanceTimeVar {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct RssiProbExpr {
     pub expr: String,
+    #[serde(skip)]
+    pub parsed_expr: Option<meval::Expr>,
     pub noise_floor_dbm: f64,
 }
 
@@ -414,8 +418,11 @@ impl std::fmt::Display for Cmd {
 
 impl Default for DistanceTimeVar {
     fn default() -> Self {
+        let rate: String = "0".parse().unwrap();
+        let parsed_rate = Some(rate.parse::<meval::Expr>().unwrap());
         Self {
-            rate: "0".parse().unwrap(),
+            rate,
+            parsed_rate,
             time: Default::default(),
             distance: Default::default(),
         }

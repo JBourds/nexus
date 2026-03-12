@@ -61,19 +61,23 @@ impl ClockUnit {
     }
 }
 
-impl PowerUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
+/// Trait for unit types that scale by powers of 10.
+/// Provides a shared `ratio()` implementation.
+pub trait DecimalScaled: Copy {
+    /// Log10 exponent relative to the smallest unit in this family.
+    fn power(self) -> usize;
 
-    pub fn power(&self) -> usize {
+    /// Return `(left_is_larger, exponent_difference)` between two units.
+    /// The caller computes `10^exponent_difference` to get the scaling factor.
+    fn ratio(left: Self, right: Self) -> (bool, usize) {
+        let l = left.power();
+        let r = right.power();
+        (l > r, l.abs_diff(r))
+    }
+}
+
+impl DecimalScaled for PowerUnit {
+    fn power(self) -> usize {
         match self {
             Self::NanoWatt => 0,
             Self::MicroWatt => 3,
@@ -86,64 +90,48 @@ impl PowerUnit {
     }
 }
 
-impl TimeUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
+impl DecimalScaled for TimeUnit {
+    fn power(self) -> usize {
         match self {
             Self::Seconds => 0,
             Self::Milliseconds => 3,
             Self::Microseconds => 6,
             Self::Nanoseconds => 9,
-            _ => unimplemented!("power() only supported on time intervals with SI prefices."),
+            // Hours and Minutes don't fit cleanly into a decimal power
+            // scheme relative to seconds, so we use to_ns_factor() for
+            // those conversions. This path should not be reached because
+            // TimestepConfig::validate rejects Hours/Minutes, but we
+            // handle it gracefully rather than panicking.
+            Self::Hours => 0,
+            Self::Minutes => 0,
         }
     }
 }
 
-impl DistanceUnit {
-    /// Return the log_10 ratio of left / right with a boolean
-    /// flag to indicate whether it was the left (true) or right
-    /// (false) which is the numerator in the expression.
-    pub fn ratio(left: Self, right: Self) -> (bool, usize) {
-        let left = left.power();
-        let right = right.power();
-        let left_greater = left > right;
-        let ratio = std::cmp::max(left, right) - std::cmp::min(left, right);
-        (left_greater, ratio)
-    }
-
-    pub fn power(&self) -> usize {
+impl DecimalScaled for DistanceUnit {
+    fn power(self) -> usize {
         match self {
             Self::Millimeters => 0,
-            Self::Centimeters => 2,
-            Self::Meters => 4,
-            Self::Kilometers => 7,
+            Self::Centimeters => 1,
+            Self::Meters => 3,
+            Self::Kilometers => 6,
         }
     }
 }
 
 impl EnergyUnit {
-    /// Convert `quantity` in this unit to nanojoules.
+    /// Convert `quantity` in this unit to nanojoules (saturating on overflow).
     pub fn to_nj(self, quantity: u64) -> u64 {
         match self {
             Self::NanoJoule => quantity,
-            Self::MicroJoule => quantity * 1_000,
-            Self::MilliJoule => quantity * 1_000_000,
-            Self::Joule => quantity * 1_000_000_000,
-            Self::KiloJoule => quantity * 1_000_000_000_000,
-            Self::MicroWattHour => quantity * 3_600,
-            Self::MilliWattHour => quantity * 3_600_000,
-            Self::WattHour => quantity * 3_600_000_000,
-            Self::KiloWattHour => quantity * 3_600_000_000_000,
+            Self::MicroJoule => quantity.saturating_mul(1_000),
+            Self::MilliJoule => quantity.saturating_mul(1_000_000),
+            Self::Joule => quantity.saturating_mul(1_000_000_000),
+            Self::KiloJoule => quantity.saturating_mul(1_000_000_000_000),
+            Self::MicroWattHour => quantity.saturating_mul(3_600),
+            Self::MilliWattHour => quantity.saturating_mul(3_600_000),
+            Self::WattHour => quantity.saturating_mul(3_600_000_000),
+            Self::KiloWattHour => quantity.saturating_mul(3_600_000_000_000),
         }
     }
 }
@@ -182,9 +170,9 @@ impl PowerRate {
     ///
     /// Formula: energy_nj = rate_nw × timestep_ns / time_ns
     pub fn nj_per_timestep(&self, timestep_ns: u64) -> u64 {
-        let rate_nw = self.rate as u128 * self.unit.to_nw_factor() as u128;
-        let time_ns = self.time.to_ns_factor() as u128;
-        (rate_nw * timestep_ns as u128 / time_ns) as u64
+        let rate_nw = self.rate.saturating_mul(self.unit.to_nw_factor());
+        let time_ns = self.time.to_ns_factor();
+        rate_nw.saturating_mul(timestep_ns) / time_ns
     }
 }
 

@@ -1,4 +1,5 @@
 use crate::ast::{DistanceUnit, Position};
+use crate::units::DecimalScaled;
 
 impl Position {
     /// Return 3D euclidean distance between two points

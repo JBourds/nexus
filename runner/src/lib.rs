@@ -6,6 +6,7 @@ use std::{
     process::{Child, Command, Output, Stdio},
 };
 pub mod assignment;
+pub mod cgroupfs;
 pub mod cgroups;
 pub mod cli;
 pub mod errors;
@@ -83,7 +84,7 @@ fn build_protocol<'a>(
         })
 }
 
-fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::Error> {
+fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::RunnerDetail> {
     let mut errors = vec![];
     for mut ctx in contexts {
         let exit_code = ctx.handle.wait().expect("cannot wait for process");
@@ -92,7 +93,7 @@ fn check_builds<'a>(contexts: Vec<BuildCtx<'a>>) -> Vec<errors::Error> {
             if errors.is_empty() {
                 eprintln!("\nError building programs:\n");
             }
-            errors.push(errors::Error::new(
+            errors.push(errors::RunnerDetail::new(
                 ctx.node.to_string(),
                 ctx.protocol.to_string(),
                 ctx.root.to_path_buf(),
@@ -128,24 +129,22 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
-    let mut cgroup_controller = CgroupController::new();
+    let mut cgroup_controller = CgroupController::new()?;
     let mut handles = Vec::new();
     let mut affinity_builder = AffinityBuilder::new();
     let mut relative_builder = RelativeBuilder::new();
     for (node_name, node) in &sim.nodes {
         affinity_builder.add_node(node_name, &node.resources);
         relative_builder.add_node(node_name, &node.resources);
-        let handle = cgroup_controller.add_node(node_name, node.resources.clone());
+        let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
         for (protocol_name, protocol) in &node.protocols {
-            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle);
-            affinity_builder.add_protocol(
-                node_name,
-                protocol_handle
-                    .process
-                    .as_ref()
-                    .expect("there should always be a process here")
-                    .id(),
-            );
+            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
+            let pid = protocol_handle.pid().ok_or_else(|| {
+                ProtocolError::UnableToRun(io::Error::other(
+                    format!("process not started for {node_name}/{protocol_name}"),
+                ))
+            })?;
+            affinity_builder.add_protocol(node_name, pid);
             handles.push(protocol_handle);
         }
     }

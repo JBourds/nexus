@@ -331,8 +331,8 @@ impl NexusApp {
             let sim = state.sim.clone();
             let initial_states = nodes_from_sim(&sim);
             let total_timesteps = controller.total_timesteps;
-            let channel_subscribers = build_channel_subscribers(&sim);
-            let num_channels = sim.channels.len();
+            let channel_subscribers = controller.build_channel_subscribers();
+            let num_channels = controller.num_channels();
             self.mode = AppMode::Replay(Box::new(ReplayState {
                 sim,
                 controller,
@@ -362,6 +362,12 @@ impl NexusApp {
             return;
         };
 
+        // Expire finished arrow animations
+        let egui_time = ctx.input(|i| i.time);
+        state
+            .active_arrows
+            .retain(|a| (egui_time - a.start_time) < a.duration as f64);
+
         // Advance timesteps proportional to real time and playback speed
         if state.playing && state.current_timestep < state.total_timesteps.saturating_sub(1) {
             let dt = ctx.input(|i| i.stable_dt) as f64;
@@ -382,9 +388,17 @@ impl NexusApp {
             let max_ts = state.total_timesteps.saturating_sub(1);
             let target_ts = (state.current_timestep + steps).min(max_ts);
             if target_ts > state.current_timestep {
-                // Gather messages for each stepped timestep
+                // Gather messages and arrows for each stepped timestep
                 for ts in (state.current_timestep + 1)..=target_ts {
                     gather_messages_at(&state.controller, ts, &state.sim, &mut state.messages);
+                    gather_arrows_at(
+                        &state.controller,
+                        ts,
+                        &mut state.active_arrows,
+                        &state.channel_subscribers,
+                        &mut state.last_sender,
+                        egui_time,
+                    );
                 }
                 state.current_timestep = target_ts;
                 state.node_states = state
@@ -440,6 +454,17 @@ impl NexusApp {
                     .reconstruct_states(ts, &state.initial_states);
                 state.messages.clear();
                 gather_messages_through(&state.controller, ts, &state.sim, &mut state.messages);
+                // Reset arrow state and show arrows for the seeked-to timestep
+                state.active_arrows.clear();
+                state.last_sender.fill(None);
+                gather_arrows_at(
+                    &state.controller,
+                    ts,
+                    &mut state.active_arrows,
+                    &state.channel_subscribers,
+                    &mut state.last_sender,
+                    egui_time,
+                );
             }
             if action.step_forward {
                 state.playing = false;
@@ -453,6 +478,14 @@ impl NexusApp {
                         state.current_timestep,
                         &state.sim,
                         &mut state.messages,
+                    );
+                    gather_arrows_at(
+                        &state.controller,
+                        state.current_timestep,
+                        &mut state.active_arrows,
+                        &state.channel_subscribers,
+                        &mut state.last_sender,
+                        egui_time,
                     );
                 }
             }
@@ -468,6 +501,17 @@ impl NexusApp {
                     state.current_timestep,
                     &state.sim,
                     &mut state.messages,
+                );
+                // Reset arrow state and show arrows for the current timestep
+                state.active_arrows.clear();
+                state.last_sender.fill(None);
+                gather_arrows_at(
+                    &state.controller,
+                    state.current_timestep,
+                    &mut state.active_arrows,
+                    &state.channel_subscribers,
+                    &mut state.last_sender,
+                    egui_time,
                 );
             }
         });
@@ -671,8 +715,8 @@ impl NexusApp {
 
                     let initial_states = nodes_from_sim(&sim);
                     let total_timesteps = controller.total_timesteps;
-                    let channel_subscribers = build_channel_subscribers(&sim);
-                    let num_channels = sim.channels.len();
+                    let channel_subscribers = controller.build_channel_subscribers();
+                    let num_channels = controller.num_channels();
 
                     self.mode = AppMode::Replay(Box::new(ReplayState {
                         sim,
@@ -710,13 +754,13 @@ pub fn nodes_from_sim(sim: &config::ast::Simulation) -> Vec<NodeState> {
         .nodes
         .iter()
         .map(|(name, node)| {
-            let max_nj = node.charge.as_ref().map(|c| c.unit.to_nj(c.max));
+            let max_nj = node.energy.charge.as_ref().map(|c| c.unit.to_nj(c.max));
             NodeState {
                 name: name.clone(),
                 x: node.position.point.x,
                 y: node.position.point.y,
                 z: node.position.point.z,
-                charge_ratio: node.charge.as_ref().map(|c| {
+                charge_ratio: node.energy.charge.as_ref().map(|c| {
                     if c.max == 0 {
                         1.0
                     } else {
@@ -981,22 +1025,19 @@ fn create_sim_from_trace_header(
                     },
                     ..Default::default()
                 },
-                charge: controller.node_max_nj().get(i).and_then(|opt| {
-                    opt.map(|max_nj| Charge {
-                        max: max_nj,
-                        quantity: max_nj,
-                        unit: EnergyUnit::NanoJoule,
-                    })
-                }),
+                energy: config::ast::EnergyConfig {
+                    charge: controller.node_max_nj().get(i).and_then(|opt| {
+                        opt.map(|max_nj| Charge {
+                            max: max_nj,
+                            quantity: max_nj,
+                            unit: EnergyUnit::NanoJoule,
+                        })
+                    }),
+                    ..Default::default()
+                },
                 protocols: HashMap::new(),
                 internal_names: Vec::new(),
                 resources: Resources::default(),
-                power_states: HashMap::new(),
-                power_sources: HashMap::new(),
-                power_sinks: HashMap::new(),
-                channel_energy: HashMap::new(),
-                initial_state: None,
-                restart_threshold: None,
                 start: SystemTime::now(),
             },
         );
@@ -1041,6 +1082,78 @@ fn gather_messages_through(
     for record in controller.records_through(ts) {
         if let Some(entry) = trace_record_to_message(record, sim) {
             messages.push(entry);
+        }
+    }
+}
+
+/// Create arrow animations from trace records at the given timestep.
+fn gather_arrows_at(
+    controller: &crate::sim::replay::ReplayController,
+    ts: u64,
+    active_arrows: &mut Vec<ArrowAnimation>,
+    channel_subscribers: &[Vec<usize>],
+    last_sender: &mut [Option<usize>],
+    egui_time: f64,
+) {
+    for record in controller.records_at(ts) {
+        match &record.event {
+            TraceEvent::MessageSent {
+                src_node, channel, ..
+            } => {
+                let src_idx = *src_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(slot) = last_sender.get_mut(ch_idx) {
+                    *slot = Some(src_idx);
+                }
+                if let Some(subs) = channel_subscribers.get(ch_idx) {
+                    for &dst_idx in subs {
+                        if dst_idx != src_idx {
+                            active_arrows.push(ArrowAnimation {
+                                src_node: src_idx,
+                                dst_node: dst_idx,
+                                kind: ArrowKind::Sent,
+                                start_time: egui_time,
+                                duration: 0.25,
+                            });
+                        }
+                    }
+                }
+            }
+            TraceEvent::MessageRecv {
+                dst_node, channel, ..
+            } => {
+                let dst_idx = *dst_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(Some(src_idx)) = last_sender.get(ch_idx) {
+                    active_arrows.push(ArrowAnimation {
+                        src_node: *src_idx,
+                        dst_node: dst_idx,
+                        kind: ArrowKind::Received,
+                        start_time: egui_time,
+                        duration: 0.25,
+                    });
+                }
+            }
+            TraceEvent::MessageDropped {
+                src_node, channel, ..
+            } => {
+                let src_idx = *src_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(subs) = channel_subscribers.get(ch_idx) {
+                    for &dst_idx in subs {
+                        if dst_idx != src_idx {
+                            active_arrows.push(ArrowAnimation {
+                                src_node: src_idx,
+                                dst_node: dst_idx,
+                                kind: ArrowKind::Dropped,
+                                start_time: egui_time,
+                                duration: 0.25,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
         }
     }
 }

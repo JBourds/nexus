@@ -838,7 +838,6 @@ dependencies = [
  "fuse",
  "fuser",
  "kernel",
- "libc",
  "runner",
  "serde",
  "toml",
@@ -1466,7 +1465,6 @@ dependencies = [
  "fuser",
  "home",
  "libc",
- "runner",
  "thiserror 2.0.12",
  "tracing",
 ]
@@ -1745,7 +1743,6 @@ dependencies = [
  "fuse",
  "hex",
  "kernel",
- "libc",
  "rfd",
  "runner",
  "serde",
@@ -3728,6 +3725,7 @@ version = "0.1.0"
 dependencies = [
  "bincode",
  "serde",
+ "thiserror 2.0.12",
  "tracing",
  "tracing-subscriber",
 ]

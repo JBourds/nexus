@@ -17,13 +17,9 @@ use crate::{
 };
 #[allow(unused_imports)] // Position is used by delivery.rs via `use super::*`
 use config::ast::Position;
-use config::{
-    CONTROL_PREFIX,
-    ast::{ChannelType, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
-};
+use config::ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
 use rand::rngs::StdRng;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex};
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -31,11 +27,14 @@ use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
+mod control;
+mod energy;
 mod energy_tests;
 mod posctl;
 mod powerctl;
 mod timectl;
-use crate::types::ChannelHandle;
+use crate::types::{ChannelHandle, ChannelIdx};
+use control::ControlFile;
 
 pub type Timestep = u64;
 pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, usize, AddressedMsg)>;
@@ -105,12 +104,14 @@ pub(crate) struct RoutingServer {
     rng: StdRng,
     /// Channel which router delivers messages to file system
     tx: mpsc::Sender<fuse::KernelMessage>,
-    /// Node indices that newly ran out of charge this timestep.
-    newly_depleted: Vec<usize>,
-    /// Node indices that recovered above their restart threshold this timestep.
-    newly_recovered: Vec<usize>,
-    /// Shared queue of (old_pid, new_pid) pairs for FUSE buffer migration.
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    /// Energy subsystem: tracks battery nodes, death/recovery transitions.
+    energy_mgr: energy::EnergyManager,
+    /// Sender for (old_pid, new_pid) pairs consumed by the FUSE filesystem.
+    remap_tx: mpsc::Sender<(u32, u32)>,
+    /// Cached nanoseconds per timestep (constant for the simulation).
+    timestep_ns: u64,
+    /// Sequence counter for message ordering within a timestep.
+    sequence: usize,
 }
 
 impl RoutingServer {
@@ -122,7 +123,7 @@ impl RoutingServer {
         ts_config: TimestepConfig,
         rng: StdRng,
         mut source: Source,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+        remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -132,6 +133,8 @@ impl RoutingServer {
                 let fuse_mapping = channels.make_fuse_mapping();
                 let handles_count = channels.handles.len();
                 let routes = RoutingTable::new(&channels);
+                let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
+                let energy_mgr = energy::EnergyManager::new(&channels.nodes);
                 let mut router = Self {
                     // This makes all the `NonZeroU64`s happy
                     timestep: 1,
@@ -143,9 +146,10 @@ impl RoutingServer {
                     ts_config,
                     rng,
                     tx,
-                    newly_depleted: Vec::new(),
-                    newly_recovered: Vec::new(),
-                    pending_remaps,
+                    energy_mgr,
+                    remap_tx,
+                    timestep_ns,
+                    sequence: 0,
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -166,14 +170,16 @@ impl RoutingServer {
                                 break Err(KernelError::SourceError(e));
                             }
                             let depleted = router
+                                .energy_mgr
                                 .newly_depleted
                                 .drain(..)
-                                .map(|i| router.channels.node_names[i].clone())
+                                .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
                             let recovered = router
+                                .energy_mgr
                                 .newly_recovered
                                 .drain(..)
-                                .map(|i| router.channels.node_names[i].clone())
+                                .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
                             if router_tx
                                 .send(RouterMessage::EnergyEvents {
@@ -195,24 +201,27 @@ impl RoutingServer {
             .map(|handle| KernelServer::new(handle, kernel_tx, router_rx))
     }
 
-    /// Apply PID remaps: update handles, rebuild fuse_mapping, clear mailboxes
-    /// for affected handles, and push remaps to the shared FUSE queue.
+    /// Apply PID remaps: update handles and fuse_mapping entries, clear
+    /// mailboxes for affected handles, and push remaps to the shared FUSE queue.
     fn apply_pid_remaps(&mut self, pairs: &[(u32, u32)]) {
         for &(old_pid, new_pid) in pairs {
             for (idx, handle) in self.channels.handles.iter_mut().enumerate() {
                 if handle.0 == old_pid {
                     handle.0 = new_pid;
-                    // Clear mailbox — a real device losing power loses buffered frames
                     self.mailboxes[idx].clear();
+                    // Update fuse_mapping: remove old key, insert new one
+                    let channel_name = self.channels.channel_names[handle.2.0].to_string();
+                    self.fuse_mapping.remove(&(old_pid, channel_name.clone()));
+                    self.fuse_mapping.insert((new_pid, channel_name), idx);
                 }
             }
         }
-        // Rebuild fuse_mapping from scratch
-        self.fuse_mapping = self.channels.make_fuse_mapping();
-        // Push remaps to shared FUSE queue
-        match self.pending_remaps.lock() {
-            Ok(mut queue) => queue.extend_from_slice(pairs),
-            Err(e) => warn!("pending_remaps mutex poisoned, PID remaps lost: {e}"),
+        // Send remaps to FUSE filesystem
+        for &pair in pairs {
+            if let Err(e) = self.remap_tx.send(pair) {
+                warn!("remap channel disconnected, PID remap lost: {e}");
+                break;
+            }
         }
     }
 
@@ -227,28 +236,37 @@ impl RoutingServer {
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let (_, node_index, _) = self.channels.handles[handle_index];
-        let remaining = msg
-            .id
-            .1
-            .strip_prefix(CONTROL_PREFIX)
-            .expect("must be a control file.");
-        let service: Vec<_> = remaining.split_terminator(".").collect();
-        match service.as_slice() {
-            ["time", ..] => self.update_time(node_index, msg),
-            ["energy_state"] => {
+        let ni = node_index.0;
+        let Some(ctl) = ControlFile::parse(&msg.id.1) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        match ctl {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+                self.update_time(ni, msg)
+            }
+            ControlFile::EnergyState => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
-                if let Some(energy) = &mut self.channels.nodes[node_index].energy
-                    && energy.power_states_nj.contains_key(&state)
-                {
-                    energy.current_state = Some(state);
+                if let Some(energy) = &mut self.channels.nodes[ni].energy {
+                    energy::EnergyManager::set_state(energy, state);
                 }
                 Ok(())
             }
-            ["pos", "dx" | "dy" | "dz"] => self.write_pos_delta(node_index, msg),
-            ["pos", "motion"] => self.write_pos_motion(node_index, msg),
-            ["pos", ..] => self.write_pos(node_index, msg),
-            ["power_flows"] => self.write_power_flows(node_index, msg),
-            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
+            ControlFile::PosDx | ControlFile::PosDy | ControlFile::PosDz => {
+                self.write_pos_delta(ni, msg)
+            }
+            ControlFile::PosMotion => self.write_pos_motion(ni, msg),
+            ControlFile::PosX
+            | ControlFile::PosY
+            | ControlFile::PosZ
+            | ControlFile::PosAz
+            | ControlFile::PosEl
+            | ControlFile::PosRoll => self.write_pos(ni, msg),
+            ControlFile::PowerFlows => self.write_power_flows(ni, msg),
+            // Read-only files cannot be written
+            ControlFile::EnergyLeft
+            | ControlFile::ElapsedUs
+            | ControlFile::ElapsedMs
+            | ControlFile::ElapsedS => Err(RouterError::UnknownFile(msg.id.1.clone())),
         }
     }
 
@@ -258,32 +276,31 @@ impl RoutingServer {
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let (pid, src_node, channel_handle) = self.channels.handles[index];
-        let channel_name = &self.channels.channel_names[channel_handle];
+        let channel_name = &self.channels.channel_names[channel_handle.0];
         let timestep = self.timestep;
-        info!(
-            "{:<30} [TX]: {}",
-            format!(
-                "{}.{pid}.{channel_name}",
-                self.channels.node_names[src_node]
-            ),
-            format_u8_buf(&msg.data)
-        );
-        event!(target: "tx", Level::INFO, timestep, channel = channel_handle, node = src_node, tx = true, data = msg.data.as_slice());
-
-        // Deduct TX channel energy cost before queuing
-        let tx_cost_nj: u64 = self.channels.nodes[src_node]
-            .channel_energy
-            .get(&channel_handle)
-            .and_then(|ce| ce.tx.as_ref())
-            .map(|e| e.unit.to_nj(e.quantity))
-            .unwrap_or(0);
-        if tx_cost_nj > 0
-            && let Some(energy) = &mut self.channels.nodes[src_node].energy
-        {
-            energy.charge_nj = energy.charge_nj.saturating_sub(tx_cost_nj);
+        if tracing::enabled!(Level::INFO) {
+            info!(
+                "{:<30} [TX]: {}",
+                format!(
+                    "{}.{pid}.{channel_name}",
+                    self.channels.node_names[src_node.0]
+                ),
+                format_u8_buf(&msg.data)
+            );
         }
+        event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, data = msg.data.as_slice());
 
-        self.queue_message(src_node, channel_handle, msg.data)
+        // Queue the message first; only drain TX energy on success so that
+        // a failed queue does not silently consume charge (BUG-9).
+        self.queue_message(src_node, channel_handle, msg.data)?;
+
+        energy::EnergyManager::drain_tx(
+            &mut self.channels.nodes,
+            src_node.0,
+            &channel_handle,
+        );
+
+        Ok(())
     }
 
     /// Receive a message from the FS and post it to the mailboxes of any
@@ -292,7 +309,7 @@ impl RoutingServer {
         let Some(channel_index) = self.get_handle_index(&msg.id) else {
             return Err(RouterError::UnknownFile(msg.id.1));
         };
-        if msg.id.1.starts_with(CONTROL_PREFIX) {
+        if ControlFile::parse(&msg.id.1).is_some() {
             self.write_control_file(channel_index, msg)
         } else {
             self.write_channel_file(channel_index, msg)
@@ -305,42 +322,50 @@ impl RoutingServer {
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
         let (_, node_index, _) = self.channels.handles[handle_index];
-        let remaining = msg
-            .id
-            .1
-            .strip_prefix(CONTROL_PREFIX)
-            .expect("must be a control file.");
-        let service: Vec<_> = remaining.split_terminator(".").collect();
-        match service.as_slice() {
-            ["time", ..] => self.send_time(node_index, msg),
-            ["elapsed", ..] => self.send_elapsed(msg),
-            ["energy_left"] => {
-                let charge_nj = self.channels.nodes[node_index]
-                    .energy
-                    .as_ref()
-                    .map_or(0, |e| e.charge_nj);
+        let ni = node_index.0;
+        let Some(ctl) = ControlFile::parse(&msg.id.1) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        match ctl {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+                self.send_time(ni, msg)
+            }
+            ControlFile::ElapsedUs | ControlFile::ElapsedMs | ControlFile::ElapsedS => {
+                self.send_elapsed(msg)
+            }
+            ControlFile::EnergyLeft => {
+                let charge_nj =
+                    energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
                 let mut msg = msg;
                 msg.data = charge_nj.to_string().into_bytes();
                 self.tx
                     .send(fuse::KernelMessage::Exclusive(msg))
                     .map_err(RouterError::FuseSendError)
             }
-            ["energy_state"] => {
-                let state = self.channels.nodes[node_index]
-                    .energy
-                    .as_ref()
-                    .and_then(|e| e.current_state.clone())
-                    .unwrap_or_default();
+            ControlFile::EnergyState => {
+                let state = energy::EnergyManager::current_state(
+                    &self.channels.nodes,
+                    ni,
+                )
+                .unwrap_or_default();
                 let mut msg = msg;
                 msg.data = state.into_bytes();
                 self.tx
                     .send(fuse::KernelMessage::Exclusive(msg))
                     .map_err(RouterError::FuseSendError)
             }
-            ["pos", "motion"] => self.read_pos_motion(node_index, msg),
-            ["pos", ..] => self.read_pos(node_index, msg),
-            ["power_flows"] => self.read_power_flows(node_index, msg),
-            _ => Err(RouterError::UnknownFile(format!("ctl.{remaining}"))),
+            ControlFile::PosMotion => self.read_pos_motion(ni, msg),
+            ControlFile::PosX
+            | ControlFile::PosY
+            | ControlFile::PosZ
+            | ControlFile::PosAz
+            | ControlFile::PosEl
+            | ControlFile::PosRoll => self.read_pos(ni, msg),
+            ControlFile::PowerFlows => self.read_power_flows(ni, msg),
+            // Write-only files cannot be read
+            ControlFile::PosDx | ControlFile::PosDy | ControlFile::PosDz => {
+                Err(RouterError::UnknownFile(msg.id.1.clone()))
+            }
         }
     }
 
@@ -366,92 +391,43 @@ impl RoutingServer {
         let Some(channel_index) = self.get_handle_index(&msg.id) else {
             return Err(RouterError::UnknownFile(msg.id.1));
         };
-        if msg.id.1.starts_with(CONTROL_PREFIX) {
+        if ControlFile::parse(&msg.id.1).is_some() {
             self.read_control_file(channel_index, msg)
         } else {
             self.read_channel_file(channel_index, msg)
         }
     }
 
-    /// Microseconds per simulation step (derived from `ts_config`).
+    /// Microseconds per simulation step (derived from cached `timestep_ns`).
     fn us_per_step(&self) -> u64 {
-        let ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
-        ns / 1000
+        self.timestep_ns / 1000
     }
 
-    /// Take a single step in the simulation, moving all queued messages to
-    /// their destination. Check for whether a channel's queue is full before
-    /// placing it in the mailbox.
+    /// Take a single step in the simulation.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
-
-        // Compute current simulation time in microseconds for piecewise flows
-        let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
-        let current_time_us = self.timestep * timestep_ns / 1000;
-
-        // Drain per-timestep energy for all nodes with batteries
-        for (node_idx, node) in self.channels.nodes.iter_mut().enumerate() {
-            if let Some(energy) = &mut node.energy {
-                let was_dead = energy.is_dead;
-                // Always apply power sources (even when dead, e.g. solar charging)
-                let source_nj: u64 = energy
-                    .power_sources
-                    .iter()
-                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                    .sum();
-                energy.charge_nj += source_nj;
-                // Always apply power sinks (even when dead; saturating keeps charge at 0)
-                let sink_nj: u64 = energy
-                    .power_sinks
-                    .iter()
-                    .map(|(_, flow)| flow.nj_per_timestep(current_time_us))
-                    .sum();
-                energy.charge_nj = energy.charge_nj.saturating_sub(sink_nj);
-                // Only drain power state if alive
-                if !was_dead {
-                    let drain = energy
-                        .current_state
-                        .as_deref()
-                        .and_then(|s| energy.power_states_nj.get(s).copied())
-                        .unwrap_or(0);
-                    energy.charge_nj = energy.charge_nj.saturating_sub(drain);
-                }
-                energy.charge_nj = energy.charge_nj.min(energy.max_nj);
-                // Detect transitions
-                if !was_dead && energy.charge_nj == 0 {
-                    energy.is_dead = true;
-                    self.newly_depleted.push(node_idx);
-                } else if was_dead {
-                    let recovered = energy
-                        .restart_threshold_nj
-                        .is_some_and(|t| energy.charge_nj >= t);
-                    if recovered {
-                        energy.is_dead = false;
-                        self.newly_recovered.push(node_idx);
-                    }
-                }
-                // Log battery snapshot for replay
-                let timestep = self.timestep;
-                let charge_nj = energy.charge_nj;
-                event!(target: "battery", Level::INFO, timestep, node = node_idx, charge_nj);
-            }
-        }
-
-        // Advance positions of any nodes with active motion patterns and emit
-        // "movement" log events for each node that moved.
+        self.energy_mgr
+            .tick(&mut self.channels.nodes, self.timestep, self.timestep_ns);
         self.apply_all_motions_and_log();
+        self.expire_messages();
+        self.deliver_queued_messages()
+    }
 
-        // Clear all old messages
+    /// Remove expired messages from all mailboxes.
+    fn expire_messages(&mut self) {
+        let timestep = self.timestep;
         for mailbox in self.mailboxes.iter_mut() {
             while mailbox
                 .front()
-                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < self.timestep))
+                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < timestep))
             {
                 let _ = mailbox.pop_front();
             }
         }
+    }
 
-        // Deliver all messages which should now be active
+    /// Deliver all messages whose activation timestep has arrived.
+    fn deliver_queued_messages(&mut self) -> Result<(), RouterError> {
         while self
             .queued
             .peek()
@@ -461,12 +437,9 @@ impl RoutingServer {
                 return Err(RouterError::StepError);
             };
             let (_, dst_node, channel_handle) = self.channels.handles[frame.handle_ptr];
-            let (_, _, channel_index) = self.channels.handles[frame.handle_ptr];
             let mailbox = &mut self.mailboxes[frame.handle_ptr];
+            let channel = &mut self.channels.channels[channel_handle.0];
 
-            // Once the write to a shared channel has finished simulating the
-            // link delays, it resolves what should be in the medium
-            let channel = &mut self.channels.channels[channel_index];
             if channel
                 .r#type
                 .max_buffered()
@@ -475,24 +448,18 @@ impl RoutingServer {
                 mailbox.push_back(frame.msg);
 
                 // Deduct RX channel energy cost on delivery
-                let rx_cost_nj: u64 = self.channels.nodes[dst_node]
-                    .channel_energy
-                    .get(&channel_handle)
-                    .and_then(|ce| ce.rx.as_ref())
-                    .map(|e| e.unit.to_nj(e.quantity))
-                    .unwrap_or(0);
-                if rx_cost_nj > 0
-                    && let Some(energy) = &mut self.channels.nodes[dst_node].energy
-                {
-                    energy.charge_nj = energy.charge_nj.saturating_sub(rx_cost_nj);
-                }
+                energy::EnergyManager::drain_rx(
+                    &mut self.channels.nodes,
+                    dst_node.0,
+                    &channel_handle,
+                );
             } else {
                 warn!("Message dropped due to full queue!");
                 event!(
                     target: "drop", Level::WARN,
                     timestep = self.timestep,
-                    channel = channel_index,
-                    node = frame.msg.src,
+                    channel = channel_handle.0,
+                    node = frame.msg.src.0,
                     reason = "buffer_full"
                 );
             }

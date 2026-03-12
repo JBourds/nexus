@@ -7,7 +7,6 @@ use std::time::SystemTime;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossbeam_channel::Sender;
-use libc::{O_RDONLY, O_RDWR, O_WRONLY};
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, filter, fmt};
 
@@ -15,7 +14,7 @@ use config::ast::{self, ChannelType};
 use fuse::PID;
 use fuse::channel::{ChannelMode, NexusChannel};
 use fuse::fs::*;
-use kernel::Kernel;
+use kernel::KernelBuilder;
 use runner::ProtocolHandle;
 use runner::cli::RunCmd;
 use trace::format::TraceHeader;
@@ -148,7 +147,7 @@ fn run_simulation(
             names.sort();
             names
                 .iter()
-                .map(|n| sim.nodes[n].charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
                 .collect()
         },
     };
@@ -175,30 +174,32 @@ fn run_inner(
     let runc = runner::run(&sim)?;
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
-    let pending_remaps = Arc::new(std::sync::Mutex::new(Vec::new()));
+    let (remap_tx, remap_rx) = std::sync::mpsc::channel();
     let fs = fs_root
-        .map(|root| NexusFs::new(root, pending_remaps.clone()))
+        .map(|root| NexusFs::new(root, remap_rx))
         .unwrap_or_default();
 
     let file_handles = make_file_handles(&sim, &runc.handles);
+    let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
 
     let (sess, (tx, rx)) = fs
-        .add_processes(&runc.handles)
+        .add_processes(&pids)
         .add_channels(protocol_channels)?
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = Kernel::new_with_all_flags(
+    let kernel = KernelBuilder::new(
         sim,
         runc,
         file_handles,
         rx,
         tx,
-        pending_remaps,
-        Some(abort),
-        Some(pause),
-        Some(time_dilation),
-    )?;
+        remap_tx,
+    )
+    .abort_flag(abort)
+    .pause_flag(pause)
+    .time_dilation(time_dilation)
+    .build()?;
     let _protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;
@@ -270,16 +271,10 @@ fn make_fs_channels(
             .collect::<HashSet<&ast::ChannelHandle>>()
             .into_iter()
         {
-            let file_cmd = match (
+            let mode = ChannelMode::from_permissions(
                 protocol.subscribers.contains(channel),
                 protocol.publishers.contains(channel),
-            ) {
-                (true, true) => O_RDWR,
-                (true, _) => O_RDONLY,
-                (_, true) => O_WRONLY,
-                _ => unreachable!(),
-            };
-            let mode = ChannelMode::try_from(file_cmd)?;
+            );
 
             channels.push(NexusChannel {
                 pid,

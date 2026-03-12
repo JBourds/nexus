@@ -1,6 +1,6 @@
 use bincode::{Decode, Encode, config, encode_into_std_write};
 use std::fs::File;
-use std::io::{BufWriter, Write};
+use std::io::BufWriter;
 use std::sync::Mutex;
 
 use serde::{Deserialize, Serialize};
@@ -8,16 +8,15 @@ use tracing::field::Visit;
 use tracing::{Event, Subscriber};
 use tracing_subscriber::layer::{Context, Layer};
 
-use crate::types::{ChannelHandle, NodeHandle};
-
 /// A message sent or received on a channel.
+/// Fields use raw `usize` for stable bincode serialization.
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct MessageRecord {
     pub timestep: u64,
     /// `true` = transmitted (TX), `false` = received (RX).
     pub tx: bool,
-    pub node: NodeHandle,
-    pub channel: ChannelHandle,
+    pub node: usize,
+    pub channel: usize,
     pub data: Vec<u8>,
 }
 
@@ -25,7 +24,7 @@ pub struct MessageRecord {
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct MovementRecord {
     pub timestep: u64,
-    pub node: NodeHandle,
+    pub node: usize,
     pub x: f64,
     pub y: f64,
     pub z: f64,
@@ -38,7 +37,7 @@ pub struct MovementRecord {
 #[derive(Decode, Encode, Serialize, Deserialize, Debug, Default, PartialEq)]
 pub struct BatteryRecord {
     pub timestep: u64,
-    pub node: NodeHandle,
+    pub node: usize,
     pub charge_nj: u64,
 }
 
@@ -332,8 +331,12 @@ impl<S: Subscriber> Layer<S> for BinaryLogLayer {
             _ => return,
         };
         let cfg = config::standard();
-        let mut file = lock.lock().unwrap();
-        encode_into_std_write(record, &mut *file, cfg).unwrap();
-        file.flush().unwrap();
+        let Ok(mut file) = lock.lock() else {
+            eprintln!("[nexus] BinaryLogLayer: mutex poisoned, dropping log record");
+            return;
+        };
+        if let Err(e) = encode_into_std_write(record, &mut *file, cfg) {
+            eprintln!("[nexus] BinaryLogLayer: encode error: {e}");
+        }
     }
 }

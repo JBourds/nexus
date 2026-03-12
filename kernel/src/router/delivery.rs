@@ -1,7 +1,4 @@
 use super::*;
-use std::sync::atomic::{AtomicUsize, Ordering};
-
-static SEQUENCE: AtomicUsize = AtomicUsize::new(0);
 
 /// Internal struct which marks a queued message as being targeted at
 /// `handle_ptr`, the specific endpoint it should be delivered to in the FS.
@@ -23,6 +20,13 @@ pub(crate) struct QueuedMessage {
 impl RoutingServer {
     /// Take a message along the channel indicated by `channel_handle` from
     /// `src_node` and post it to the queue along the precomputed route.
+    ///
+    /// For shared channels, the raw message bytes are queued as-is; link
+    /// simulation (packet loss, bit errors) runs later at delivery time so
+    /// that collisions can be modelled.
+    ///
+    /// For exclusive channels, link simulation runs here at queue time and
+    /// only surviving messages enter the queue.
     pub fn queue_message(
         &mut self,
         src_node: NodeHandle,
@@ -30,50 +34,52 @@ impl RoutingServer {
         msg: Vec<u8>,
     ) -> Result<(), RouterError> {
         let sz: u64 = msg.len().try_into().expect("usize fits u64");
-        let channel = &self.channels.channels[channel_handle];
-
-        match channel.r#type {
-            ChannelType::Shared { .. } => {
-                self.queue_shared(src_node, channel_handle, msg, sz)?;
-            }
-            ChannelType::Exclusive { .. } => {
-                self.queue_exclusive(src_node, channel_handle, msg, sz)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Queue a message along a shared channel. This could get garbled once
-    /// it's actually delivered to the endpoint if its arrival coincides with
-    /// the period of time a previous message is still "alive".
-    fn queue_shared(
-        &mut self,
-        src_node: NodeHandle,
-        channel_handle: ChannelHandle,
-        msg: Vec<u8>,
-        sz: u64,
-    ) -> Result<(), RouterError> {
-        let channel = &self.channels.channels[channel_handle];
-        let buf: Rc<[u8]> = msg.into();
+        let channel = &self.channels.channels[channel_handle.0];
+        let is_shared = matches!(channel.r#type.kind, ChannelKind::Shared);
         let timestep = self.timestep;
         let ts_config = self.ts_config;
 
-        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
+        // For shared channels we share one Rc across all recipients.
+        let shared_buf: Rc<[u8]> = if is_shared {
+            Rc::from(msg.as_slice())
+        } else {
+            Rc::from([])
+        };
+
+        for route in self.routes.entries[channel_handle.0].nodes[&src_node].iter() {
             let handle_ptr = route.handle_ptr;
             let dst_node = self.channels.handles[handle_ptr].1;
             if dst_node == src_node && !channel.r#type.delivers_to_self() {
                 continue;
             }
+
             debug!(
                 "Delivering from {} to {}",
-                &self.channels.node_names[src_node], &self.channels.node_names[dst_node]
+                &self.channels.node_names[src_node.0], &self.channels.node_names[dst_node.0]
             );
 
             let (distance, distance_unit) = Position::distance(
-                &self.channels.nodes[src_node].position,
-                &self.channels.nodes[dst_node].position,
+                &self.channels.nodes[src_node.0].position,
+                &self.channels.nodes[dst_node.0].position,
             );
+
+            // For exclusive channels, run link simulation now; drop the
+            // message if it doesn't survive.
+            let buf: Rc<[u8]> = if is_shared {
+                Rc::clone(&shared_buf)
+            } else {
+                match Self::send_through_channel(
+                    channel,
+                    Cow::from(&msg),
+                    distance,
+                    distance_unit,
+                    &mut self.rng,
+                ) {
+                    Some(b) => b.into(),
+                    None => continue,
+                }
+            };
+
             let (becomes_active_at, expiration) =
                 Self::message_timesteps(channel, sz, ts_config, timestep, distance, distance_unit);
 
@@ -81,69 +87,14 @@ impl RoutingServer {
                 handle_ptr,
                 msg: QueuedMessage {
                     src: src_node,
-                    buf: Rc::clone(&buf),
+                    buf,
                     expiration,
                 },
             };
 
-            let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
+            let num = self.sequence;
+            self.sequence += 1;
             self.queued.push((Reverse(becomes_active_at), num, msg));
-        }
-
-        Ok(())
-    }
-
-    /// Queue a message along an exclusive channel. This preserves message
-    /// contents.
-    fn queue_exclusive(
-        &mut self,
-        src_node: NodeHandle,
-        channel_handle: ChannelHandle,
-        msg: Vec<u8>,
-        sz: u64,
-    ) -> Result<(), RouterError> {
-        let channel = &self.channels.channels[channel_handle];
-        let timestep = self.timestep;
-        let ts_config = self.ts_config;
-
-        for route in self.routes.entries[channel_handle].nodes[&src_node].iter() {
-            let handle_ptr = route.handle_ptr;
-            let dst_node = self.channels.handles[handle_ptr].1;
-            if !(dst_node != src_node || channel.r#type.delivers_to_self()) {
-                continue;
-            }
-            let (distance, distance_unit) = Position::distance(
-                &self.channels.nodes[src_node].position,
-                &self.channels.nodes[dst_node].position,
-            );
-            if let Some(buf) = Self::send_through_channel(
-                channel,
-                Cow::from(&msg),
-                distance,
-                distance_unit,
-                &mut self.rng,
-            ) {
-                let (becomes_active_at, expiration) = Self::message_timesteps(
-                    channel,
-                    sz,
-                    ts_config,
-                    timestep,
-                    distance,
-                    distance_unit,
-                );
-
-                let msg = AddressedMsg {
-                    handle_ptr,
-                    msg: QueuedMessage {
-                        src: src_node,
-                        buf: buf.into(),
-                        expiration,
-                    },
-                };
-
-                let num = SEQUENCE.fetch_add(1, Ordering::Relaxed);
-                self.queued.push((Reverse(becomes_active_at), num, msg));
-            }
         }
 
         Ok(())
@@ -151,18 +102,18 @@ impl RoutingServer {
 
     pub fn deliver_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (_, _, channel_handle) = self.channels.handles[index];
-        let channel = &mut self.channels.channels[channel_handle];
-        match &channel.r#type {
-            ChannelType::Shared { .. } => self.deliver_shared_msg(index),
-            ChannelType::Exclusive { .. } => self.deliver_exclusive_msg(index),
+        let channel = &mut self.channels.channels[channel_handle.0];
+        match &channel.r#type.kind {
+            ChannelKind::Shared => self.deliver_shared_msg(index),
+            ChannelKind::Exclusive { .. } => self.deliver_exclusive_msg(index),
         }
     }
 
     fn deliver_shared_msg(&mut self, index: usize) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
-        let channel = &self.channels.channels[channel_handle];
-        let channel_name = &self.channels.channel_names[channel_handle];
-        let node_name = &self.channels.node_names[node_handle];
+        let channel = &self.channels.channels[channel_handle.0];
+        let channel_name = &self.channels.channel_names[channel_handle.0];
+        let node_name = &self.channels.node_names[node_handle.0];
         let timestep = self.timestep;
 
         let mailbox = &mut self.mailboxes[index];
@@ -179,8 +130,8 @@ impl RoutingServer {
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.pop_front().unwrap();
                 let (distance, unit) = Position::distance(
-                    &self.channels.nodes[msg.src].position,
-                    &self.channels.nodes[node_handle].position,
+                    &self.channels.nodes[msg.src.0].position,
+                    &self.channels.nodes[node_handle.0].position,
                 );
 
                 if let Some(buf) = Self::send_through_channel(
@@ -190,15 +141,17 @@ impl RoutingServer {
                     unit,
                     &mut self.rng,
                 ) {
-                    info!(
-                        "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                        format!("{}.{}.{}", node_name, pid, channel_name),
-                        format_u8_buf(&buf),
-                        timestep,
-                        msg.expiration,
-                    );
+                    if tracing::enabled!(Level::INFO) {
+                        info!(
+                            "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                            format!("{}.{}.{}", node_name, pid, channel_name),
+                            format_u8_buf(&buf),
+                            timestep,
+                            msg.expiration,
+                        );
+                    }
                     let msg = fuse::Message {
-                        id: (pid, node_name.clone()),
+                        id: (pid, node_name.to_string()),
                         data: buf.to_vec(),
                     };
                     self.tx
@@ -211,14 +164,12 @@ impl RoutingServer {
             }
             std::cmp::Ordering::Greater => {
                 warn!("Detected collision on shared medium.");
-                let ChannelType::Shared { max_size, .. } = channel.r#type else {
-                    unreachable!()
-                };
+                let max_size = channel.r#type.max_size;
 
                 let filtered = mailbox.iter().filter_map(|msg| {
                     let (distance, unit) = Position::distance(
-                        &self.channels.nodes[msg.src].position,
-                        &self.channels.nodes[node_handle].position,
+                        &self.channels.nodes[msg.src.0].position,
+                        &self.channels.nodes[node_handle.0].position,
                     );
                     Self::send_through_channel(
                         channel,
@@ -239,11 +190,11 @@ impl RoutingServer {
                     v
                 });
                 event!(
-                    target: "rx", Level::INFO, timestep, channel = channel_handle,
-                    node = node_handle, tx = false, data = buf.as_slice()
+                    target: "rx", Level::INFO, timestep, channel = channel_handle.0,
+                    node = node_handle.0, tx = false, data = buf.as_slice()
                 );
                 let msg = fuse::Message {
-                    id: (pid, node_name.clone()),
+                    id: (pid, node_name.to_string()),
                     data: buf,
                 };
                 self.tx
@@ -267,28 +218,30 @@ impl RoutingServer {
                 event!(
                     target: "drop", Level::WARN,
                     timestep = self.timestep,
-                    channel = channel_handle,
-                    node = node_handle,
+                    channel = channel_handle.0,
+                    node = node_handle.0,
                     reason = "ttl_expired"
                 );
                 return Ok(false);
             }
-            let node_name = &self.channels.node_names[node_handle];
-            let channel_name = &self.channels.channel_names[channel_handle];
-            info!(
-                "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
-                format!("{}.{}.{}", node_name, pid, channel_name),
-                format_u8_buf(&msg.buf),
-                self.timestep,
-                msg.expiration,
-            );
+            let node_name = &self.channels.node_names[node_handle.0];
+            let channel_name = &self.channels.channel_names[channel_handle.0];
+            if tracing::enabled!(Level::INFO) {
+                info!(
+                    "{:<30} [RX]: {} <Now: {}, Expiration: {:?}>",
+                    format!("{}.{}.{}", node_name, pid, channel_name),
+                    format_u8_buf(&msg.buf),
+                    self.timestep,
+                    msg.expiration,
+                );
+            }
             let msg = fuse::Message {
-                id: (pid, self.channels.node_names[node_handle].clone()),
+                id: (pid, self.channels.node_names[node_handle.0].to_string()),
                 data: msg.buf.to_vec(),
             };
             event!(
-                target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle,
-                node = node_handle, tx = false, data = msg.data.as_slice()
+                target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle.0,
+                node = node_handle.0, tx = false, data = msg.data.as_slice()
             );
 
             self.tx

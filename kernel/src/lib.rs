@@ -6,6 +6,7 @@ mod resolver;
 pub(crate) mod router;
 pub mod sources;
 mod status;
+mod test_utils;
 pub mod types;
 
 use fuse::PID;
@@ -13,10 +14,10 @@ use helpers::{make_handles, unzip};
 
 use rand::{SeedableRng, rngs::StdRng};
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, HashMap},
     path::PathBuf,
     sync::{
-        Arc, Mutex,
+        Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
@@ -63,7 +64,6 @@ impl<H, S, R> KernelServer<H, S, R> {
     }
 }
 
-#[allow(unused)]
 pub struct Kernel {
     root: PathBuf,
     rng: StdRng,
@@ -73,99 +73,98 @@ pub struct Kernel {
     runc: RunController,
     tx: mpsc::Sender<fuse::KernelMessage>,
     rx: mpsc::Receiver<fuse::FsMessage>,
-    pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
+    remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
 }
 
-impl Kernel {
-    /// Create the kernel instance.
-    ///
-    /// # Arguments
-    /// * `sim`: Simulation AST.
-    /// * `runc`: Unified controller with all information for handling runtime
-    ///   management of processes.
-    /// * `file_handles`: Handles used for each unique file in fuse FS.
-    /// * `rx`: Channel to receive file system requests for.
-    /// * `tx`: Channel to deliver kernel responses to the file system.
+/// Builder for constructing a `Kernel` with optional flags.
+pub struct KernelBuilder {
+    sim: ast::Simulation,
+    runc: RunController,
+    file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
+    rx: mpsc::Receiver<fuse::FsMessage>,
+    tx: mpsc::Sender<fuse::KernelMessage>,
+    remap_tx: mpsc::Sender<(u32, u32)>,
+    abort: Option<Arc<AtomicBool>>,
+    pause: Option<Arc<AtomicBool>>,
+    time_dilation: Option<Arc<AtomicU64>>,
+}
+
+impl KernelBuilder {
     pub fn new(
         sim: ast::Simulation,
         runc: RunController,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         rx: mpsc::Receiver<fuse::FsMessage>,
         tx: mpsc::Sender<fuse::KernelMessage>,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
-    ) -> Result<Self, KernelError> {
-        Self::new_with_flags(sim, runc, file_handles, rx, tx, pending_remaps, None, None)
-    }
-
-    /// Create the kernel instance with optional abort and pause flags.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_flags(
-        sim: ast::Simulation,
-        runc: RunController,
-        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-        rx: mpsc::Receiver<fuse::FsMessage>,
-        tx: mpsc::Sender<fuse::KernelMessage>,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
-        abort: Option<Arc<AtomicBool>>,
-        pause: Option<Arc<AtomicBool>>,
-    ) -> Result<Self, KernelError> {
-        Self::new_with_all_flags(
+        remap_tx: mpsc::Sender<(u32, u32)>,
+    ) -> Self {
+        Self {
             sim,
             runc,
             file_handles,
             rx,
             tx,
-            pending_remaps,
-            abort,
-            pause,
-            None,
-        )
+            remap_tx,
+            abort: None,
+            pause: None,
+            time_dilation: None,
+        }
     }
 
-    /// Create the kernel instance with all optional flags including shared time dilation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn new_with_all_flags(
-        sim: ast::Simulation,
-        runc: RunController,
-        file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-        rx: mpsc::Receiver<fuse::FsMessage>,
-        tx: mpsc::Sender<fuse::KernelMessage>,
-        pending_remaps: Arc<Mutex<Vec<(u32, u32)>>>,
-        abort: Option<Arc<AtomicBool>>,
-        pause: Option<Arc<AtomicBool>>,
-        time_dilation_override: Option<Arc<AtomicU64>>,
-    ) -> Result<Self, KernelError> {
-        // CRUCIAL: Sort nodes by their name lexicographically since we are
-        // not guaranteed a consistent ordering by hash maps
+    pub fn abort_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.abort = Some(flag);
+        self
+    }
+
+    pub fn pause_flag(mut self, flag: Arc<AtomicBool>) -> Self {
+        self.pause = Some(flag);
+        self
+    }
+
+    pub fn time_dilation(mut self, td: Arc<AtomicU64>) -> Self {
+        self.time_dilation = Some(td);
+        self
+    }
+
+    pub fn build(self) -> Result<Kernel, KernelError> {
+        let sim = self.sim;
+        // Sort nodes lexicographically for deterministic ordering
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
         let (node_names, nodes) = unzip(sorted_nodes);
-        let node_handles = make_handles(node_names.clone());
+        let node_handles: HashMap<String, NodeHandle> = make_handles(node_names.clone())
+            .into_iter()
+            .map(|(name, idx)| (name, NodeIdx(idx)))
+            .collect();
         let channels = ResolvedChannels::try_resolve(
             sim.channels,
             node_names,
             nodes,
             &node_handles,
-            file_handles,
+            self.file_handles,
             &sim.params.timestep,
         )?;
-        Ok(Self {
+        Ok(Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
             timestep: sim.params.timestep,
-            time_dilation: time_dilation_override
+            time_dilation: self
+                .time_dilation
                 .unwrap_or_else(|| Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))),
             channels,
-            runc,
-            rx,
-            tx,
-            pending_remaps,
-            abort,
-            pause,
+            runc: self.runc,
+            rx: self.rx,
+            tx: self.tx,
+            remap_tx: self.remap_tx,
+            abort: self.abort,
+            pause: self.pause,
         })
     }
+}
+
+impl Kernel {
     #[instrument(skip_all)]
     #[allow(unused_variables)]
     pub fn run(self, cmd: RunCmd) -> Result<Vec<ProtocolHandle>, KernelError> {
@@ -180,14 +179,14 @@ impl Kernel {
             runc,
             tx,
             rx,
-            pending_remaps,
+            remap_tx,
             abort,
             pause,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source, pending_remaps)
+            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
         }?;
         let mut status_server = StatusServer::serve(time_dilation, runc)?;
         queue_event(

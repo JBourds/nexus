@@ -12,8 +12,14 @@ use crate::{errors::ConversionError, helpers::make_handles};
 use config::ast::{self, ChannelEnergy, ChannelType, Cmd, Link, Point, TimestepConfig};
 use tracing::instrument;
 
-pub type ChannelHandle = usize;
-pub type NodeHandle = usize;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct NodeIdx(pub usize);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct ChannelIdx(pub usize);
+
+pub type NodeHandle = NodeIdx;
+pub type ChannelHandle = ChannelIdx;
 
 #[derive(Debug)]
 pub struct Channel {
@@ -49,12 +55,13 @@ impl Channel {
             .chain(internal_channels.into_iter())
             .collect::<Vec<_>>();
         for (node_handle, node) in nodes.iter().enumerate() {
+            let node_handle = NodeIdx(node_handle);
             for protocol in node.protocols.iter() {
                 for channel_index in protocol.subscribers.iter().copied() {
-                    channels[channel_index].subscribers.insert(node_handle);
+                    channels[channel_index.0].subscribers.insert(node_handle);
                 }
                 for channel_index in protocol.publishers.iter().copied() {
-                    channels[channel_index].publishers.insert(node_handle);
+                    channels[channel_index.0].publishers.insert(node_handle);
                 }
             }
         }
@@ -178,26 +185,27 @@ pub struct EnergyState {
 
 impl EnergyState {
     pub fn from_node(node: &ast::Node, ts_config: &TimestepConfig) -> Option<Self> {
-        let charge = node.charge.as_ref()?;
+        let energy = &node.energy;
+        let charge = energy.charge.as_ref()?;
         let max_nj = charge.unit.to_nj(charge.max);
         let charge_nj = charge.unit.to_nj(charge.quantity);
         let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
-        let power_sources = node
+        let power_sources = energy
             .power_sources
             .iter()
             .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
             .collect();
-        let power_sinks = node
+        let power_sinks = energy
             .power_sinks
             .iter()
             .map(|(name, flow)| (name.clone(), PowerFlowState::from_ast(flow, timestep_ns)))
             .collect();
-        let power_states_nj = node
+        let power_states_nj = energy
             .power_states
             .iter()
             .map(|(name, rate)| (name.clone(), rate.nj_per_timestep(timestep_ns)))
             .collect();
-        let restart_threshold_nj = node.restart_threshold.map(|t| (t * max_nj as f64) as u64);
+        let restart_threshold_nj = energy.restart_threshold.map(|t| (t * max_nj as f64) as u64);
         let is_dead = charge_nj == 0;
         Some(EnergyState {
             charge_nj,
@@ -205,7 +213,7 @@ impl EnergyState {
             power_sources,
             power_sinks,
             power_states_nj,
-            current_state: node.initial_state.clone(),
+            current_state: energy.initial_state.clone(),
             restart_threshold_nj,
             is_dead,
         })
@@ -357,7 +365,7 @@ impl Node {
         node: ast::Node,
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
-        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, NodeHandle>,
         ts_config: &TimestepConfig,
     ) -> Result<(Self, Vec<(ast::ChannelHandle, Channel)>), ConversionError> {
         // Compute energy state before moving any fields out of node.
@@ -378,7 +386,7 @@ impl Node {
                 .chain(
                     make_handles(node.internal_names)
                         .into_iter()
-                        .map(|(name, handle)| (name, handle + channel_handles.len())),
+                        .map(|(name, handle)| (name, ChannelIdx(handle + channel_handles.len()))),
                 )
                 .collect::<HashMap<ast::ChannelHandle, ChannelHandle>>()
         } else {
@@ -386,6 +394,7 @@ impl Node {
         };
 
         let channel_energy = node
+            .energy
             .channel_energy
             .into_iter()
             .map(|(name, energy)| {
@@ -419,25 +428,7 @@ impl Node {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn pt(x: f64, y: f64, z: f64) -> Point {
-        Point { x, y, z }
-    }
-
-    fn assert_point_near(actual: Point, expected: Point, eps: f64) {
-        assert!(
-            (actual.x - expected.x).abs() < eps
-                && (actual.y - expected.y).abs() < eps
-                && (actual.z - expected.z).abs() < eps,
-            "expected ({}, {}, {}), got ({}, {}, {})",
-            expected.x,
-            expected.y,
-            expected.z,
-            actual.x,
-            actual.y,
-            actual.z,
-        );
-    }
+    use crate::test_utils::helpers::{assert_point_near, pt};
 
     // Static
 
@@ -680,7 +671,7 @@ impl NodeProtocol {
         node: ast::NodeProtocol,
         handle: NodeHandle,
         channel_handles: &HashMap<ast::ChannelHandle, ChannelHandle>,
-        node_handles: &HashMap<ast::NodeHandle, ChannelHandle>,
+        node_handles: &HashMap<ast::NodeHandle, NodeHandle>,
     ) -> Result<Self, ConversionError> {
         let map_channel_handles =
             |handles: HashSet<ast::ChannelHandle>| -> Result<_, ConversionError> {
