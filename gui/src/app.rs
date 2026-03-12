@@ -1,5 +1,5 @@
 use anyhow::Result;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 
 use eframe::App;
@@ -146,6 +146,7 @@ impl NexusApp {
                 state.needs_fit = false;
             }
             let dist_unit = sim_distance_unit(&state.sim);
+            let no_highlights = HashMap::new();
             let (clicked, _hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
@@ -153,6 +154,7 @@ impl NexusApp {
                 &state.selected_node,
                 &[],
                 dist_unit,
+                &no_highlights,
             );
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
@@ -301,6 +303,7 @@ impl NexusApp {
                 state.needs_fit = false;
             }
             let dist_unit = sim_distance_unit(&state.sim);
+            let highlights = build_receiver_highlights(&state.messages, &state.expanded_messages);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
@@ -308,6 +311,7 @@ impl NexusApp {
                 &state.selected_node,
                 &state.active_arrows,
                 dist_unit,
+                &highlights,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -423,6 +427,7 @@ impl NexusApp {
             let target_ts = (state.current_timestep + steps).min(max_ts);
             if target_ts > state.current_timestep {
                 // Gather messages and arrows for each stepped timestep
+                let msg_start = state.messages.len();
                 for ts in (state.current_timestep + 1)..=target_ts {
                     gather_messages_at(&state.controller, ts, &state.sim, &mut state.messages);
                     gather_arrows_at(
@@ -434,6 +439,12 @@ impl NexusApp {
                         egui_time,
                     );
                 }
+                // Correlate TX receivers for newly added messages
+                correlate_all_tx_receivers(
+                    &state.controller,
+                    &state.sim,
+                    &mut state.messages[msg_start..],
+                );
                 state.current_timestep = target_ts;
                 state.node_states = state
                     .controller
@@ -558,11 +569,17 @@ impl NexusApp {
                     state.node_states = state
                         .controller
                         .reconstruct_states(state.current_timestep, &state.initial_states);
+                    let msg_start = state.messages.len();
                     gather_messages_at(
                         &state.controller,
                         state.current_timestep,
                         &state.sim,
                         &mut state.messages,
+                    );
+                    correlate_all_tx_receivers(
+                        &state.controller,
+                        &state.sim,
+                        &mut state.messages[msg_start..],
                     );
                     gather_arrows_at(
                         &state.controller,
@@ -601,6 +618,7 @@ impl NexusApp {
                 state.needs_fit = false;
             }
             let dist_unit = sim_distance_unit(&state.sim);
+            let highlights = build_receiver_highlights(&state.messages, &state.expanded_messages);
             let (clicked, hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
@@ -608,6 +626,7 @@ impl NexusApp {
                 &state.selected_node,
                 &state.active_arrows,
                 dist_unit,
+                &highlights,
             );
             if let Some(clicked) = clicked {
                 let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -839,6 +858,27 @@ impl NexusApp {
             }
         }
     }
+}
+
+/// Build receiver highlight map from expanded TX messages.
+/// Returns node_name -> color (green for received, red for dropped).
+fn build_receiver_highlights(
+    messages: &[MessageEntry],
+    expanded_messages: &HashSet<usize>,
+) -> HashMap<String, egui::Color32> {
+    let mut highlights = HashMap::new();
+    for &idx in expanded_messages {
+        if let Some(msg) = messages.get(idx) {
+            for recv in &msg.receivers {
+                let color = match &recv.outcome {
+                    ReceiverOutcome::Received => egui::Color32::from_rgb(100, 200, 100),
+                    ReceiverOutcome::Dropped(_) => egui::Color32::from_rgb(255, 100, 100),
+                };
+                highlights.insert(recv.node.clone(), color);
+            }
+        }
+    }
+    highlights
 }
 
 /// Build NodeState vec from the simulation AST.

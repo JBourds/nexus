@@ -67,7 +67,25 @@ pub fn draw_node(
     );
 }
 
-/// Map charge ratio to a color: green (100%) → yellow (50%) → red (0%).
+/// Draw a colored highlight ring around a node (for receiver expansion).
+pub fn draw_node_highlight(
+    ui: &mut Ui,
+    canvas_rect: Rect,
+    grid: &GridView,
+    node: &NodeState,
+    color: Color32,
+) {
+    let world_pos = Pos2::new(node.x as f32, node.y as f32);
+    let screen_pos = grid.world_to_screen(world_pos, canvas_rect);
+    if !canvas_rect.contains(screen_pos) {
+        return;
+    }
+    let painter = ui.painter_at(canvas_rect);
+    let radius = node_radius(grid.zoom);
+    painter.circle_stroke(screen_pos, radius + 5.0, Stroke::new(2.5, color));
+}
+
+/// Map charge ratio to a color: green (100%) -> yellow (50%) -> red (0%).
 /// Blue if no charge tracking.
 fn charge_color(charge_ratio: Option<f32>) -> Color32 {
     match charge_ratio {
