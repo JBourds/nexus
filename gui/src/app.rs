@@ -210,7 +210,25 @@ impl NexusApp {
                 .default_width(250.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    messages::show_messages(ui, &state.messages, 200);
+                    let msg_action = messages::show_messages(
+                        ui,
+                        &state.messages,
+                        200,
+                        state.event_cursor,
+                        &mut state.expanded_messages,
+                    );
+                    match msg_action {
+                        messages::MessagesAction::SelectNode(name) => {
+                            state.expanded_nodes.clear();
+                            state.expanded_nodes.insert(name.clone());
+                            state.selected_node = Some(name);
+                        }
+                        messages::MessagesAction::JumpToEvent(idx) => {
+                            state.event_cursor = Some(idx);
+                            state.event_stepping = true;
+                        }
+                        messages::MessagesAction::None => {}
+                    }
                 });
         }
 
@@ -221,12 +239,17 @@ impl NexusApp {
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             let mut playing = !state.paused;
             let mut speed = 1.0;
+            let total_records = state.all_records.len();
             let action = timeline::show_timeline(
                 ui,
                 &mut state.current_timestep,
                 total,
                 &mut playing,
                 &mut speed,
+                &mut state.event_stepping,
+                state.event_cursor,
+                total_records,
+                &state.breakpoints,
             );
             if action.toggle_play {
                 state.paused = !state.paused;
@@ -353,6 +376,11 @@ impl NexusApp {
                 channel_subscribers,
                 last_sender: vec![None; num_channels],
                 time_accumulator: 0.0,
+                event_cursor: None,
+                event_stepping: false,
+                breakpoints: Vec::new(),
+                expanded_messages: HashSet::new(),
+                view_mode: ViewMode::default(),
             }));
         }
     }
@@ -429,11 +457,30 @@ impl NexusApp {
                 .default_width(250.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    messages::show_messages(ui, &state.messages, 200);
+                    let msg_action = messages::show_messages(
+                        ui,
+                        &state.messages,
+                        200,
+                        state.event_cursor,
+                        &mut state.expanded_messages,
+                    );
+                    match msg_action {
+                        messages::MessagesAction::SelectNode(name) => {
+                            state.expanded_nodes.clear();
+                            state.expanded_nodes.insert(name.clone());
+                            state.selected_node = Some(name);
+                        }
+                        messages::MessagesAction::JumpToEvent(idx) => {
+                            state.event_cursor = Some(idx);
+                            state.event_stepping = true;
+                        }
+                        messages::MessagesAction::None => {}
+                    }
                 });
         }
 
         // Timeline
+        let total_records = state.controller.total_records();
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             let action = timeline::show_timeline(
                 ui,
@@ -441,12 +488,18 @@ impl NexusApp {
                 state.total_timesteps,
                 &mut state.playing,
                 &mut state.playback_speed,
+                &mut state.event_stepping,
+                state.event_cursor,
+                total_records,
+                &state.breakpoints,
             );
 
             if action.toggle_play {
                 state.playing = !state.playing;
             }
-            if let Some(ts) = action.seek_to {
+
+            // Helper: seek to a timestep (shared by seek_to and event stepping)
+            let seek_to_ts = |state: &mut ReplayState, ts: u64, egui_time: f64| {
                 state.current_timestep = ts;
                 state.playing = false;
                 state.node_states = state
@@ -454,7 +507,7 @@ impl NexusApp {
                     .reconstruct_states(ts, &state.initial_states);
                 state.messages.clear();
                 gather_messages_through(&state.controller, ts, &state.sim, &mut state.messages);
-                // Reset arrow state and show arrows for the seeked-to timestep
+                correlate_all_tx_receivers(&state.controller, &state.sim, &mut state.messages);
                 state.active_arrows.clear();
                 state.last_sender.fill(None);
                 gather_arrows_at(
@@ -465,10 +518,30 @@ impl NexusApp {
                     &mut state.last_sender,
                     egui_time,
                 );
+            };
+
+            if let Some(ts) = action.seek_to {
+                seek_to_ts(state, ts, egui_time);
+                // Snap event cursor to first record at this timestep
+                if state.event_stepping {
+                    state.event_cursor = state.controller.first_record_index_at(ts);
+                }
             }
             if action.step_forward {
                 state.playing = false;
-                if state.current_timestep < state.total_timesteps.saturating_sub(1) {
+                if state.event_stepping {
+                    // Event-level step forward
+                    let next = state.event_cursor.map(|c| c + 1).unwrap_or(0);
+                    if next < total_records {
+                        state.event_cursor = Some(next);
+                        if let Some(ts) = state.controller.timestep_for_record(next) {
+                            if ts != state.current_timestep {
+                                seek_to_ts(state, ts, egui_time);
+                            }
+                            state.current_timestep = ts;
+                        }
+                    }
+                } else if state.current_timestep < state.total_timesteps.saturating_sub(1) {
                     state.current_timestep += 1;
                     state.node_states = state
                         .controller
@@ -491,28 +564,19 @@ impl NexusApp {
             }
             if action.step_backward {
                 state.playing = false;
-                state.current_timestep = state.current_timestep.saturating_sub(1);
-                state.node_states = state
-                    .controller
-                    .reconstruct_states(state.current_timestep, &state.initial_states);
-                state.messages.clear();
-                gather_messages_through(
-                    &state.controller,
-                    state.current_timestep,
-                    &state.sim,
-                    &mut state.messages,
-                );
-                // Reset arrow state and show arrows for the current timestep
-                state.active_arrows.clear();
-                state.last_sender.fill(None);
-                gather_arrows_at(
-                    &state.controller,
-                    state.current_timestep,
-                    &mut state.active_arrows,
-                    &state.channel_subscribers,
-                    &mut state.last_sender,
-                    egui_time,
-                );
+                if state.event_stepping {
+                    // Event-level step backward
+                    if let Some(cursor) = state.event_cursor {
+                        let prev = cursor.saturating_sub(1);
+                        state.event_cursor = Some(prev);
+                        if let Some(ts) = state.controller.timestep_for_record(prev) {
+                            seek_to_ts(state, ts, egui_time);
+                        }
+                    }
+                } else {
+                    state.current_timestep = state.current_timestep.saturating_sub(1);
+                    seek_to_ts(state, state.current_timestep, egui_time);
+                }
             }
         });
 
@@ -597,6 +661,12 @@ impl NexusApp {
                     channel_subscribers,
                     last_sender: vec![None; num_channels],
                     time_dilation: td,
+                    event_cursor: None,
+                    event_stepping: false,
+                    breakpoints: Vec::new(),
+                    expanded_messages: HashSet::new(),
+                    all_records: Vec::new(),
+                    view_mode: ViewMode::default(),
                 }));
             }
             Err(e) => {
@@ -634,6 +704,12 @@ impl NexusApp {
                     channel_subscribers,
                     last_sender: vec![None; num_channels],
                     time_dilation: td,
+                    event_cursor: None,
+                    event_stepping: false,
+                    breakpoints: Vec::new(),
+                    expanded_messages: HashSet::new(),
+                    all_records: Vec::new(),
+                    view_mode: ViewMode::default(),
                 }));
             }
             Err(e) => {
@@ -738,6 +814,11 @@ impl NexusApp {
                         channel_subscribers,
                         last_sender: vec![None; num_channels],
                         time_accumulator: 0.0,
+                        event_cursor: None,
+                        event_stepping: false,
+                        breakpoints: Vec::new(),
+                        expanded_messages: HashSet::new(),
+                        view_mode: ViewMode::default(),
                     }));
                 }
                 Err(e) => {
@@ -847,6 +928,8 @@ fn process_gui_event(
                         channel: ch_name,
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
+                        receivers: Vec::new(),
+                        record_index: None,
                     });
                     // Track last sender for this channel
                     if let Some(slot) = last_sender.get_mut(ch_idx) {
@@ -884,6 +967,8 @@ fn process_gui_event(
                         channel: ch_name,
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
+                        receivers: Vec::new(),
+                        record_index: None,
                     });
                     // Create RX arrow from last known sender
                     if let Some(Some(src_idx)) = last_sender.get(ch_idx) {
@@ -913,6 +998,8 @@ fn process_gui_event(
                         channel: ch_name,
                         data_preview: String::new(),
                         data_raw: Vec::new(),
+                        receivers: Vec::new(),
+                        record_index: None,
                     });
                     // Create drop arrows to all subscribers
                     if let Some(subs) = channel_subscribers.get(ch_idx) {
@@ -1066,8 +1153,12 @@ fn gather_messages_at(
     sim: &config::ast::Simulation,
     messages: &mut Vec<MessageEntry>,
 ) {
-    for record in controller.records_at(ts) {
-        if let Some(entry) = trace_record_to_message(record, sim) {
+    // Find the starting flat index for this timestep
+    let base_idx = controller.first_record_index_at(ts);
+    let records = controller.records_at(ts);
+    for (i, record) in records.iter().enumerate() {
+        let flat_idx = base_idx.map(|b| b + i);
+        if let Some(entry) = trace_record_to_message(record, sim, flat_idx) {
             messages.push(entry);
         }
     }
@@ -1079,10 +1170,57 @@ fn gather_messages_through(
     sim: &config::ast::Simulation,
     messages: &mut Vec<MessageEntry>,
 ) {
-    for record in controller.records_through(ts) {
-        if let Some(entry) = trace_record_to_message(record, sim) {
+    for (i, record) in controller.records_through(ts).iter().enumerate() {
+        if let Some(entry) = trace_record_to_message(record, sim, Some(i)) {
             messages.push(entry);
         }
+    }
+}
+
+/// Correlate TX messages with their corresponding RX/Drop events in replay mode.
+/// For each Sent message, scans the records at that timestep for matching Recv/Dropped events.
+fn correlate_all_tx_receivers(
+    controller: &crate::sim::replay::ReplayController,
+    sim: &config::ast::Simulation,
+    messages: &mut [MessageEntry],
+) {
+    for msg in messages.iter_mut() {
+        if msg.kind != MessageKind::Sent {
+            continue;
+        }
+        let ts = msg.timestep;
+        let ch = &msg.channel;
+        let mut receivers = Vec::new();
+        for record in controller.records_at(ts) {
+            match &record.event {
+                TraceEvent::MessageRecv {
+                    dst_node, channel, ..
+                } => {
+                    let ch_name = channel_name_by_index(sim, *channel as usize);
+                    if &ch_name == ch {
+                        let node_name = node_name_by_index(sim, *dst_node as usize);
+                        receivers.push(ReceiverInfo {
+                            node: node_name,
+                            outcome: ReceiverOutcome::Received,
+                        });
+                    }
+                }
+                TraceEvent::MessageDropped {
+                    channel, reason, ..
+                } => {
+                    let ch_name = channel_name_by_index(sim, *channel as usize);
+                    if &ch_name == ch {
+                        // For drops, src_node is the sender; show all subscribers that didn't receive
+                        receivers.push(ReceiverInfo {
+                            node: msg.src_node.clone(),
+                            outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
+                        });
+                    }
+                }
+                _ => {}
+            }
+        }
+        msg.receivers = receivers;
     }
 }
 
@@ -1161,6 +1299,7 @@ fn gather_arrows_at(
 fn trace_record_to_message(
     record: &trace::format::TraceRecord,
     sim: &config::ast::Simulation,
+    record_index: Option<usize>,
 ) -> Option<MessageEntry> {
     match &record.event {
         TraceEvent::MessageSent {
@@ -1175,6 +1314,8 @@ fn trace_record_to_message(
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: format_data_preview(data),
             data_raw: data.clone(),
+            receivers: Vec::new(),
+            record_index,
         }),
         TraceEvent::MessageRecv {
             dst_node,
@@ -1188,6 +1329,8 @@ fn trace_record_to_message(
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: format_data_preview(data),
             data_raw: data.clone(),
+            receivers: Vec::new(),
+            record_index,
         }),
         TraceEvent::MessageDropped {
             src_node,
@@ -1201,6 +1344,8 @@ fn trace_record_to_message(
             channel: channel_name_by_index(sim, *channel as usize),
             data_preview: String::new(),
             data_raw: Vec::new(),
+            receivers: Vec::new(),
+            record_index,
         }),
         _ => None,
     }

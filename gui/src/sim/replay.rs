@@ -103,6 +103,41 @@ impl ReplayController {
         &self.all_records[..end_idx]
     }
 
+    /// Get a record by flat index into all_records.
+    pub fn record_at_index(&self, idx: usize) -> Option<&TraceRecord> {
+        self.all_records.get(idx)
+    }
+
+    /// Total number of records in the trace.
+    pub fn total_records(&self) -> usize {
+        self.all_records.len()
+    }
+
+    /// Return the timestep of the record at a given index.
+    pub fn timestep_for_record(&self, idx: usize) -> Option<u64> {
+        self.all_records.get(idx).map(|r| r.timestep)
+    }
+
+    /// Binary search for the first record index at or after a given timestep.
+    pub fn first_record_index_at(&self, ts: u64) -> Option<usize> {
+        match self.ts_ranges.binary_search_by_key(&ts, |(t, _)| *t) {
+            Ok(idx) => Some(self.ts_ranges[idx].1.start),
+            Err(idx) => {
+                // ts not found exactly; return start of next timestep if available
+                if idx < self.ts_ranges.len() {
+                    Some(self.ts_ranges[idx].1.start)
+                } else {
+                    None
+                }
+            }
+        }
+    }
+
+    /// Get all records as a slice.
+    pub fn all_records(&self) -> &[TraceRecord] {
+        &self.all_records
+    }
+
     /// Reconstruct node states at a given timestep by replaying
     /// PositionUpdate and EnergyUpdate events. Uses incremental caching.
     pub fn reconstruct_states(&mut self, ts: u64, initial_states: &[NodeState]) -> Vec<NodeState> {

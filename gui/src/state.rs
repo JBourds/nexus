@@ -268,6 +268,18 @@ pub struct LiveSimState {
     pub last_sender: Vec<Option<usize>>,
     /// Shared time dilation value (f64 bits in AtomicU64) for live kernel adjustment.
     pub time_dilation: Arc<AtomicU64>,
+    /// Event-level stepping: index into accumulated events. None = timestep mode.
+    pub event_cursor: Option<usize>,
+    /// Whether event-stepping mode is active.
+    pub event_stepping: bool,
+    /// Breakpoints that pause when matched.
+    pub breakpoints: Vec<Breakpoint>,
+    /// Set of expanded TX message indices for receiver expansion.
+    pub expanded_messages: HashSet<usize>,
+    /// All trace records accumulated during live simulation (for event stepping).
+    pub all_records: Vec<trace::format::TraceRecord>,
+    /// View mode: Grid or Sequence diagram.
+    pub view_mode: ViewMode,
 }
 
 /// State for replay mode.
@@ -300,6 +312,16 @@ pub struct ReplayState {
     pub last_sender: Vec<Option<usize>>,
     /// Fractional timestep accumulator for real-time replay.
     pub time_accumulator: f64,
+    /// Event-level stepping: index into the flat record array. None = timestep mode.
+    pub event_cursor: Option<usize>,
+    /// Whether event-stepping mode is active (vs timestep mode).
+    pub event_stepping: bool,
+    /// Breakpoints that pause playback when matched.
+    pub breakpoints: Vec<Breakpoint>,
+    /// Set of expanded TX message indices (for receiver expansion in messages panel).
+    pub expanded_messages: HashSet<usize>,
+    /// View mode: Grid or Sequence diagram.
+    pub view_mode: ViewMode,
 }
 
 /// Per-node runtime state for visualization.
@@ -333,6 +355,24 @@ pub struct MessageEntry {
     pub data_preview: String,
     /// Raw message bytes for clipboard copy.
     pub data_raw: Vec<u8>,
+    /// For TX messages: correlated receivers (populated by correlate_tx_receivers).
+    pub receivers: Vec<ReceiverInfo>,
+    /// Index of this entry's corresponding record in the flat record array (for event cursor sync).
+    pub record_index: Option<usize>,
+}
+
+/// Information about a receiver of a TX message.
+#[derive(Clone, Debug)]
+pub struct ReceiverInfo {
+    pub node: String,
+    pub outcome: ReceiverOutcome,
+}
+
+/// Whether a node received or dropped a message.
+#[derive(Clone, Debug)]
+pub enum ReceiverOutcome {
+    Received,
+    Dropped(String),
 }
 
 /// Which panels are visible (for collapsible panes).
@@ -372,4 +412,30 @@ pub enum ArrowKind {
     Sent,
     Received,
     Dropped,
+}
+
+/// A breakpoint that pauses playback when its condition is met.
+#[derive(Clone, Debug)]
+pub struct Breakpoint {
+    pub kind: BreakpointKind,
+    pub enabled: bool,
+}
+
+/// What triggers a breakpoint.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BreakpointKind {
+    /// Stop at a specific timestep.
+    Timestep(u64),
+    /// Stop on any event involving this node.
+    NodeEvent(String),
+    /// Stop on any TX/RX on this channel.
+    ChannelActivity(String),
+}
+
+/// Which main view is shown in the central panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ViewMode {
+    #[default]
+    Grid,
+    Sequence,
 }
