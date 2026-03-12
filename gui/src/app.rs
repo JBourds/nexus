@@ -8,7 +8,7 @@ use egui::Context;
 use config::ast::DistanceUnit;
 
 use crate::config_editor;
-use crate::panels::{grid, inspector, messages, timeline, toolbar};
+use crate::panels::{breakpoints, grid, inspector, messages, timeline, toolbar};
 use crate::render::grid::GridView;
 use crate::sim::bridge::GuiEvent;
 use crate::state::*;
@@ -176,6 +176,19 @@ impl NexusApp {
                 .retain(|a| (egui_time - a.start_time) < a.duration as f64);
 
             for event in state.controller.poll_events() {
+                // Check breakpoints on trace events
+                if let GuiEvent::Trace(ref record) = event {
+                    state.all_records.push(record.clone());
+                    if breakpoints::check_breakpoints(
+                        &state.breakpoints,
+                        record.timestep,
+                        &record.event,
+                        &state.sim,
+                    ) {
+                        state.paused = true;
+                        state.controller.set_paused(true);
+                    }
+                }
                 process_gui_event(
                     event,
                     &mut state.current_timestep,
@@ -208,6 +221,15 @@ impl NexusApp {
                     if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
                         state.event_cursor = Some(idx);
                         state.event_stepping = true;
+                    }
+
+                    ui.separator();
+                    let bp_action = breakpoints::show_breakpoints(ui, &mut state.breakpoints);
+                    if let breakpoints::BreakpointsAction::Add(mut bp) = bp_action {
+                        if let BreakpointKind::Timestep(ref mut ts) = bp.kind {
+                            *ts = state.current_timestep;
+                        }
+                        state.breakpoints.push(bp);
                     }
                 });
         }
@@ -428,7 +450,23 @@ impl NexusApp {
             if target_ts > state.current_timestep {
                 // Gather messages and arrows for each stepped timestep
                 let msg_start = state.messages.len();
+                let mut actual_target = target_ts;
                 for ts in (state.current_timestep + 1)..=target_ts {
+                    // Check breakpoints against records at this timestep
+                    let mut hit_breakpoint = false;
+                    if !state.breakpoints.is_empty() {
+                        for record in state.controller.records_at(ts) {
+                            if breakpoints::check_breakpoints(
+                                &state.breakpoints,
+                                ts,
+                                &record.event,
+                                &state.sim,
+                            ) {
+                                hit_breakpoint = true;
+                                break;
+                            }
+                        }
+                    }
                     gather_messages_at(&state.controller, ts, &state.sim, &mut state.messages);
                     gather_arrows_at(
                         &state.controller,
@@ -438,6 +476,11 @@ impl NexusApp {
                         &mut state.last_sender,
                         egui_time,
                     );
+                    if hit_breakpoint {
+                        actual_target = ts;
+                        state.playing = false;
+                        break;
+                    }
                 }
                 // Correlate TX receivers for newly added messages
                 correlate_all_tx_receivers(
@@ -445,7 +488,7 @@ impl NexusApp {
                     &state.sim,
                     &mut state.messages[msg_start..],
                 );
-                state.current_timestep = target_ts;
+                state.current_timestep = actual_target;
                 state.node_states = state
                     .controller
                     .reconstruct_states(state.current_timestep, &state.initial_states);
@@ -470,6 +513,16 @@ impl NexusApp {
                     if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
                         state.event_cursor = Some(idx);
                         state.event_stepping = true;
+                    }
+
+                    ui.separator();
+                    let bp_action = breakpoints::show_breakpoints(ui, &mut state.breakpoints);
+                    if let breakpoints::BreakpointsAction::Add(mut bp) = bp_action {
+                        // Default timestep breakpoint to current timestep
+                        if let BreakpointKind::Timestep(ref mut ts) = bp.kind {
+                            *ts = state.current_timestep;
+                        }
+                        state.breakpoints.push(bp);
                     }
                 });
         }
