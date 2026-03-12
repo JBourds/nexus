@@ -295,10 +295,8 @@ pub struct ReplayState {
     /// Active arrow animations on the grid.
     pub active_arrows: Vec<ArrowAnimation>,
     /// channel_index -> Vec<node_index> for drawing arrows to subscribers.
-    #[allow(dead_code)]
     pub channel_subscribers: Vec<Vec<usize>>,
     /// channel_index -> last sender node_index (for linking RX arrows back to TX).
-    #[allow(dead_code)]
     pub last_sender: Vec<Option<usize>>,
     /// Fractional timestep accumulator for real-time replay.
     pub time_accumulator: f64,

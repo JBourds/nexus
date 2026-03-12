@@ -55,6 +55,31 @@ impl ReplayController {
         &self.reader.header.node_max_nj
     }
 
+    pub fn num_channels(&self) -> usize {
+        self.reader.header.channel_names.len()
+    }
+
+    /// Build channel_index -> Vec<subscriber node_index> by scanning all RX events.
+    /// This is more reliable than using the config's protocol subscriber lists,
+    /// which may not be available when opening a trace file directly.
+    pub fn build_channel_subscribers(&self) -> Vec<Vec<usize>> {
+        let num_channels = self.reader.header.channel_names.len();
+        let mut subs = vec![Vec::new(); num_channels];
+        for record in &self.all_records {
+            if let TraceEvent::MessageRecv {
+                dst_node, channel, ..
+            } = &record.event
+            {
+                let ch_idx = *channel as usize;
+                let node_idx = *dst_node as usize;
+                if ch_idx < num_channels && !subs[ch_idx].contains(&node_idx) {
+                    subs[ch_idx].push(node_idx);
+                }
+            }
+        }
+        subs
+    }
+
     /// Get all records for a specific timestep (binary search).
     pub fn records_at(&self, ts: u64) -> &[TraceRecord] {
         match self.ts_ranges.binary_search_by_key(&ts, |(t, _)| *t) {
