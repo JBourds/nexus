@@ -8,7 +8,7 @@ use egui::Context;
 use config::ast::DistanceUnit;
 
 use crate::config_editor;
-use crate::panels::{breakpoints, grid, inspector, messages, timeline, toolbar};
+use crate::panels::{breakpoints, grid, inspector, messages, sequence, timeline, toolbar};
 use crate::render::grid::GridView;
 use crate::sim::bridge::GuiEvent;
 use crate::state::*;
@@ -48,7 +48,12 @@ impl App for NexusApp {
                 AppMode::Replay(state) => Some(&state.panels),
                 _ => None,
             };
-            let action = toolbar::show_toolbar(ui, &self.mode, sim_finished, panels);
+            let view_mode = match &self.mode {
+                AppMode::LiveSimulation(state) => Some(state.view_mode),
+                AppMode::Replay(state) => Some(state.view_mode),
+                _ => None,
+            };
+            let action = toolbar::show_toolbar(ui, &self.mode, sim_finished, panels, view_mode);
             match action {
                 toolbar::ToolbarAction::GoHome => {
                     self.mode = AppMode::Home;
@@ -88,6 +93,21 @@ impl App for NexusApp {
                     }
                     AppMode::Replay(state) => {
                         state.panels.messages = !state.panels.messages;
+                    }
+                    _ => {}
+                },
+                toolbar::ToolbarAction::ToggleViewMode => match &mut self.mode {
+                    AppMode::LiveSimulation(state) => {
+                        state.view_mode = match state.view_mode {
+                            ViewMode::Grid => ViewMode::Sequence,
+                            ViewMode::Sequence => ViewMode::Grid,
+                        };
+                    }
+                    AppMode::Replay(state) => {
+                        state.view_mode = match state.view_mode {
+                            ViewMode::Grid => ViewMode::Sequence,
+                            ViewMode::Sequence => ViewMode::Grid,
+                        };
                     }
                     _ => {}
                 },
@@ -316,53 +336,79 @@ impl NexusApp {
             }
         });
 
-        // Central grid
+        // Central panel: Grid or Sequence diagram
         egui::CentralPanel::default().show(ctx, |ui| {
-            if state.needs_fit {
-                state
-                    .grid
-                    .fit_to_nodes(&state.node_states, ui.available_size());
-                state.needs_fit = false;
-            }
-            let dist_unit = sim_distance_unit(&state.sim);
-            let highlights = build_receiver_highlights(&state.messages, &state.expanded_messages);
-            let (clicked, hovered) = grid::show_grid_panel(
-                ui,
-                &mut state.grid,
-                &state.node_states,
-                &state.selected_node,
-                &state.active_arrows,
-                dist_unit,
-                &highlights,
-            );
-            if let Some(clicked) = clicked {
-                let already_selected = state.selected_node.as_ref() == Some(&clicked);
-                state.expanded_nodes.clear();
-                if already_selected {
-                    state.selected_node = None;
-                } else {
-                    state.expanded_nodes.insert(clicked.clone());
-                    state.selected_node = Some(clicked);
+            match state.view_mode {
+                ViewMode::Sequence => {
+                    let node_names: Vec<String> =
+                        state.node_states.iter().map(|n| n.name.clone()).collect();
+                    let seq_action = sequence::show_sequence_diagram(
+                        ui,
+                        &state.messages,
+                        &node_names,
+                        state.current_timestep,
+                        state.event_cursor,
+                    );
+                    if let sequence::SequenceAction::JumpToEvent(idx) = seq_action {
+                        state.event_cursor = Some(idx);
+                        state.event_stepping = true;
+                    }
                 }
-            }
-            state.hovered_node = hovered;
-            if let Some(ref name) = state.hovered_node
-                && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
-            {
-                egui::containers::popup::show_tooltip_at_pointer(
-                    ui.ctx(),
-                    egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
-                    ui.id().with("node_tip"),
-                    |ui| {
-                        ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
-                        if n.motion_spec != "none" {
-                            ui.label(format!("Motion: {}", n.motion_spec));
+                ViewMode::Grid => {
+                    if state.needs_fit {
+                        state
+                            .grid
+                            .fit_to_nodes(&state.node_states, ui.available_size());
+                        state.needs_fit = false;
+                    }
+                    let dist_unit = sim_distance_unit(&state.sim);
+                    let highlights =
+                        build_receiver_highlights(&state.messages, &state.expanded_messages);
+                    let (clicked, hovered) = grid::show_grid_panel(
+                        ui,
+                        &mut state.grid,
+                        &state.node_states,
+                        &state.selected_node,
+                        &state.active_arrows,
+                        dist_unit,
+                        &highlights,
+                    );
+                    if let Some(clicked) = clicked {
+                        let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                        state.expanded_nodes.clear();
+                        if already_selected {
+                            state.selected_node = None;
+                        } else {
+                            state.expanded_nodes.insert(clicked.clone());
+                            state.selected_node = Some(clicked);
                         }
-                        if let Some(r) = n.charge_ratio {
-                            ui.label(format!("Charge: {:.0}%", r * 100.0));
-                        }
-                    },
-                );
+                    }
+                    state.hovered_node = hovered;
+                    if let Some(ref name) = state.hovered_node
+                        && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+                    {
+                        egui::containers::popup::show_tooltip_at_pointer(
+                            ui.ctx(),
+                            egui::LayerId::new(
+                                egui::Order::Tooltip,
+                                ui.id().with("node_tip"),
+                            ),
+                            ui.id().with("node_tip"),
+                            |ui| {
+                                ui.label(format!(
+                                    "{} ({:.1}, {:.1}, {:.1})",
+                                    n.name, n.x, n.y, n.z
+                                ));
+                                if n.motion_spec != "none" {
+                                    ui.label(format!("Motion: {}", n.motion_spec));
+                                }
+                                if let Some(r) = n.charge_ratio {
+                                    ui.label(format!("Charge: {:.0}%", r * 100.0));
+                                }
+                            },
+                        );
+                    }
+                }
             }
         });
 
@@ -662,53 +708,79 @@ impl NexusApp {
             }
         });
 
-        // Central grid
+        // Central panel: Grid or Sequence diagram
         egui::CentralPanel::default().show(ctx, |ui| {
-            if state.needs_fit {
-                state
-                    .grid
-                    .fit_to_nodes(&state.node_states, ui.available_size());
-                state.needs_fit = false;
-            }
-            let dist_unit = sim_distance_unit(&state.sim);
-            let highlights = build_receiver_highlights(&state.messages, &state.expanded_messages);
-            let (clicked, hovered) = grid::show_grid_panel(
-                ui,
-                &mut state.grid,
-                &state.node_states,
-                &state.selected_node,
-                &state.active_arrows,
-                dist_unit,
-                &highlights,
-            );
-            if let Some(clicked) = clicked {
-                let already_selected = state.selected_node.as_ref() == Some(&clicked);
-                state.expanded_nodes.clear();
-                if already_selected {
-                    state.selected_node = None;
-                } else {
-                    state.expanded_nodes.insert(clicked.clone());
-                    state.selected_node = Some(clicked);
+            match state.view_mode {
+                ViewMode::Sequence => {
+                    let node_names: Vec<String> =
+                        state.node_states.iter().map(|n| n.name.clone()).collect();
+                    let seq_action = sequence::show_sequence_diagram(
+                        ui,
+                        &state.messages,
+                        &node_names,
+                        state.current_timestep,
+                        state.event_cursor,
+                    );
+                    if let sequence::SequenceAction::JumpToEvent(idx) = seq_action {
+                        state.event_cursor = Some(idx);
+                        state.event_stepping = true;
+                    }
                 }
-            }
-            state.hovered_node = hovered;
-            if let Some(ref name) = state.hovered_node
-                && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
-            {
-                egui::containers::popup::show_tooltip_at_pointer(
-                    ui.ctx(),
-                    egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
-                    ui.id().with("node_tip"),
-                    |ui| {
-                        ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
-                        if n.motion_spec != "none" {
-                            ui.label(format!("Motion: {}", n.motion_spec));
+                ViewMode::Grid => {
+                    if state.needs_fit {
+                        state
+                            .grid
+                            .fit_to_nodes(&state.node_states, ui.available_size());
+                        state.needs_fit = false;
+                    }
+                    let dist_unit = sim_distance_unit(&state.sim);
+                    let highlights =
+                        build_receiver_highlights(&state.messages, &state.expanded_messages);
+                    let (clicked, hovered) = grid::show_grid_panel(
+                        ui,
+                        &mut state.grid,
+                        &state.node_states,
+                        &state.selected_node,
+                        &state.active_arrows,
+                        dist_unit,
+                        &highlights,
+                    );
+                    if let Some(clicked) = clicked {
+                        let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                        state.expanded_nodes.clear();
+                        if already_selected {
+                            state.selected_node = None;
+                        } else {
+                            state.expanded_nodes.insert(clicked.clone());
+                            state.selected_node = Some(clicked);
                         }
-                        if let Some(r) = n.charge_ratio {
-                            ui.label(format!("Charge: {:.0}%", r * 100.0));
-                        }
-                    },
-                );
+                    }
+                    state.hovered_node = hovered;
+                    if let Some(ref name) = state.hovered_node
+                        && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+                    {
+                        egui::containers::popup::show_tooltip_at_pointer(
+                            ui.ctx(),
+                            egui::LayerId::new(
+                                egui::Order::Tooltip,
+                                ui.id().with("node_tip"),
+                            ),
+                            ui.id().with("node_tip"),
+                            |ui| {
+                                ui.label(format!(
+                                    "{} ({:.1}, {:.1}, {:.1})",
+                                    n.name, n.x, n.y, n.z
+                                ));
+                                if n.motion_spec != "none" {
+                                    ui.label(format!("Motion: {}", n.motion_spec));
+                                }
+                                if let Some(r) = n.charge_ratio {
+                                    ui.label(format!("Charge: {:.0}%", r * 100.0));
+                                }
+                            },
+                        );
+                    }
+                }
             }
         });
 

@@ -1,6 +1,6 @@
 use egui::Ui;
 
-use crate::state::{AppMode, PanelVisibility};
+use crate::state::{AppMode, PanelVisibility, ViewMode};
 
 #[derive(Clone, Copy, PartialEq)]
 pub enum ToolbarAction {
@@ -14,6 +14,7 @@ pub enum ToolbarAction {
     RerunSimulation,
     ToggleInspector,
     ToggleMessages,
+    ToggleViewMode,
 }
 
 pub fn show_toolbar(
@@ -21,6 +22,7 @@ pub fn show_toolbar(
     mode: &AppMode,
     sim_finished: bool,
     panels: Option<&PanelVisibility>,
+    view_mode: Option<ViewMode>,
 ) -> ToolbarAction {
     let mut action = ToolbarAction::None;
 
@@ -118,6 +120,22 @@ pub fn show_toolbar(
                     .clicked()
                 {
                     action = ToolbarAction::ToggleMessages;
+                }
+            }
+
+            // View mode toggle (Grid vs Sequence)
+            if let Some(vm) = view_mode {
+                ui.separator();
+                let view_label = match vm {
+                    ViewMode::Grid => "Grid",
+                    ViewMode::Sequence => "Sequence",
+                };
+                if ui
+                    .button(view_label)
+                    .on_hover_text("Toggle between Grid and Sequence diagram view")
+                    .clicked()
+                {
+                    action = ToolbarAction::ToggleViewMode;
                 }
             }
 
