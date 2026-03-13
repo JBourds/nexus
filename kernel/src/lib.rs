@@ -195,9 +195,22 @@ impl Kernel {
             Event::UpdateResources,
         );
 
+        // Emit timestep updates at a capped rate (~10 FPS for most configurations).
+        // For a 1 us timestep, 10000 steps = 10 ms wall-clock, giving ~100 FPS of updates
+        // which the GUI can batch. For ms/s timesteps, every step is fine.
+        let ts_update_interval: u64 = match timestep.unit {
+            ast::TimeUnit::Nanoseconds => 10_000_000,
+            ast::TimeUnit::Microseconds => 10_000,
+            ast::TimeUnit::Milliseconds => 10,
+            ast::TimeUnit::Seconds | ast::TimeUnit::Minutes | ast::TimeUnit::Hours => 1,
+        };
+
         'outer: for timestep in 0..self.timestep.count.into() {
             if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                 break;
+            }
+            if timestep % ts_update_interval == 0 {
+                tracing::event!(target: "timestep", tracing::Level::TRACE, timestep = timestep);
             }
             // Spin-wait while paused, checking abort each iteration.
             while pause.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {

@@ -193,6 +193,15 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
             return;
         }
 
+        if target == "timestep" {
+            let mut visitor = BridgeVisitor::default();
+            event.record(&mut visitor);
+            if let Some(tx) = self.sinks.gui_tx.lock().unwrap().as_ref() {
+                let _ = tx.send(GuiEvent::TimestepAdvanced(visitor.timestep));
+            }
+            return;
+        }
+
         if !matches!(target, "tx" | "rx") {
             return;
         }

@@ -36,13 +36,13 @@ fn ensure_global_subscriber() -> SimSinks {
         let sim_filter = filter::filter_fn(|metadata| {
             matches!(
                 metadata.target(),
-                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion" | "timestep"
             )
         });
         let fmt_filter = filter::filter_fn(|metadata| {
             !matches!(
                 metadata.target(),
-                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion" | "timestep"
             )
         });
 
