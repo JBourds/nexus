@@ -27,9 +27,6 @@ pub fn show_messages(
     let mut action = MessagesAction::None;
 
     egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
-        ui.heading("Messages");
-        ui.separator();
-
         if messages.is_empty() {
             ui.label("No messages yet");
             return;

@@ -274,10 +274,10 @@ impl NexusApp {
             }
         }
 
-        // Left panel: inspector + breakpoints (collapsible sections)
+        // Left panel: inspector + messages (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
-                .default_width(200.0)
+                .default_width(220.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -299,67 +299,67 @@ impl NexusApp {
                                 }
                             });
 
-                        ui.separator();
+                        if state.panels.messages {
+                            ui.separator();
 
-                        egui::CollapsingHeader::new("Debugger")
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                let mut node_names: Vec<_> =
-                                    state.sim.nodes.keys().cloned().collect();
-                                node_names.sort();
-                                let mut channel_names: Vec<_> =
-                                    state.sim.channels.keys().cloned().collect();
-                                channel_names.sort();
-                                let bp_action = breakpoints::show_breakpoints(
-                                    ui,
-                                    &mut state.breakpoints,
-                                    Some(&mut state.run_until),
-                                    state.current_timestep,
-                                    &node_names,
-                                    &channel_names,
-                                    &mut state.bp_input,
-                                );
-                                match bp_action {
-                                    breakpoints::BreakpointsAction::Add(bp) => {
-                                        state.breakpoints.push(bp);
+                            egui::CollapsingHeader::new("Messages")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    let msg_action = messages::show_messages(
+                                        ui,
+                                        &state.messages,
+                                        200,
+                                        state.event_cursor,
+                                        &mut state.expanded_messages,
+                                    );
+                                    match msg_action {
+                                        messages::MessagesAction::SelectNode(name) => {
+                                            state.expanded_nodes.clear();
+                                            state.expanded_nodes.insert(name.clone());
+                                            state.selected_node = Some(name);
+                                        }
+                                        messages::MessagesAction::JumpToEvent(idx) => {
+                                            state.event_cursor = Some(idx);
+                                            state.event_stepping = true;
+                                        }
+                                        messages::MessagesAction::None => {}
                                     }
-                                    breakpoints::BreakpointsAction::RunUntil(kind) => {
-                                        state.run_until = Some(kind);
-                                    }
-                                    breakpoints::BreakpointsAction::None => {}
-                                }
-                            });
+                                });
+                        }
                     });
                 });
         }
 
-        // Messages panel (only rendered when visible)
-        if state.panels.messages {
-            egui::SidePanel::right("messages")
-                .default_width(250.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    let msg_action = messages::show_messages(
+        // Right panel: debugger (breakpoints + run-until)
+        egui::SidePanel::right("debugger")
+            .default_width(180.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
+                    node_names.sort();
+                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
+                    channel_names.sort();
+                    let bp_action = breakpoints::show_breakpoints(
                         ui,
-                        &state.messages,
-                        200,
-                        state.event_cursor,
-                        &mut state.expanded_messages,
+                        &mut state.breakpoints,
+                        Some(&mut state.run_until),
+                        state.current_timestep,
+                        &node_names,
+                        &channel_names,
+                        &mut state.bp_input,
                     );
-                    match msg_action {
-                        messages::MessagesAction::SelectNode(name) => {
-                            state.expanded_nodes.clear();
-                            state.expanded_nodes.insert(name.clone());
-                            state.selected_node = Some(name);
+                    match bp_action {
+                        breakpoints::BreakpointsAction::Add(bp) => {
+                            state.breakpoints.push(bp);
                         }
-                        messages::MessagesAction::JumpToEvent(idx) => {
-                            state.event_cursor = Some(idx);
-                            state.event_stepping = true;
+                        breakpoints::BreakpointsAction::RunUntil(kind) => {
+                            state.run_until = Some(kind);
                         }
-                        messages::MessagesAction::None => {}
+                        breakpoints::BreakpointsAction::None => {}
                     }
                 });
-        }
+            });
 
         // Timeline at bottom
         let total = state.sim.params.timestep.count.get();
@@ -648,10 +648,10 @@ impl NexusApp {
             }
         }
 
-        // Left panel: inspector + debugger (collapsible sections)
+        // Left panel: inspector + messages (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
-                .default_width(200.0)
+                .default_width(220.0)
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -673,67 +673,67 @@ impl NexusApp {
                                 }
                             });
 
-                        ui.separator();
+                        if state.panels.messages {
+                            ui.separator();
 
-                        egui::CollapsingHeader::new("Debugger")
-                            .default_open(true)
-                            .show(ui, |ui| {
-                                let mut node_names: Vec<_> =
-                                    state.sim.nodes.keys().cloned().collect();
-                                node_names.sort();
-                                let mut channel_names: Vec<_> =
-                                    state.sim.channels.keys().cloned().collect();
-                                channel_names.sort();
-                                let bp_action = breakpoints::show_breakpoints(
-                                    ui,
-                                    &mut state.breakpoints,
-                                    Some(&mut state.run_until),
-                                    state.current_timestep,
-                                    &node_names,
-                                    &channel_names,
-                                    &mut state.bp_input,
-                                );
-                                match bp_action {
-                                    breakpoints::BreakpointsAction::Add(bp) => {
-                                        state.breakpoints.push(bp);
+                            egui::CollapsingHeader::new("Messages")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    let msg_action = messages::show_messages(
+                                        ui,
+                                        &state.messages,
+                                        200,
+                                        state.event_cursor,
+                                        &mut state.expanded_messages,
+                                    );
+                                    match msg_action {
+                                        messages::MessagesAction::SelectNode(name) => {
+                                            state.expanded_nodes.clear();
+                                            state.expanded_nodes.insert(name.clone());
+                                            state.selected_node = Some(name);
+                                        }
+                                        messages::MessagesAction::JumpToEvent(idx) => {
+                                            state.event_cursor = Some(idx);
+                                            state.event_stepping = true;
+                                        }
+                                        messages::MessagesAction::None => {}
                                     }
-                                    breakpoints::BreakpointsAction::RunUntil(kind) => {
-                                        state.run_until = Some(kind);
-                                    }
-                                    breakpoints::BreakpointsAction::None => {}
-                                }
-                            });
+                                });
+                        }
                     });
                 });
         }
 
-        // Messages panel (only rendered when visible)
-        if state.panels.messages {
-            egui::SidePanel::right("messages")
-                .default_width(250.0)
-                .resizable(true)
-                .show(ctx, |ui| {
-                    let msg_action = messages::show_messages(
+        // Right panel: debugger (breakpoints + run-until)
+        egui::SidePanel::right("debugger")
+            .default_width(180.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| {
+                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
+                    node_names.sort();
+                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
+                    channel_names.sort();
+                    let bp_action = breakpoints::show_breakpoints(
                         ui,
-                        &state.messages,
-                        200,
-                        state.event_cursor,
-                        &mut state.expanded_messages,
+                        &mut state.breakpoints,
+                        Some(&mut state.run_until),
+                        state.current_timestep,
+                        &node_names,
+                        &channel_names,
+                        &mut state.bp_input,
                     );
-                    match msg_action {
-                        messages::MessagesAction::SelectNode(name) => {
-                            state.expanded_nodes.clear();
-                            state.expanded_nodes.insert(name.clone());
-                            state.selected_node = Some(name);
+                    match bp_action {
+                        breakpoints::BreakpointsAction::Add(bp) => {
+                            state.breakpoints.push(bp);
                         }
-                        messages::MessagesAction::JumpToEvent(idx) => {
-                            state.event_cursor = Some(idx);
-                            state.event_stepping = true;
+                        breakpoints::BreakpointsAction::RunUntil(kind) => {
+                            state.run_until = Some(kind);
                         }
-                        messages::MessagesAction::None => {}
+                        breakpoints::BreakpointsAction::None => {}
                     }
                 });
-        }
+            });
 
         // Timeline
         let total_records = state.controller.total_records();
