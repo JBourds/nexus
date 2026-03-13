@@ -294,6 +294,12 @@ pub struct LiveSimState {
     pub bp_input: BreakpointInput,
     /// Zoom level for the sequence diagram (1.0 = default).
     pub seq_zoom: f32,
+    /// Build/run lifecycle status.
+    pub build_status: SimBuildStatus,
+    /// Captured process outputs (populated when simulation finishes).
+    pub process_outputs: Vec<ProcessOutput>,
+    /// Which node's output is currently being viewed (for the output panel).
+    pub viewing_output: Option<String>,
 }
 
 /// State for replay mode.
@@ -472,4 +478,22 @@ pub enum ViewMode {
     #[default]
     Grid,
     Sequence,
+}
+
+/// Build/run lifecycle status for a live simulation.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SimBuildStatus {
+    #[default]
+    Building,
+    Running,
+    Complete,
+}
+
+/// Captured stdout/stderr from a node's protocol process.
+#[derive(Clone, Debug)]
+pub struct ProcessOutput {
+    pub node: String,
+    pub protocol: String,
+    pub stdout: String,
+    pub stderr: String,
 }

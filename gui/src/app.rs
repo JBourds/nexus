@@ -211,93 +211,124 @@ impl NexusApp {
             return;
         };
 
-        // Process events from simulation (only when not paused)
+        // Process events from simulation
         let egui_time = ctx.input(|i| i.time);
-        if !state.paused {
-            // Expire finished arrow animations (unless frozen)
-            if !state.arrows_frozen {
-                state
-                    .active_arrows
-                    .retain(|a| (egui_time - a.start_time) < a.duration as f64);
-            } else {
-                // Unfreeze when simulation resumes
-                state.arrows_frozen = false;
+
+        // Always drain lifecycle events (build status, process output)
+        // even when paused, so the UI stays responsive.
+        while let Ok(event) = state.controller.rx.try_recv() {
+            match &event {
+                GuiEvent::BuildStarted => {
+                    state.build_status = SimBuildStatus::Building;
+                    continue;
+                }
+                GuiEvent::BuildComplete => {
+                    state.build_status = SimBuildStatus::Running;
+                    continue;
+                }
+                GuiEvent::ProcessOutput {
+                    node,
+                    protocol,
+                    stdout,
+                    stderr,
+                } => {
+                    state.process_outputs.push(ProcessOutput {
+                        node: node.clone(),
+                        protocol: protocol.clone(),
+                        stdout: stdout.clone(),
+                        stderr: stderr.clone(),
+                    });
+                    continue;
+                }
+                _ => {}
             }
 
-            while let Ok(event) = state.controller.rx.try_recv() {
-                let mut should_pause = false;
-                match &event {
-                    GuiEvent::Trace(record) => {
-                        state.all_records.push(record.clone());
-                        // Check event-based breakpoints
+            // For simulation data events, only process when not paused
+            if state.paused {
+                // Re-queue by breaking; remaining events stay buffered
+                // We can't re-queue, so we must process but skip breakpoint checks
+                // Actually, just break to leave the rest in the channel
+                break;
+            }
+
+            let mut should_pause = false;
+            match &event {
+                GuiEvent::Trace(record) => {
+                    state.all_records.push(record.clone());
+                    if breakpoints::check_breakpoints(
+                        &state.breakpoints,
+                        record.timestep,
+                        &record.event,
+                        &state.sim,
+                    ) {
+                        should_pause = true;
+                    }
+                    if let Some(ref kind) = state.run_until {
+                        let run_bp = Breakpoint {
+                            kind: kind.clone(),
+                            enabled: true,
+                        };
                         if breakpoints::check_breakpoints(
-                            &state.breakpoints,
+                            &[run_bp],
                             record.timestep,
                             &record.event,
                             &state.sim,
                         ) {
                             should_pause = true;
-                        }
-                        // Check run-until (one-shot)
-                        if let Some(ref kind) = state.run_until {
-                            let run_bp = Breakpoint {
-                                kind: kind.clone(),
-                                enabled: true,
-                            };
-                            if breakpoints::check_breakpoints(
-                                &[run_bp],
-                                record.timestep,
-                                &record.event,
-                                &state.sim,
-                            ) {
-                                should_pause = true;
-                                state.arrows_frozen = true;
-                                state.run_until = None;
-                            }
+                            state.arrows_frozen = true;
+                            state.run_until = None;
                         }
                     }
-                    GuiEvent::TimestepAdvanced(ts) => {
-                        // Check timestep breakpoints in the range
-                        // (current_timestep, reported_ts] since updates are downsampled
-                        let prev = state.current_timestep;
-                        for bp in &state.breakpoints {
-                            if !bp.enabled {
-                                continue;
-                            }
-                            if let BreakpointKind::Timestep(bp_ts) = &bp.kind
-                                && *bp_ts > prev && *bp_ts <= *ts {
-                                    should_pause = true;
-                                    break;
-                                }
+                }
+                GuiEvent::TimestepAdvanced(ts) => {
+                    let prev = state.current_timestep;
+                    for bp in &state.breakpoints {
+                        if !bp.enabled {
+                            continue;
                         }
-                        // Check run-until timestep (one-shot)
-                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until
-                            && *target > prev && *target <= *ts {
-                                should_pause = true;
-                                state.arrows_frozen = true;
-                                state.run_until = None;
-                            }
+                        if let BreakpointKind::Timestep(bp_ts) = &bp.kind
+                            && *bp_ts > prev && *bp_ts <= *ts
+                        {
+                            should_pause = true;
+                            break;
+                        }
                     }
-                    _ => {}
+                    if let Some(BreakpointKind::Timestep(target)) = &state.run_until
+                        && *target > prev && *target <= *ts
+                    {
+                        should_pause = true;
+                        state.arrows_frozen = true;
+                        state.run_until = None;
+                    }
                 }
-                // Process the event, then stop if breakpoint hit
-                process_gui_event(
-                    event,
-                    &mut state.current_timestep,
-                    &mut state.messages,
-                    &mut state.node_states,
-                    &state.sim,
-                    &mut state.active_arrows,
-                    &state.channel_subscribers,
-                    &mut state.last_sender,
-                    egui_time,
-                );
-                if should_pause {
-                    state.paused = true;
-                    state.controller.set_paused(true);
-                    break;
-                }
+                _ => {}
             }
+            process_gui_event(
+                event,
+                &mut state.current_timestep,
+                &mut state.messages,
+                &mut state.node_states,
+                &state.sim,
+                &mut state.active_arrows,
+                &state.channel_subscribers,
+                &mut state.last_sender,
+                egui_time,
+            );
+            if should_pause {
+                state.paused = true;
+                state.controller.set_paused(true);
+                break;
+            }
+        }
+
+        // Expire finished arrow animations (unless frozen)
+        if !state.arrows_frozen {
+            state
+                .active_arrows
+                .retain(|a| (egui_time - a.start_time) < a.duration as f64);
+        } else if !state.paused {
+            // Unfreeze when simulation resumes
+            state.arrows_frozen = false;
         }
 
         // Left panel: inspector + messages (collapsible sections)
@@ -396,6 +427,7 @@ impl NexusApp {
         if finished && !state.paused {
             state.paused = true;
             state.current_timestep = total;
+            state.build_status = SimBuildStatus::Complete;
         }
         let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
@@ -427,13 +459,23 @@ impl NexusApp {
                 state.paused = !state.paused;
                 state.controller.set_paused(state.paused);
             }
-            if finished {
-                ui.horizontal(|ui| {
-                    ui.label("Simulation complete.");
-                    if ui.button("View Replay").clicked() {
-                        view_replay = true;
-                    }
-                });
+            // Build/run status indicator
+            match state.build_status {
+                SimBuildStatus::Building => {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label("Building...");
+                    });
+                }
+                SimBuildStatus::Running if !finished => {}
+                SimBuildStatus::Running | SimBuildStatus::Complete => {
+                    ui.horizontal(|ui| {
+                        ui.label("Simulation complete.");
+                        if ui.button("View Replay").clicked() {
+                            view_replay = true;
+                        }
+                    });
+                }
             }
         });
 
@@ -508,6 +550,76 @@ impl NexusApp {
                 }
             }
         });
+
+        // Process output window (shown when a node is selected and outputs are available)
+        if !state.process_outputs.is_empty() {
+            let mut open = state.viewing_output.is_some();
+            if let Some(ref node_name) = state.viewing_output.clone() {
+                egui::Window::new(format!("Output: {node_name}"))
+                    .open(&mut open)
+                    .default_width(500.0)
+                    .default_height(300.0)
+                    .show(ctx, |ui| {
+                        let outputs: Vec<_> = state
+                            .process_outputs
+                            .iter()
+                            .filter(|o| o.node == *node_name)
+                            .collect();
+                        if outputs.is_empty() {
+                            ui.label("No output captured for this node.");
+                        } else {
+                            for output in &outputs {
+                                ui.collapsing(&output.protocol, |ui| {
+                                    if !output.stdout.is_empty() {
+                                        ui.label("stdout:");
+                                        egui::ScrollArea::vertical()
+                                            .max_height(200.0)
+                                            .id_salt(format!("stdout_{}_{}", node_name, output.protocol))
+                                            .show(ui, |ui| {
+                                                ui.add(
+                                                    egui::TextEdit::multiline(
+                                                        &mut output.stdout.as_str(),
+                                                    )
+                                                    .code_editor()
+                                                    .desired_width(f32::INFINITY),
+                                                );
+                                            });
+                                    }
+                                    if !output.stderr.is_empty() {
+                                        ui.label("stderr:");
+                                        egui::ScrollArea::vertical()
+                                            .max_height(200.0)
+                                            .id_salt(format!("stderr_{}_{}", node_name, output.protocol))
+                                            .show(ui, |ui| {
+                                                ui.add(
+                                                    egui::TextEdit::multiline(
+                                                        &mut output.stderr.as_str(),
+                                                    )
+                                                    .code_editor()
+                                                    .desired_width(f32::INFINITY),
+                                                );
+                                            });
+                                    }
+                                });
+                            }
+                        }
+                    });
+                if !open {
+                    state.viewing_output = None;
+                }
+            }
+        }
+
+        // Show "View Output" button in inspector when simulation is finished
+        if finished && !state.process_outputs.is_empty() {
+            if let Some(ref selected) = state.selected_node {
+                if state.process_outputs.iter().any(|o| o.node == *selected)
+                    && state.viewing_output.as_ref() != Some(selected)
+                {
+                    state.viewing_output = Some(selected.clone());
+                }
+            }
+        }
 
         // Keep requesting repaints during live sim, during active animations,
         // and one extra frame after completion for remaining buffered events.
@@ -989,6 +1101,9 @@ impl NexusApp {
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
                     seq_zoom: SEQ_ZOOM_DEFAULT,
+                    build_status: SimBuildStatus::Building,
+                    process_outputs: Vec::new(),
+                    viewing_output: None,
                 }));
             }
             Err(e) => {
@@ -1036,6 +1151,9 @@ impl NexusApp {
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
                     seq_zoom: SEQ_ZOOM_DEFAULT,
+                    build_status: SimBuildStatus::Building,
+                    process_outputs: Vec::new(),
+                    viewing_output: None,
                 }));
             }
             Err(e) => {
@@ -1442,7 +1560,11 @@ fn process_gui_event(
         GuiEvent::TimestepAdvanced(ts) => {
             *current_timestep = ts;
         }
-        GuiEvent::SimulationComplete | GuiEvent::SimulationError(_) => {}
+        GuiEvent::SimulationComplete
+        | GuiEvent::SimulationError(_)
+        | GuiEvent::BuildStarted
+        | GuiEvent::BuildComplete
+        | GuiEvent::ProcessOutput { .. } => {}
     }
 }
 

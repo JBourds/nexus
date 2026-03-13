@@ -12,10 +12,21 @@ use trace::writer::TraceWriter;
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum GuiEvent {
+    /// Protocol binaries are being compiled.
+    BuildStarted,
+    /// Protocol binaries compiled successfully.
+    BuildComplete,
     Trace(TraceRecord),
     TimestepAdvanced(u64),
     SimulationComplete,
     SimulationError(String),
+    /// Captured stdout/stderr from a finished node process.
+    ProcessOutput {
+        node: String,
+        protocol: String,
+        stdout: String,
+        stderr: String,
+    },
 }
 
 /// Shared, swappable sinks for the simulation tracing layer.

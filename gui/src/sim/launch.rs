@@ -162,21 +162,24 @@ fn run_simulation(
         TraceWriter::create(&trace_path, &header).context("failed to create trace writer")?;
 
     // Install sinks for this simulation run.
-    sinks.install(gui_tx, writer);
+    sinks.install(gui_tx.clone(), writer);
 
-    run_inner(sim, fs_root, abort, pause, time_dilation)
+    run_inner(sim, fs_root, gui_tx, abort, pause, time_dilation)
 }
 
 fn run_inner(
     sim: ast::Simulation,
     fs_root: Option<PathBuf>,
+    gui_tx: Sender<GuiEvent>,
     abort: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     time_dilation: Arc<AtomicU64>,
 ) -> Result<()> {
     let _ = ctrlc::set_handler(|| {});
 
+    let _ = gui_tx.send(GuiEvent::BuildStarted);
     runner::build(&sim)?;
+    let _ = gui_tx.send(GuiEvent::BuildComplete);
     let runc = runner::run(&sim)?;
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
@@ -199,9 +202,27 @@ fn run_inner(
         .pause_flag(pause)
         .time_dilation(time_dilation)
         .build()?;
-    let _protocol_handles = kernel.run(RunCmd::Simulate {
+    let protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;
+
+    // Collect stdout/stderr from finished processes
+    for handle in protocol_handles {
+        let node = handle.node.clone();
+        let protocol = handle.protocol.clone();
+        if let Ok(Some(summary)) = handle.finish() {
+            let stdout = String::from_utf8_lossy(&summary.output.stdout).to_string();
+            let stderr = String::from_utf8_lossy(&summary.output.stderr).to_string();
+            if !stdout.is_empty() || !stderr.is_empty() {
+                let _ = gui_tx.send(GuiEvent::ProcessOutput {
+                    node,
+                    protocol,
+                    stdout,
+                    stderr,
+                });
+            }
+        }
+    }
 
     drop(sess);
     Ok(())
