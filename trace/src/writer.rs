@@ -1,10 +1,14 @@
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
+use std::time::Instant;
 
 use bincode::{config, encode_into_std_write};
 
 use crate::format::{MAGIC, TraceHeader, TraceRecord, VERSION};
+
+/// How often to flush buffered data to disk.
+const FLUSH_INTERVAL: std::time::Duration = std::time::Duration::from_secs(1);
 
 /// Writes trace records to a `.nxs` file with an accompanying `.nxs.idx` index.
 ///
@@ -18,6 +22,7 @@ pub struct TraceWriter {
     idx_writer: BufWriter<File>,
     last_indexed_ts: Option<u64>,
     byte_offset: u64,
+    last_flush: Instant,
 }
 
 impl TraceWriter {
@@ -46,12 +51,20 @@ impl TraceWriter {
             idx_writer,
             last_indexed_ts: None,
             byte_offset,
+            last_flush: Instant::now(),
         })
     }
 
     pub fn write_record(&mut self, record: &TraceRecord) -> std::io::Result<()> {
         // Write index entry at timestep boundaries
         if self.last_indexed_ts.is_none_or(|ts| ts != record.timestep) {
+            // Periodically flush so data survives premature exit.
+            // Only flush at timestep boundaries to keep the trace and index
+            // consistent with each other.
+            if self.last_indexed_ts.is_some() && self.last_flush.elapsed() >= FLUSH_INTERVAL {
+                self.flush()?;
+                self.last_flush = Instant::now();
+            }
             self.last_indexed_ts = Some(record.timestep);
             self.idx_writer.write_all(&record.timestep.to_le_bytes())?;
             self.idx_writer.write_all(&self.byte_offset.to_le_bytes())?;
