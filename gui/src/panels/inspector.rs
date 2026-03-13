@@ -242,21 +242,61 @@ fn show_node_events(
                         let frame = if is_current {
                             egui::Frame::NONE
                                 .fill(egui::Color32::from_rgba_premultiplied(255, 255, 100, 30))
-                                .inner_margin(1.0)
+                                .inner_margin(2.0)
                                 .corner_radius(2.0)
                         } else {
-                            egui::Frame::NONE
+                            egui::Frame::NONE.inner_margin(2.0)
                         };
 
                         frame.show(ui, |ui| {
-                            let resp = ui.horizontal(|ui| {
-                                ui.colored_label(color, format!("[{}]", icon));
-                                ui.label(
-                                    egui::RichText::new(format!("t={}", msg.timestep)).small(),
-                                );
-                                ui.label(
-                                    egui::RichText::new(&msg.channel).small(),
-                                );
+                            ui.set_min_width(ui.available_width());
+                            let resp = ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(color, format!("[{icon}]"));
+                                    ui.label(
+                                        egui::RichText::new(format!("t={}", msg.timestep))
+                                            .small(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&msg.channel)
+                                            .small()
+                                            .color(egui::Color32::from_gray(160)),
+                                    );
+                                });
+                                // Show sender/receiver info on the second line
+                                match &msg.kind {
+                                    MessageKind::Sent => {
+                                        // For TX: show data preview if available
+                                        if !msg.data_preview.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new(&msg.data_preview)
+                                                    .small()
+                                                    .color(egui::Color32::from_gray(140)),
+                                            );
+                                        }
+                                    }
+                                    MessageKind::Received => {
+                                        if let Some(sender) = &msg.dst_node {
+                                            ui.label(
+                                                egui::RichText::new(format!("from: {sender}"))
+                                                    .small()
+                                                    .color(egui::Color32::from_rgb(100, 150, 255)),
+                                            );
+                                        }
+                                    }
+                                    MessageKind::Dropped(reason) => {
+                                        let mut parts = Vec::new();
+                                        if let Some(sender) = &msg.dst_node {
+                                            parts.push(format!("from: {sender}"));
+                                        }
+                                        parts.push(reason.clone());
+                                        ui.label(
+                                            egui::RichText::new(parts.join(" - "))
+                                                .small()
+                                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                                        );
+                                    }
+                                }
                             });
                             // Click to jump to this event
                             if resp.response.clicked() {

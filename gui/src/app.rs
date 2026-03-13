@@ -1282,11 +1282,16 @@ fn process_gui_event(
                     let ch_idx = *channel as usize;
                     let dst_name = node_name_by_index(sim, dst_idx);
                     let ch_name = channel_name_by_index(sim, ch_idx);
+                    // Look up who sent on this channel
+                    let sender_name = last_sender
+                        .get(ch_idx)
+                        .and_then(|s| s.as_ref())
+                        .map(|&idx| node_name_by_index(sim, idx));
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Received,
                         src_node: dst_name,
-                        dst_node: None,
+                        dst_node: sender_name,
                         channel: ch_name,
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
@@ -1313,11 +1318,15 @@ fn process_gui_event(
                     let ch_idx = *channel as usize;
                     let src_name = node_name_by_index(sim, src_idx);
                     let ch_name = channel_name_by_index(sim, ch_idx);
+                    let sender_name = last_sender
+                        .get(ch_idx)
+                        .and_then(|s| s.as_ref())
+                        .map(|&idx| node_name_by_index(sim, idx));
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Dropped(format!("{reason:?}")),
                         src_node: src_name,
-                        dst_node: None,
+                        dst_node: sender_name,
                         channel: ch_name,
                         data_preview: String::new(),
                         data_raw: Vec::new(),
@@ -1502,48 +1511,70 @@ fn gather_messages_through(
 
 /// Correlate TX messages with their corresponding RX/Drop events in replay mode.
 /// For each Sent message, scans the records at that timestep for matching Recv/Dropped events.
+/// Also populates `dst_node` on RX/Drop entries with the sender's name from the matching TX.
 fn correlate_all_tx_receivers(
     controller: &crate::sim::replay::ReplayController,
     sim: &config::ast::Simulation,
     messages: &mut [MessageEntry],
 ) {
-    for msg in messages.iter_mut() {
-        if msg.kind != MessageKind::Sent {
-            continue;
+    // First pass: build a map of (timestep, channel) -> sender name from TX entries
+    let mut tx_senders: Vec<(u64, String, String)> = Vec::new(); // (ts, channel, sender)
+    for msg in messages.iter() {
+        if msg.kind == MessageKind::Sent {
+            tx_senders.push((msg.timestep, msg.channel.clone(), msg.src_node.clone()));
         }
-        let ts = msg.timestep;
-        let ch = &msg.channel;
-        let mut receivers = Vec::new();
-        for record in controller.records_at(ts) {
-            match &record.event {
-                TraceEvent::MessageRecv {
-                    dst_node, channel, ..
-                } => {
-                    let ch_name = channel_name_by_index(sim, *channel as usize);
-                    if &ch_name == ch {
-                        let node_name = node_name_by_index(sim, *dst_node as usize);
-                        receivers.push(ReceiverInfo {
-                            node: node_name,
-                            outcome: ReceiverOutcome::Received,
-                        });
+    }
+
+    for msg in messages.iter_mut() {
+        match &msg.kind {
+            MessageKind::Sent => {
+                // Populate receivers on TX entries
+                let ts = msg.timestep;
+                let ch = &msg.channel;
+                let mut receivers = Vec::new();
+                for record in controller.records_at(ts) {
+                    match &record.event {
+                        TraceEvent::MessageRecv {
+                            dst_node, channel, ..
+                        } => {
+                            let ch_name = channel_name_by_index(sim, *channel as usize);
+                            if &ch_name == ch {
+                                let node_name =
+                                    node_name_by_index(sim, *dst_node as usize);
+                                receivers.push(ReceiverInfo {
+                                    node: node_name,
+                                    outcome: ReceiverOutcome::Received,
+                                });
+                            }
+                        }
+                        TraceEvent::MessageDropped {
+                            channel, reason, ..
+                        } => {
+                            let ch_name = channel_name_by_index(sim, *channel as usize);
+                            if &ch_name == ch {
+                                receivers.push(ReceiverInfo {
+                                    node: msg.src_node.clone(),
+                                    outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
+                                });
+                            }
+                        }
+                        _ => {}
                     }
                 }
-                TraceEvent::MessageDropped {
-                    channel, reason, ..
-                } => {
-                    let ch_name = channel_name_by_index(sim, *channel as usize);
-                    if &ch_name == ch {
-                        // For drops, src_node is the sender; show all subscribers that didn't receive
-                        receivers.push(ReceiverInfo {
-                            node: msg.src_node.clone(),
-                            outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
-                        });
+                msg.receivers = receivers;
+            }
+            MessageKind::Received | MessageKind::Dropped(_) => {
+                // Populate dst_node (sender) on RX/Drop entries from matching TX
+                if msg.dst_node.is_none() {
+                    for (ts, ch, sender) in &tx_senders {
+                        if *ts == msg.timestep && ch == &msg.channel {
+                            msg.dst_node = Some(sender.clone());
+                            break;
+                        }
                     }
                 }
-                _ => {}
             }
         }
-        msg.receivers = receivers;
     }
 }
 
