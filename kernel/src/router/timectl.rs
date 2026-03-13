@@ -28,11 +28,11 @@ impl RoutingServer {
         };
         // Updating time requires updating the node's "start time" based on the
         // specified time and time elapsed
-        let time_from_epoch = to_units(val);
-        let node_start = &self.channels.nodes[node_index].start;
-        let elapsed = to_units(self.ts_config.time_from(self.timestep, unit, node_start));
+        let new_time = to_units(val);
+        let elapsed = to_units(self.ts_config.elapsed(self.timestep, unit));
+        let new_start = new_time.saturating_sub(elapsed);
         self.channels.nodes[node_index].start = SystemTime::UNIX_EPOCH
-            .checked_add(time_from_epoch - elapsed)
+            .checked_add(new_start)
             .ok_or(RouterError::InvalidString(msg.data))?;
         Ok(())
     }
