@@ -23,15 +23,13 @@ impl TimestepConfig {
 
     /// Provide the time elapsed since simulation start.
     pub fn elapsed(&self, n: u64, unit: TimeUnit) -> u64 {
-        let base = n / 10u64.pow(self.unit.power() as u32);
-        let scalar = match unit {
-            TimeUnit::Seconds => 1,
-            TimeUnit::Milliseconds => 1_000,
-            TimeUnit::Microseconds => 1_000_000,
-            TimeUnit::Nanoseconds => 1_000_000_000,
-            _ => unreachable!(),
-        };
-        base * scalar
+        // Figure out the difference between TimestepConfig unit and desired
+        let power_diff = self.unit.power() as isize - unit.power() as isize;
+        if power_diff >= 0 {
+            n / 10u64.pow(power_diff as u32)
+        } else {
+            n * 10u64.pow(power_diff.unsigned_abs() as u32)
+        }
     }
 }
 
