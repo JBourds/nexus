@@ -8,10 +8,10 @@ use egui::Context;
 use config::ast::DistanceUnit;
 
 use crate::config_editor;
+use crate::constants::*;
 use crate::panels::{breakpoints, grid, inspector, messages, sequence, timeline, toolbar};
 use crate::render::grid::GridView;
 use crate::sim::bridge::GuiEvent;
-use crate::constants::*;
 use crate::state::*;
 use trace::format::TraceEvent;
 
@@ -264,21 +264,19 @@ impl NexusApp {
                             if !bp.enabled {
                                 continue;
                             }
-                            if let BreakpointKind::Timestep(bp_ts) = &bp.kind {
-                                if *bp_ts > prev && *bp_ts <= *ts {
+                            if let BreakpointKind::Timestep(bp_ts) = &bp.kind
+                                && *bp_ts > prev && *bp_ts <= *ts {
                                     should_pause = true;
                                     break;
                                 }
-                            }
                         }
                         // Check run-until timestep (one-shot)
-                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until {
-                            if *target > prev && *target <= *ts {
+                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until
+                            && *target > prev && *target <= *ts {
                                 should_pause = true;
                                 state.arrows_frozen = true;
                                 state.run_until = None;
                             }
-                        }
                     }
                     _ => {}
                 }
@@ -421,9 +419,10 @@ impl NexusApp {
                 &state.breakpoints,
             );
             // Push speed changes back to the kernel's time_dilation atomic.
-            state
-                .time_dilation
-                .store((speed as f64).to_bits(), std::sync::atomic::Ordering::Relaxed);
+            state.time_dilation.store(
+                (speed as f64).to_bits(),
+                std::sync::atomic::Ordering::Relaxed,
+            );
             if action.toggle_play {
                 state.paused = !state.paused;
                 state.controller.set_paused(state.paused);
@@ -439,85 +438,73 @@ impl NexusApp {
         });
 
         // Central panel: Grid or Sequence diagram
-        egui::CentralPanel::default().show(ctx, |ui| {
-            match state.view_mode {
-                ViewMode::Sequence => {
-                    let node_names: Vec<String> =
-                        state.node_states.iter().map(|n| n.name.clone()).collect();
-                    let seq_action = sequence::show_sequence_diagram(
-                        ui,
-                        &state.messages,
-                        &node_names,
-                        state.current_timestep,
-                        state.event_cursor,
-                        &mut state.seq_zoom,
-                    );
-                    if let sequence::SequenceAction::JumpToEvent {
-                        record_index,
-                        node,
-                    } = seq_action
-                    {
-                        state.event_cursor = Some(record_index);
-                        state.event_stepping = true;
-                        state.expanded_nodes.clear();
-                        state.expanded_nodes.insert(node.clone());
-                        state.selected_node = Some(node);
+        egui::CentralPanel::default().show(ctx, |ui| match state.view_mode {
+            ViewMode::Sequence => {
+                let node_names: Vec<String> =
+                    state.node_states.iter().map(|n| n.name.clone()).collect();
+                let seq_action = sequence::show_sequence_diagram(
+                    ui,
+                    &state.messages,
+                    &node_names,
+                    state.current_timestep,
+                    state.event_cursor,
+                    &mut state.seq_zoom,
+                );
+                if let sequence::SequenceAction::JumpToEvent { record_index, node } = seq_action {
+                    state.event_cursor = Some(record_index);
+                    state.event_stepping = true;
+                    state.expanded_nodes.clear();
+                    state.expanded_nodes.insert(node.clone());
+                    state.selected_node = Some(node);
+                }
+            }
+            ViewMode::Grid => {
+                if state.needs_fit {
+                    state
+                        .grid
+                        .fit_to_nodes(&state.node_states, ui.available_size());
+                    state.needs_fit = false;
+                }
+                let dist_unit = sim_distance_unit(&state.sim);
+                let highlights =
+                    build_receiver_highlights(&state.messages, &state.expanded_messages);
+                let (clicked, hovered) = grid::show_grid_panel(
+                    ui,
+                    &mut state.grid,
+                    &state.node_states,
+                    &state.selected_node,
+                    &state.active_arrows,
+                    dist_unit,
+                    &highlights,
+                );
+                if let Some(clicked) = clicked {
+                    let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                    state.expanded_nodes.clear();
+                    if already_selected {
+                        state.selected_node = None;
+                    } else {
+                        state.expanded_nodes.insert(clicked.clone());
+                        state.selected_node = Some(clicked);
                     }
                 }
-                ViewMode::Grid => {
-                    if state.needs_fit {
-                        state
-                            .grid
-                            .fit_to_nodes(&state.node_states, ui.available_size());
-                        state.needs_fit = false;
-                    }
-                    let dist_unit = sim_distance_unit(&state.sim);
-                    let highlights =
-                        build_receiver_highlights(&state.messages, &state.expanded_messages);
-                    let (clicked, hovered) = grid::show_grid_panel(
-                        ui,
-                        &mut state.grid,
-                        &state.node_states,
-                        &state.selected_node,
-                        &state.active_arrows,
-                        dist_unit,
-                        &highlights,
+                state.hovered_node = hovered;
+                if let Some(ref name) = state.hovered_node
+                    && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+                {
+                    egui::containers::popup::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                        ui.id().with("node_tip"),
+                        |ui| {
+                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                            if n.motion_spec != "none" {
+                                ui.label(format!("Motion: {}", n.motion_spec));
+                            }
+                            if let Some(r) = n.charge_ratio {
+                                ui.label(format!("Charge: {:.0}%", r * 100.0));
+                            }
+                        },
                     );
-                    if let Some(clicked) = clicked {
-                        let already_selected = state.selected_node.as_ref() == Some(&clicked);
-                        state.expanded_nodes.clear();
-                        if already_selected {
-                            state.selected_node = None;
-                        } else {
-                            state.expanded_nodes.insert(clicked.clone());
-                            state.selected_node = Some(clicked);
-                        }
-                    }
-                    state.hovered_node = hovered;
-                    if let Some(ref name) = state.hovered_node
-                        && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
-                    {
-                        egui::containers::popup::show_tooltip_at_pointer(
-                            ui.ctx(),
-                            egui::LayerId::new(
-                                egui::Order::Tooltip,
-                                ui.id().with("node_tip"),
-                            ),
-                            ui.id().with("node_tip"),
-                            |ui| {
-                                ui.label(format!(
-                                    "{} ({:.1}, {:.1}, {:.1})",
-                                    n.name, n.x, n.y, n.z
-                                ));
-                                if n.motion_spec != "none" {
-                                    ui.label(format!("Motion: {}", n.motion_spec));
-                                }
-                                if let Some(r) = n.charge_ratio {
-                                    ui.label(format!("Charge: {:.0}%", r * 100.0));
-                                }
-                            },
-                        );
-                    }
                 }
             }
         });
@@ -624,15 +611,13 @@ impl NexusApp {
                         breakpoints::check_timestep_breakpoints(&state.breakpoints, ts);
 
                     // Check run-until timestep (one-shot, no event needed)
-                    if !hit_breakpoint {
-                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until {
-                            if ts >= *target {
+                    if !hit_breakpoint
+                        && let Some(BreakpointKind::Timestep(target)) = &state.run_until
+                            && ts >= *target {
                                 hit_breakpoint = true;
                                 state.arrows_frozen = true;
                                 state.run_until = None;
                             }
-                        }
-                    }
 
                     // Check event-based breakpoints against records at this timestep
                     if !hit_breakpoint {
@@ -889,85 +874,73 @@ impl NexusApp {
         });
 
         // Central panel: Grid or Sequence diagram
-        egui::CentralPanel::default().show(ctx, |ui| {
-            match state.view_mode {
-                ViewMode::Sequence => {
-                    let node_names: Vec<String> =
-                        state.node_states.iter().map(|n| n.name.clone()).collect();
-                    let seq_action = sequence::show_sequence_diagram(
-                        ui,
-                        &state.messages,
-                        &node_names,
-                        state.current_timestep,
-                        state.event_cursor,
-                        &mut state.seq_zoom,
-                    );
-                    if let sequence::SequenceAction::JumpToEvent {
-                        record_index,
-                        node,
-                    } = seq_action
-                    {
-                        state.event_cursor = Some(record_index);
-                        state.event_stepping = true;
-                        state.expanded_nodes.clear();
-                        state.expanded_nodes.insert(node.clone());
-                        state.selected_node = Some(node);
+        egui::CentralPanel::default().show(ctx, |ui| match state.view_mode {
+            ViewMode::Sequence => {
+                let node_names: Vec<String> =
+                    state.node_states.iter().map(|n| n.name.clone()).collect();
+                let seq_action = sequence::show_sequence_diagram(
+                    ui,
+                    &state.messages,
+                    &node_names,
+                    state.current_timestep,
+                    state.event_cursor,
+                    &mut state.seq_zoom,
+                );
+                if let sequence::SequenceAction::JumpToEvent { record_index, node } = seq_action {
+                    state.event_cursor = Some(record_index);
+                    state.event_stepping = true;
+                    state.expanded_nodes.clear();
+                    state.expanded_nodes.insert(node.clone());
+                    state.selected_node = Some(node);
+                }
+            }
+            ViewMode::Grid => {
+                if state.needs_fit {
+                    state
+                        .grid
+                        .fit_to_nodes(&state.node_states, ui.available_size());
+                    state.needs_fit = false;
+                }
+                let dist_unit = sim_distance_unit(&state.sim);
+                let highlights =
+                    build_receiver_highlights(&state.messages, &state.expanded_messages);
+                let (clicked, hovered) = grid::show_grid_panel(
+                    ui,
+                    &mut state.grid,
+                    &state.node_states,
+                    &state.selected_node,
+                    &state.active_arrows,
+                    dist_unit,
+                    &highlights,
+                );
+                if let Some(clicked) = clicked {
+                    let already_selected = state.selected_node.as_ref() == Some(&clicked);
+                    state.expanded_nodes.clear();
+                    if already_selected {
+                        state.selected_node = None;
+                    } else {
+                        state.expanded_nodes.insert(clicked.clone());
+                        state.selected_node = Some(clicked);
                     }
                 }
-                ViewMode::Grid => {
-                    if state.needs_fit {
-                        state
-                            .grid
-                            .fit_to_nodes(&state.node_states, ui.available_size());
-                        state.needs_fit = false;
-                    }
-                    let dist_unit = sim_distance_unit(&state.sim);
-                    let highlights =
-                        build_receiver_highlights(&state.messages, &state.expanded_messages);
-                    let (clicked, hovered) = grid::show_grid_panel(
-                        ui,
-                        &mut state.grid,
-                        &state.node_states,
-                        &state.selected_node,
-                        &state.active_arrows,
-                        dist_unit,
-                        &highlights,
+                state.hovered_node = hovered;
+                if let Some(ref name) = state.hovered_node
+                    && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
+                {
+                    egui::containers::popup::show_tooltip_at_pointer(
+                        ui.ctx(),
+                        egui::LayerId::new(egui::Order::Tooltip, ui.id().with("node_tip")),
+                        ui.id().with("node_tip"),
+                        |ui| {
+                            ui.label(format!("{} ({:.1}, {:.1}, {:.1})", n.name, n.x, n.y, n.z));
+                            if n.motion_spec != "none" {
+                                ui.label(format!("Motion: {}", n.motion_spec));
+                            }
+                            if let Some(r) = n.charge_ratio {
+                                ui.label(format!("Charge: {:.0}%", r * 100.0));
+                            }
+                        },
                     );
-                    if let Some(clicked) = clicked {
-                        let already_selected = state.selected_node.as_ref() == Some(&clicked);
-                        state.expanded_nodes.clear();
-                        if already_selected {
-                            state.selected_node = None;
-                        } else {
-                            state.expanded_nodes.insert(clicked.clone());
-                            state.selected_node = Some(clicked);
-                        }
-                    }
-                    state.hovered_node = hovered;
-                    if let Some(ref name) = state.hovered_node
-                        && let Some(n) = state.node_states.iter().find(|n| &n.name == name)
-                    {
-                        egui::containers::popup::show_tooltip_at_pointer(
-                            ui.ctx(),
-                            egui::LayerId::new(
-                                egui::Order::Tooltip,
-                                ui.id().with("node_tip"),
-                            ),
-                            ui.id().with("node_tip"),
-                            |ui| {
-                                ui.label(format!(
-                                    "{} ({:.1}, {:.1}, {:.1})",
-                                    n.name, n.x, n.y, n.z
-                                ));
-                                if n.motion_spec != "none" {
-                                    ui.label(format!("Motion: {}", n.motion_spec));
-                                }
-                                if let Some(r) = n.charge_ratio {
-                                    ui.label(format!("Charge: {:.0}%", r * 100.0));
-                                }
-                            },
-                        );
-                    }
                 }
             }
         });
@@ -1622,12 +1595,14 @@ fn correlate_all_tx_receivers(
                 for record in controller.records_at(ts) {
                     match &record.event {
                         TraceEvent::MessageRecv {
-                            dst_node, channel, bit_errors, ..
+                            dst_node,
+                            channel,
+                            bit_errors,
+                            ..
                         } => {
                             let ch_name = channel_name_by_index(sim, *channel as usize);
                             if &ch_name == ch {
-                                let node_name =
-                                    node_name_by_index(sim, *dst_node as usize);
+                                let node_name = node_name_by_index(sim, *dst_node as usize);
                                 receivers.push(ReceiverInfo {
                                     node: node_name,
                                     outcome: ReceiverOutcome::Received,
@@ -1636,7 +1611,9 @@ fn correlate_all_tx_receivers(
                             }
                         }
                         TraceEvent::MessageDropped {
-                            src_node, channel, reason,
+                            src_node,
+                            channel,
+                            reason,
                         } => {
                             let ch_name = channel_name_by_index(sim, *channel as usize);
                             if &ch_name == ch {

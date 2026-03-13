@@ -187,7 +187,8 @@ pub fn show_module_browser(
                                     && fuzzy_matches(&modules.browser_search, &e.spec)
                             })
                             .map(|e| {
-                                let short = e.spec.split('/').next_back().unwrap_or(&e.spec).to_string();
+                                let short =
+                                    e.spec.split('/').next_back().unwrap_or(&e.spec).to_string();
                                 (e.spec.clone(), short)
                             })
                             .collect();
@@ -291,58 +292,58 @@ pub fn show_module_browser(
                     if let Some(ref selected) = modules.browser_selected.clone()
                         && let Some(entry) =
                             modules.stdlib_catalog.iter().find(|e| &e.spec == selected)
-                        {
-                            ui.add_space(8.0);
-                            ui.separator();
-                            ui.add_space(4.0);
+                    {
+                        ui.add_space(8.0);
+                        ui.separator();
+                        ui.add_space(4.0);
 
-                            ui.heading(selected);
-                            if !entry.description.is_empty() {
-                                ui.label(&entry.description);
-                            }
-                            ui.add_space(4.0);
+                        ui.heading(selected);
+                        if !entry.description.is_empty() {
+                            ui.label(&entry.description);
+                        }
+                        ui.add_space(4.0);
 
-                            // Provides summary
-                            if !entry.provides.links.is_empty() {
-                                ui.horizontal(|ui| {
-                                    ui.strong("Links:");
-                                    ui.label(entry.provides.links.join(", "));
-                                });
-                            }
-                            if !entry.provides.channels.is_empty() {
-                                ui.horizontal(|ui| {
-                                    ui.strong("Channels:");
-                                    ui.label(entry.provides.channels.join(", "));
-                                });
-                            }
-                            if !entry.provides.profiles.is_empty() {
-                                ui.horizontal(|ui| {
-                                    ui.strong("Profiles:");
-                                    ui.label(entry.provides.profiles.join(", "));
-                                });
-                            }
-
-                            // Profile details
-                            if !entry.provides.profiles.is_empty()
-                                && let Ok(path) =
-                                    config::module::resolve_module_path(selected, None)
-                                    && let Ok(module) = config::parse_module_file(&path)
-                                        && let Some(profiles) = &module.profiles {
-                                            for (pname, profile) in profiles {
-                                                ui.add_space(4.0);
-                                                ui.strong(format!("Profile: {pname}"));
-                                                show_profile_preview(ui, profile);
-                                            }
-                                        }
-
-                            ui.add_space(4.0);
-                            let already = modules.use_list.contains(selected);
-                            ui.weak(if already {
-                                "Click in the list above to remove"
-                            } else {
-                                "Click in the list above to import"
+                        // Provides summary
+                        if !entry.provides.links.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.strong("Links:");
+                                ui.label(entry.provides.links.join(", "));
                             });
                         }
+                        if !entry.provides.channels.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.strong("Channels:");
+                                ui.label(entry.provides.channels.join(", "));
+                            });
+                        }
+                        if !entry.provides.profiles.is_empty() {
+                            ui.horizontal(|ui| {
+                                ui.strong("Profiles:");
+                                ui.label(entry.provides.profiles.join(", "));
+                            });
+                        }
+
+                        // Profile details
+                        if !entry.provides.profiles.is_empty()
+                            && let Ok(path) = config::module::resolve_module_path(selected, None)
+                            && let Ok(module) = config::parse_module_file(&path)
+                            && let Some(profiles) = &module.profiles
+                        {
+                            for (pname, profile) in profiles {
+                                ui.add_space(4.0);
+                                ui.strong(format!("Profile: {pname}"));
+                                show_profile_preview(ui, profile);
+                            }
+                        }
+
+                        ui.add_space(4.0);
+                        let already = modules.use_list.contains(selected);
+                        ui.weak(if already {
+                            "Click in the list above to remove"
+                        } else {
+                            "Click in the list above to import"
+                        });
+                    }
                 });
         });
     modules.browser_open = open;

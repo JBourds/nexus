@@ -194,9 +194,8 @@ pub fn show_breakpoints(
                             "Filter nodes...",
                             "ru_node_search",
                             |name| {
-                                action = BreakpointsAction::RunUntil(
-                                    BreakpointKind::NodeEvent(name),
-                                );
+                                action =
+                                    BreakpointsAction::RunUntil(BreakpointKind::NodeEvent(name));
                             },
                         );
                     });
@@ -289,11 +288,10 @@ pub fn check_timestep_breakpoints(breakpoints: &[Breakpoint], timestep: u64) -> 
         if !bp.enabled {
             continue;
         }
-        if let BreakpointKind::Timestep(ts) = &bp.kind {
-            if timestep == *ts {
+        if let BreakpointKind::Timestep(ts) = &bp.kind
+            && timestep == *ts {
                 return true;
             }
-        }
     }
     false
 }

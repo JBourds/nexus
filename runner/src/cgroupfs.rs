@@ -123,12 +123,8 @@ pub mod mock {
 
         fn remove_dir_all(&self, path: &Path) -> io::Result<()> {
             let path = path.to_path_buf();
-            self.dirs
-                .borrow_mut()
-                .retain(|d| !d.starts_with(&path));
-            self.files
-                .borrow_mut()
-                .retain(|f, _| !f.starts_with(&path));
+            self.dirs.borrow_mut().retain(|d| !d.starts_with(&path));
+            self.files.borrow_mut().retain(|f, _| !f.starts_with(&path));
             Ok(())
         }
     }

@@ -29,57 +29,58 @@ pub fn show_inspector(
 ) -> InspectorAction {
     let mut action = InspectorAction::None;
 
-    egui::Frame::NONE.inner_margin(PANEL_FRAME_MARGIN).show(ui, |ui| {
-        if node_states.is_empty() {
-            ui.label("No nodes");
-            return;
-        }
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let mut sorted_names: Vec<_> = node_states.iter().map(|n| &n.name).collect();
-            sorted_names.sort();
-
-            for name in sorted_names {
-                let is_expanded = expanded_nodes.contains(name);
-                let is_selected = selected_node.as_ref().is_some_and(|s| s == name);
-
-                // Node header row with toggle arrow + name
-                let header_resp = ui.horizontal(|ui| {
-                    let arrow = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
-                    let toggle = ui.small_button(arrow);
-                    let label = if is_selected {
-                        ui.strong(name)
-                    } else {
-                        ui.label(name)
-                    };
-                    toggle.clicked() || label.clicked()
-                });
-
-                if header_resp.inner {
-                    if is_expanded {
-                        expanded_nodes.remove(name);
-                    } else {
-                        expanded_nodes.insert(name.clone());
-                    }
-                }
-
-                // Show body if expanded
-                if is_expanded {
-                    ui.indent(name, |ui| {
-                        show_node_details(ui, sim, node_states, name);
-                        ui.separator();
-                        let node_action =
-                            show_node_events(ui, name, messages, current_event);
-                        if let InspectorAction::JumpToEvent(_) = &node_action {
-                            action = node_action;
-                        }
-                    });
-                }
-
-                ui.add_space(2.0);
+    egui::Frame::NONE
+        .inner_margin(PANEL_FRAME_MARGIN)
+        .show(ui, |ui| {
+            if node_states.is_empty() {
+                ui.label("No nodes");
+                return;
             }
-        });
-    }); // Frame
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut sorted_names: Vec<_> = node_states.iter().map(|n| &n.name).collect();
+                sorted_names.sort();
+
+                for name in sorted_names {
+                    let is_expanded = expanded_nodes.contains(name);
+                    let is_selected = selected_node.as_ref().is_some_and(|s| s == name);
+
+                    // Node header row with toggle arrow + name
+                    let header_resp = ui.horizontal(|ui| {
+                        let arrow = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
+                        let toggle = ui.small_button(arrow);
+                        let label = if is_selected {
+                            ui.strong(name)
+                        } else {
+                            ui.label(name)
+                        };
+                        toggle.clicked() || label.clicked()
+                    });
+
+                    if header_resp.inner {
+                        if is_expanded {
+                            expanded_nodes.remove(name);
+                        } else {
+                            expanded_nodes.insert(name.clone());
+                        }
+                    }
+
+                    // Show body if expanded
+                    if is_expanded {
+                        ui.indent(name, |ui| {
+                            show_node_details(ui, sim, node_states, name);
+                            ui.separator();
+                            let node_action = show_node_events(ui, name, messages, current_event);
+                            if let InspectorAction::JumpToEvent(_) = &node_action {
+                                action = node_action;
+                            }
+                        });
+                    }
+
+                    ui.add_space(2.0);
+                }
+            });
+        }); // Frame
 
     action
 }
@@ -163,8 +164,7 @@ fn show_node_events(
         .iter()
         .enumerate()
         .filter(|(_, m)| {
-            m.src_node == node_name
-                || m.dst_node.as_ref().is_some_and(|d| d == node_name)
+            m.src_node == node_name || m.dst_node.as_ref().is_some_and(|d| d == node_name)
         })
         .collect();
 
@@ -180,38 +180,42 @@ fn show_node_events(
 
             // Prev/Next buttons for jumping within this node's events
             ui.horizontal(|ui| {
-                if ui.small_button("< Prev").on_hover_text("Previous event for this node").clicked() {
+                if ui
+                    .small_button("< Prev")
+                    .on_hover_text("Previous event for this node")
+                    .clicked()
+                {
                     // Find the previous event before current_event
                     if let Some(cur) = current_event {
                         for (_, msg) in node_msgs.iter().rev() {
-                            if let Some(ri) = msg.record_index {
-                                if ri < cur {
+                            if let Some(ri) = msg.record_index
+                                && ri < cur {
                                     action = InspectorAction::JumpToEvent(ri);
                                     break;
                                 }
-                            }
                         }
-                    } else if let Some((_, msg)) = node_msgs.last() {
-                        if let Some(ri) = msg.record_index {
+                    } else if let Some((_, msg)) = node_msgs.last()
+                        && let Some(ri) = msg.record_index {
                             action = InspectorAction::JumpToEvent(ri);
                         }
-                    }
                 }
-                if ui.small_button("Next >").on_hover_text("Next event for this node").clicked() {
+                if ui
+                    .small_button("Next >")
+                    .on_hover_text("Next event for this node")
+                    .clicked()
+                {
                     if let Some(cur) = current_event {
                         for (_, msg) in &node_msgs {
-                            if let Some(ri) = msg.record_index {
-                                if ri > cur {
+                            if let Some(ri) = msg.record_index
+                                && ri > cur {
                                     action = InspectorAction::JumpToEvent(ri);
                                     break;
                                 }
-                            }
                         }
-                    } else if let Some((_, msg)) = node_msgs.first() {
-                        if let Some(ri) = msg.record_index {
+                    } else if let Some((_, msg)) = node_msgs.first()
+                        && let Some(ri) = msg.record_index {
                             action = InspectorAction::JumpToEvent(ri);
                         }
-                    }
                 }
             });
 
@@ -246,8 +250,7 @@ fn show_node_events(
                                 ui.horizontal(|ui| {
                                     ui.colored_label(color, format!("[{icon}]"));
                                     ui.label(
-                                        egui::RichText::new(format!("t={}", msg.timestep))
-                                            .small(),
+                                        egui::RichText::new(format!("t={}", msg.timestep)).small(),
                                     );
                                     ui.label(
                                         egui::RichText::new(&msg.channel)
@@ -291,11 +294,10 @@ fn show_node_events(
                                 }
                             });
                             // Click to jump to this event
-                            if resp.response.clicked() {
-                                if let Some(ri) = msg.record_index {
+                            if resp.response.clicked()
+                                && let Some(ri) = msg.record_index {
                                     action = InspectorAction::JumpToEvent(ri);
                                 }
-                            }
                         });
                     }
                 });

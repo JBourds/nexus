@@ -74,8 +74,12 @@ mod tests {
         handles: Vec<(u32, NodeIdx, ChannelIdx)>,
     ) -> (RoutingServer, mpsc::Receiver<fuse::KernelMessage>) {
         let (tx, rx) = mpsc::channel();
-        let node_names: Vec<Arc<str>> = (0..nodes.len()).map(|i| Arc::from(format!("node_{i}").as_str())).collect();
-        let channel_names: Vec<Arc<str>> = (0..channels.len()).map(|i| Arc::from(format!("ch_{i}").as_str())).collect();
+        let node_names: Vec<Arc<str>> = (0..nodes.len())
+            .map(|i| Arc::from(format!("node_{i}").as_str()))
+            .collect();
+        let channel_names: Vec<Arc<str>> = (0..channels.len())
+            .map(|i| Arc::from(format!("ch_{i}").as_str()))
+            .collect();
         let resolved = ResolvedChannels {
             nodes,
             node_names,

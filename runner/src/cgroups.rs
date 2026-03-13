@@ -324,9 +324,7 @@ impl CgroupController {
         proto_handle.cgroup_path = Some(cgroup.clone());
         proto_handle.run(&cgroup)?;
         // Re-borrow to add the protocol cgroup
-        let node = self
-            .get_node(handle)
-            .expect("node was just looked up");
+        let node = self.get_node(handle).expect("node was just looked up");
         node.add(cgroup);
         Ok(proto_handle)
     }
@@ -399,11 +397,7 @@ fn make_root(fs: &dyn CgroupFs, pid: u32) -> io::Result<PathBuf> {
     let parent_cgroup = PathBuf::from(format!("/proc/{pid}/cgroup"));
     let buf = fs.read_to_string(&parent_cgroup)?;
 
-    let suffix = buf
-        .rsplit(':')
-        .next()
-        .unwrap_or("")
-        .trim_end();
+    let suffix = buf.rsplit(':').next().unwrap_or("").trim_end();
     Ok(PathBuf::from(format!("/sys/fs/cgroup{suffix}")))
 }
 
@@ -447,10 +441,7 @@ mod tests {
     fn make_test_controller(mock: MockCgroupFs) -> CgroupController {
         let pid = std::process::id();
         // Seed the /proc file so make_root works
-        mock.seed_file(
-            format!("/proc/{pid}/cgroup"),
-            "0::/test_cgroup\n",
-        );
+        mock.seed_file(format!("/proc/{pid}/cgroup"), "0::/test_cgroup\n");
         // Seed the root cgroup dir so child dirs can be created
         mock.seed_dir("/sys/fs/cgroup/test_cgroup");
 

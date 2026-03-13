@@ -147,7 +147,13 @@ fn run_simulation(
             names.sort();
             names
                 .iter()
-                .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                .map(|n| {
+                    sim.nodes[n]
+                        .energy
+                        .charge
+                        .as_ref()
+                        .map(|c| c.unit.to_nj(c.max))
+                })
                 .collect()
         },
     };
@@ -188,18 +194,11 @@ fn run_inner(
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = KernelBuilder::new(
-        sim,
-        runc,
-        file_handles,
-        rx,
-        tx,
-        remap_tx,
-    )
-    .abort_flag(abort)
-    .pause_flag(pause)
-    .time_dilation(time_dilation)
-    .build()?;
+    let kernel = KernelBuilder::new(sim, runc, file_handles, rx, tx, remap_tx)
+        .abort_flag(abort)
+        .pause_flag(pause)
+        .time_dilation(time_dilation)
+        .build()?;
     let _protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;

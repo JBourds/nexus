@@ -118,7 +118,8 @@ pub fn show_sequence_diagram(
                 .collect();
 
             // --- Header (node names) -----------------------------------------
-            let font_size = (SEQ_FONT_SIZE_BASE * *zoom).clamp(SEQ_FONT_SIZE_MIN, SEQ_FONT_SIZE_MAX);
+            let font_size =
+                (SEQ_FONT_SIZE_BASE * *zoom).clamp(SEQ_FONT_SIZE_MIN, SEQ_FONT_SIZE_MAX);
             for (i, name) in sorted_names.iter().enumerate() {
                 let x = lifeline_x[i];
                 painter.text(
@@ -263,8 +264,10 @@ pub fn show_sequence_diagram(
                                 }
 
                                 // Tooltip on hover (drop reason or bit-error note)
-                                let hover_rect =
-                                    Rect::from_center_size(Pos2::new(dst_x, y), Vec2::splat(SEQ_HOVER_RECT_SIZE));
+                                let hover_rect = Rect::from_center_size(
+                                    Pos2::new(dst_x, y),
+                                    Vec2::splat(SEQ_HOVER_RECT_SIZE),
+                                );
                                 if ui.rect_contains_pointer(hover_rect) {
                                     let tip_text = match &recv.outcome {
                                         ReceiverOutcome::Dropped(reason) => {
@@ -344,7 +347,10 @@ pub fn show_sequence_diagram(
                         );
 
                         // Tooltip
-                        let hover_rect = Rect::from_center_size(Pos2::new(x, y), Vec2::splat(SEQ_HOVER_RECT_SIZE));
+                        let hover_rect = Rect::from_center_size(
+                            Pos2::new(x, y),
+                            Vec2::splat(SEQ_HOVER_RECT_SIZE),
+                        );
                         if ui.rect_contains_pointer(hover_rect) {
                             egui::containers::popup::show_tooltip_at_pointer(
                                 ui.ctx(),

@@ -294,11 +294,7 @@ impl RoutingServer {
         // a failed queue does not silently consume charge (BUG-9).
         self.queue_message(src_node, channel_handle, msg.data)?;
 
-        energy::EnergyManager::drain_tx(
-            &mut self.channels.nodes,
-            src_node.0,
-            &channel_handle,
-        );
+        energy::EnergyManager::drain_tx(&mut self.channels.nodes, src_node.0, &channel_handle);
 
         Ok(())
     }
@@ -334,8 +330,7 @@ impl RoutingServer {
                 self.send_elapsed(msg)
             }
             ControlFile::EnergyLeft => {
-                let charge_nj =
-                    energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
+                let charge_nj = energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
                 let mut msg = msg;
                 msg.data = charge_nj.to_string().into_bytes();
                 self.tx
@@ -343,11 +338,8 @@ impl RoutingServer {
                     .map_err(RouterError::FuseSendError)
             }
             ControlFile::EnergyState => {
-                let state = energy::EnergyManager::current_state(
-                    &self.channels.nodes,
-                    ni,
-                )
-                .unwrap_or_default();
+                let state = energy::EnergyManager::current_state(&self.channels.nodes, ni)
+                    .unwrap_or_default();
                 let mut msg = msg;
                 msg.data = state.into_bytes();
                 self.tx

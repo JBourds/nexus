@@ -34,7 +34,10 @@ impl TraceLayer {
     /// Create a new trace layer and a [`TraceHandle`] that must be held alive
     /// until the simulation ends. Dropping the handle flushes all buffered
     /// records to disk.
-    pub fn new(path: impl AsRef<Path>, header: &TraceHeader) -> std::io::Result<(Self, TraceHandle)> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        header: &TraceHeader,
+    ) -> std::io::Result<(Self, TraceHandle)> {
         let writer = Arc::new(Mutex::new(TraceWriter::create(path, header)?));
         Ok((
             Self {

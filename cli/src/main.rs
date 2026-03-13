@@ -164,11 +164,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         let runc = runner::run(&sim)?;
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
         let (remap_tx, remap_rx) = std::sync::mpsc::channel();
-        let pids: Vec<u32> = runc
-            .handles
-            .iter()
-            .filter_map(|h| h.pid())
-            .collect();
+        let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
         let fs = args
             .root
             .clone()
@@ -185,16 +181,10 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles = KernelBuilder::new(
-            sim.clone(),
-            runc,
-            file_handles,
-            rx,
-            tx,
-            remap_tx,
-        )
-        .build()?
-        .run(args.cmd.clone())?;
+        let protocol_handles =
+            KernelBuilder::new(sim.clone(), runc, file_handles, rx, tx, remap_tx)
+                .build()?
+                .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));
     }
     match args.dest {
@@ -260,7 +250,11 @@ fn setup_logging(
                     names
                         .iter()
                         .map(|n| {
-                            sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max))
+                            sim.nodes[n]
+                                .energy
+                                .charge
+                                .as_ref()
+                                .map(|c| c.unit.to_nj(c.max))
                         })
                         .collect()
                 },

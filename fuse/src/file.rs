@@ -19,7 +19,13 @@ pub(crate) fn current_uid_gid() -> (u32, u32) {
 ///
 /// Callers override whichever fields differ from the defaults (e.g. `ino`,
 /// `kind`, `perm`, `size`, `blocks`).
-pub(crate) fn default_attr(ino: u64, kind: FileType, perm: u16, size: u64, blocks: u64) -> FileAttr {
+pub(crate) fn default_attr(
+    ino: u64,
+    kind: FileType,
+    perm: u16,
+    size: u64,
+    blocks: u64,
+) -> FileAttr {
     let now = SystemTime::now();
     let (uid, gid) = current_uid_gid();
     FileAttr {

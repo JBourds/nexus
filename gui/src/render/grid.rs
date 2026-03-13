@@ -125,7 +125,11 @@ impl GridView {
             let top = self.world_to_screen(Pos2::new(wx, top_left.y), canvas_rect);
             let bottom = self.world_to_screen(Pos2::new(wx, bottom_right.y), canvas_rect);
             let color = if ix == 0 { axis_color } else { grid_color };
-            let width = if ix == 0 { GRID_AXIS_WIDTH } else { GRID_LINE_WIDTH };
+            let width = if ix == 0 {
+                GRID_AXIS_WIDTH
+            } else {
+                GRID_LINE_WIDTH
+            };
             painter.line_segment([top, bottom], Stroke::new(width, color));
 
             // Label
@@ -149,7 +153,11 @@ impl GridView {
             let left = self.world_to_screen(Pos2::new(top_left.x, wy), canvas_rect);
             let right = self.world_to_screen(Pos2::new(bottom_right.x, wy), canvas_rect);
             let color = if iy == 0 { axis_color } else { grid_color };
-            let width = if iy == 0 { GRID_AXIS_WIDTH } else { GRID_LINE_WIDTH };
+            let width = if iy == 0 {
+                GRID_AXIS_WIDTH
+            } else {
+                GRID_LINE_WIDTH
+            };
             painter.line_segment([left, right], Stroke::new(width, color));
 
             if iy != 0 {
@@ -302,26 +310,28 @@ impl GridView {
             let is_this_dragging = dragging == Some(edge);
 
             // Start drag on press (not just down) to avoid re-triggering
-            if pointer_pressed && dragging.is_none()
-                && let Some(p) = pointer_pos {
-                    if thumb_rect.expand(4.0).contains(p) {
-                        dragging = Some(edge);
-                    } else if near_edge && track_rect.contains(p) {
-                        // Click on track: jump thumb center to click position
-                        if is_horizontal {
-                            let click_frac = (p.x - canvas_rect.left()) / canvas_rect.width();
-                            let center_frac = (frac_start + frac_end) / 2.0;
-                            let world_dx = (click_frac - center_frac) * content_w;
-                            self.offset.x -= world_dx * self.zoom;
-                        } else {
-                            let click_frac = (p.y - canvas_rect.top()) / canvas_rect.height();
-                            let center_frac = (frac_start + frac_end) / 2.0;
-                            let world_dy = (click_frac - center_frac) * content_h;
-                            self.offset.y -= world_dy * self.zoom;
-                        }
-                        dragging = Some(edge);
+            if pointer_pressed
+                && dragging.is_none()
+                && let Some(p) = pointer_pos
+            {
+                if thumb_rect.expand(4.0).contains(p) {
+                    dragging = Some(edge);
+                } else if near_edge && track_rect.contains(p) {
+                    // Click on track: jump thumb center to click position
+                    if is_horizontal {
+                        let click_frac = (p.x - canvas_rect.left()) / canvas_rect.width();
+                        let center_frac = (frac_start + frac_end) / 2.0;
+                        let world_dx = (click_frac - center_frac) * content_w;
+                        self.offset.x -= world_dx * self.zoom;
+                    } else {
+                        let click_frac = (p.y - canvas_rect.top()) / canvas_rect.height();
+                        let center_frac = (frac_start + frac_end) / 2.0;
+                        let world_dy = (click_frac - center_frac) * content_h;
+                        self.offset.y -= world_dy * self.zoom;
                     }
+                    dragging = Some(edge);
                 }
+            }
 
             // Apply drag delta
             if is_this_dragging {

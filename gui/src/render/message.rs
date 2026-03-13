@@ -25,7 +25,10 @@ pub fn draw_message_arc(
     };
 
     // Draw line from src to dst
-    painter.line_segment([src_screen, dst_screen], Stroke::new(ARROW_LINE_WIDTH, line_color));
+    painter.line_segment(
+        [src_screen, dst_screen],
+        Stroke::new(ARROW_LINE_WIDTH, line_color),
+    );
 
     // Draw moving dot at progress position
     let dot_pos = Pos2::new(

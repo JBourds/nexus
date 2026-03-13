@@ -85,7 +85,11 @@ pub fn draw_node_highlight(
     }
     let painter = ui.painter_at(canvas_rect);
     let radius = node_radius(grid.zoom);
-    painter.circle_stroke(screen_pos, radius + NODE_HIGHLIGHT_RING_OFFSET, Stroke::new(2.5, color));
+    painter.circle_stroke(
+        screen_pos,
+        radius + NODE_HIGHLIGHT_RING_OFFSET,
+        Stroke::new(2.5, color),
+    );
 }
 
 /// Map charge ratio to a color: green (100%) -> yellow (50%) -> red (0%).
