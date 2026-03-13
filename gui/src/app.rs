@@ -176,6 +176,25 @@ impl NexusApp {
                 if let breakpoints::BreakpointsAction::Add(bp) = bp_action {
                     state.breakpoints.push(bp);
                 }
+
+                // Pre-simulation run-until options
+                ui.separator();
+                ui.label("On Simulation Start:");
+                let is_next_event = matches!(
+                    state.initial_run_until,
+                    Some(BreakpointKind::NextEvent)
+                );
+                if ui
+                    .selectable_label(is_next_event, "Break on first event")
+                    .on_hover_text("Pause the simulation at the very first trace event")
+                    .clicked()
+                {
+                    if is_next_event {
+                        state.initial_run_until = None;
+                    } else {
+                        state.initial_run_until = Some(BreakpointKind::NextEvent);
+                    }
+                }
             });
 
         // Central panel with grid for node placement
@@ -276,7 +295,14 @@ impl NexusApp {
                         ) {
                             should_pause = true;
                             state.arrows_frozen = true;
-                            state.run_until = None;
+                            // Re-arm NextEvent if persistent, otherwise clear
+                            if state.persistent_next_event
+                                && matches!(state.run_until, Some(BreakpointKind::NextEvent))
+                            {
+                                // Keep run_until as NextEvent
+                            } else {
+                                state.run_until = None;
+                            }
                         }
                     }
                 }
@@ -415,6 +441,15 @@ impl NexusApp {
                         }
                         breakpoints::BreakpointsAction::None => {}
                     }
+                    ui.separator();
+                    ui.checkbox(
+                        &mut state.persistent_next_event,
+                        "Persistent event stepping",
+                    )
+                    .on_hover_text(
+                        "When enabled, each resume automatically sets a \
+                         \"run until next event\" condition",
+                    );
                 });
             });
 
@@ -458,6 +493,10 @@ impl NexusApp {
             if action.toggle_play {
                 state.paused = !state.paused;
                 state.controller.set_paused(state.paused);
+                // Re-arm persistent next-event on resume
+                if !state.paused && state.persistent_next_event {
+                    state.run_until = Some(BreakpointKind::NextEvent);
+                }
             }
             // Build/run status indicator
             match state.build_status {
@@ -1073,6 +1112,8 @@ impl NexusApp {
                 let channel_subscribers = build_channel_subscribers(&state.sim);
                 let num_channels = state.sim.channels.len();
                 let pre_breakpoints = std::mem::take(&mut state.breakpoints);
+                let initial_run_until = state.initial_run_until.take();
+                let persistent = matches!(initial_run_until, Some(BreakpointKind::NextEvent));
                 self.mode = AppMode::LiveSimulation(Box::new(LiveSimState {
                     sim: state.sim.clone(),
                     controller,
@@ -1092,7 +1133,7 @@ impl NexusApp {
                     last_sender: vec![None; num_channels],
                     time_dilation: td,
                     arrows_frozen: false,
-                    run_until: None,
+                    run_until: initial_run_until,
                     event_cursor: None,
                     event_stepping: false,
                     breakpoints: pre_breakpoints,
@@ -1101,6 +1142,7 @@ impl NexusApp {
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
                     seq_zoom: SEQ_ZOOM_DEFAULT,
+                    persistent_next_event: persistent,
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
                     viewing_output: None,
@@ -1151,6 +1193,7 @@ impl NexusApp {
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
                     seq_zoom: SEQ_ZOOM_DEFAULT,
+                    persistent_next_event: false,
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
                     viewing_output: None,
@@ -1212,6 +1255,7 @@ impl NexusApp {
             modules: crate::state::ModuleState::default(),
             breakpoints: Vec::new(),
             bp_input: BreakpointInput::default(),
+            initial_run_until: None,
         }));
     }
 

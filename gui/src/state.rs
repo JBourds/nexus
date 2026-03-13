@@ -208,6 +208,8 @@ pub struct ConfigEditorState {
     pub breakpoints: Vec<Breakpoint>,
     /// Input state for the breakpoints panel.
     pub bp_input: BreakpointInput,
+    /// Initial run-until condition to apply when the simulation starts.
+    pub initial_run_until: Option<BreakpointKind>,
 }
 
 impl ConfigEditorState {
@@ -241,6 +243,7 @@ impl ConfigEditorState {
             modules,
             breakpoints: Vec::new(),
             bp_input: BreakpointInput::default(),
+            initial_run_until: None,
         })
     }
 }
@@ -294,6 +297,8 @@ pub struct LiveSimState {
     pub bp_input: BreakpointInput,
     /// Zoom level for the sequence diagram (1.0 = default).
     pub seq_zoom: f32,
+    /// When true, re-arm `run_until: NextEvent` after each trigger.
+    pub persistent_next_event: bool,
     /// Build/run lifecycle status.
     pub build_status: SimBuildStatus,
     /// Captured process outputs (populated when simulation finishes).
