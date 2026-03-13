@@ -22,7 +22,6 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, SystemTime};
 use std::{collections::HashMap, path::PathBuf};
 
-static INODE_GEN: AtomicU64 = AtomicU64::new(FUSE_ROOT_ID + 1);
 const TTL: Duration = Duration::from_secs(1);
 
 pub const CONTROL_FILES: [(&str, ChannelMode); 19] = [
@@ -71,6 +70,9 @@ pub struct NexusFs {
     kernel_side: Option<KernelChannels>,
     /// Receiver for (old_pid, new_pid) pairs sent by the router.
     remap_rx: mpsc::Receiver<(u32, u32)>,
+    /// Per-instance inode counter (must not be static; the GUI reuses
+    /// the process across simulation runs).
+    inode_gen: AtomicU64,
 }
 
 impl NexusFs {
@@ -114,7 +116,7 @@ impl NexusFs {
             index_to_inode(index)
         } else {
             self.files.push(name);
-            next_inode()
+            self.inode_gen.fetch_add(1, Ordering::Relaxed)
         }
     }
 
@@ -266,6 +268,7 @@ impl Default for NexusFs {
             fs_side: (fs_tx, fs_rx),
             kernel_side: Some((kernel_tx, kernel_rx)),
             remap_rx: mpsc::channel().1,
+            inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
         }
     }
 }
@@ -499,10 +502,6 @@ fn index_to_inode(index: usize) -> u64 {
     index as u64 + (FUSE_ROOT_ID + 1)
 }
 
-fn next_inode() -> u64 {
-    INODE_GEN.fetch_add(1, Ordering::Relaxed)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -510,11 +509,11 @@ mod tests {
     use crate::file::NexusFile;
     use std::num::NonZeroUsize;
 
-    fn test_file() -> NexusFile {
+    fn test_file(inode: u64) -> NexusFile {
         NexusFile::new(
             NonZeroUsize::new(1024).unwrap(),
             ChannelMode::ReadWrite,
-            next_inode(),
+            inode,
         )
     }
 
@@ -527,10 +526,10 @@ mod tests {
         };
 
         // Insert buffers for PID 100
-        fs.buffers.insert((100, "ch_a".into()), test_file());
-        fs.buffers.insert((100, "ch_b".into()), test_file());
+        fs.buffers.insert((100, "ch_a".into()), test_file(1));
+        fs.buffers.insert((100, "ch_b".into()), test_file(1));
         // Insert buffer for a different PID that should not move
-        fs.buffers.insert((200, "ch_a".into()), test_file());
+        fs.buffers.insert((200, "ch_a".into()), test_file(1));
 
         // Send a remap: 100 -> 300
         tx.send((100, 300)).unwrap();
@@ -557,7 +556,7 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((100, "ch_a".into()), test_file());
+        fs.buffers.insert((100, "ch_a".into()), test_file(1));
         fs.apply_pending_remaps();
 
         // Nothing should change
@@ -572,8 +571,8 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((10, "ch_x".into()), test_file());
-        fs.buffers.insert((20, "ch_x".into()), test_file());
+        fs.buffers.insert((10, "ch_x".into()), test_file(1));
+        fs.buffers.insert((20, "ch_x".into()), test_file(1));
 
         tx.send((10, 11)).unwrap();
         tx.send((20, 21)).unwrap();
@@ -594,7 +593,7 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((50, "ch_a".into()), test_file());
+        fs.buffers.insert((50, "ch_a".into()), test_file(1));
         fs.apply_pending_remaps();
 
         // Original buffer still there, no panic
