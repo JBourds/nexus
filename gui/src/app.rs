@@ -498,6 +498,56 @@ impl NexusApp {
                     state.run_until = Some(BreakpointKind::NextEvent);
                 }
             }
+
+            // Live sim stepping behavior
+            if action.step_forward {
+                if state.event_stepping {
+                    // Event-level: run until next event
+                    state.run_until = Some(BreakpointKind::NextEvent);
+                    state.paused = false;
+                    state.controller.set_paused(false);
+                } else {
+                    // Timestep-level: set breakpoint for next timestep and resume
+                    state.run_until =
+                        Some(BreakpointKind::Timestep(state.current_timestep + 1));
+                    state.paused = false;
+                    state.controller.set_paused(false);
+                }
+            }
+            if action.step_backward {
+                // Freeze the simulation and redisplay at the earlier timestep
+                state.paused = true;
+                state.controller.set_paused(true);
+                if state.event_stepping {
+                    // Step backward by event
+                    if let Some(cursor) = state.event_cursor {
+                        let prev = cursor.saturating_sub(1);
+                        state.event_cursor = Some(prev);
+                        if let Some(record) = state.all_records.get(prev) {
+                            state.current_timestep = record.timestep;
+                        }
+                    }
+                } else {
+                    state.current_timestep = state.current_timestep.saturating_sub(1);
+                }
+                // Rebuild state from accumulated records up to current timestep
+                rebuild_live_state_at(state, egui_time);
+            }
+            if let Some(ts) = action.seek_to {
+                if ts < state.current_timestep {
+                    // Going backward: freeze and redisplay
+                    state.paused = true;
+                    state.controller.set_paused(true);
+                    state.current_timestep = ts;
+                    rebuild_live_state_at(state, egui_time);
+                } else if ts > state.current_timestep {
+                    // Going forward: set run-until for that timestep
+                    state.run_until = Some(BreakpointKind::Timestep(ts));
+                    state.paused = false;
+                    state.controller.set_paused(false);
+                }
+            }
+
             // Build/run status indicator
             match state.build_status {
                 SimBuildStatus::Building => {
@@ -1936,5 +1986,219 @@ fn trace_record_to_message(
             record_index,
         }),
         _ => None,
+    }
+}
+
+/// Rebuild the live simulation display state from accumulated records up to
+/// `state.current_timestep`. Used when stepping backward or seeking to an
+/// earlier point during a live simulation.
+fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
+    let ts = state.current_timestep;
+
+    // Reset node states to initial positions from the AST
+    state.node_states = nodes_from_sim(&state.sim);
+
+    // Replay position, energy, and motion updates from accumulated records
+    for record in &state.all_records {
+        if record.timestep > ts {
+            break;
+        }
+        match &record.event {
+            TraceEvent::PositionUpdate { node, x, y, z } => {
+                if let Some(ns) = state.node_states.get_mut(*node as usize) {
+                    ns.prev_x = ns.x;
+                    ns.prev_y = ns.y;
+                    ns.prev_z = ns.z;
+                    ns.x = *x;
+                    ns.y = *y;
+                    ns.z = *z;
+                    ns.last_move_ts = record.timestep;
+                }
+            }
+            TraceEvent::EnergyUpdate { node, energy_nj } => {
+                if let Some(ns) = state.node_states.get_mut(*node as usize)
+                    && let Some(max) = ns.max_nj
+                {
+                    let ratio = if max == 0 {
+                        1.0
+                    } else {
+                        *energy_nj as f32 / max as f32
+                    };
+                    ns.charge_ratio = Some(ratio.clamp(0.0, 1.0));
+                    ns.is_dead = *energy_nj == 0 && max > 0;
+                }
+            }
+            TraceEvent::MotionUpdate { node, spec } => {
+                if let Some(ns) = state.node_states.get_mut(*node as usize) {
+                    ns.motion_spec = spec.clone();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    // Rebuild message list from records up to current timestep
+    state.messages.clear();
+    for (i, record) in state.all_records.iter().enumerate() {
+        if record.timestep > ts {
+            break;
+        }
+        if let Some(entry) = trace_record_to_message(record, &state.sim, Some(i)) {
+            state.messages.push(entry);
+        }
+    }
+
+    // Correlate TX receivers
+    correlate_live_tx_receivers(&state.all_records, &state.sim, &mut state.messages, ts);
+
+    // Reset arrows and show only arrows at the current timestep
+    state.active_arrows.clear();
+    state.last_sender.fill(None);
+    for record in &state.all_records {
+        if record.timestep > ts {
+            break;
+        }
+        if record.timestep < ts {
+            // Just track last_sender for earlier timesteps
+            if let TraceEvent::MessageSent { src_node, channel, .. } = &record.event {
+                if let Some(slot) = state.last_sender.get_mut(*channel as usize) {
+                    *slot = Some(*src_node as usize);
+                }
+            }
+            continue;
+        }
+        // At current timestep: create arrows
+        match &record.event {
+            TraceEvent::MessageSent { src_node, channel, .. } => {
+                let src_idx = *src_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(slot) = state.last_sender.get_mut(ch_idx) {
+                    *slot = Some(src_idx);
+                }
+                if let Some(subs) = state.channel_subscribers.get(ch_idx) {
+                    for &dst_idx in subs {
+                        if dst_idx != src_idx {
+                            state.active_arrows.push(ArrowAnimation {
+                                src_node: src_idx,
+                                dst_node: dst_idx,
+                                kind: ArrowKind::Sent,
+                                start_time: egui_time,
+                                duration: ARROW_DURATION,
+                            });
+                        }
+                    }
+                }
+            }
+            TraceEvent::MessageRecv { dst_node, channel, .. } => {
+                let dst_idx = *dst_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(Some(src_idx)) = state.last_sender.get(ch_idx) {
+                    state.active_arrows.push(ArrowAnimation {
+                        src_node: *src_idx,
+                        dst_node: dst_idx,
+                        kind: ArrowKind::Received,
+                        start_time: egui_time,
+                        duration: ARROW_DURATION,
+                    });
+                }
+            }
+            TraceEvent::MessageDropped { src_node, channel, .. } => {
+                let src_idx = *src_node as usize;
+                let ch_idx = *channel as usize;
+                if let Some(subs) = state.channel_subscribers.get(ch_idx) {
+                    for &dst_idx in subs {
+                        if dst_idx != src_idx {
+                            state.active_arrows.push(ArrowAnimation {
+                                src_node: src_idx,
+                                dst_node: dst_idx,
+                                kind: ArrowKind::Dropped,
+                                start_time: egui_time,
+                                duration: ARROW_DURATION,
+                            });
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Correlate TX messages with RX/Drop events from accumulated live records.
+fn correlate_live_tx_receivers(
+    all_records: &[trace::format::TraceRecord],
+    sim: &config::ast::Simulation,
+    messages: &mut [MessageEntry],
+    max_ts: u64,
+) {
+    // Build sender map: (timestep, channel_name) -> sender_name
+    let mut tx_senders: Vec<(u64, String, String)> = Vec::new();
+    for msg in messages.iter() {
+        if msg.kind == MessageKind::Sent {
+            tx_senders.push((msg.timestep, msg.channel.clone(), msg.src_node.clone()));
+        }
+    }
+
+    for msg in messages.iter_mut() {
+        match &msg.kind {
+            MessageKind::Sent => {
+                let ts = msg.timestep;
+                let ch = &msg.channel;
+                let mut receivers = Vec::new();
+                for record in all_records {
+                    if record.timestep > max_ts {
+                        break;
+                    }
+                    if record.timestep != ts {
+                        continue;
+                    }
+                    match &record.event {
+                        TraceEvent::MessageRecv {
+                            dst_node,
+                            channel,
+                            bit_errors,
+                            ..
+                        } => {
+                            let ch_name = channel_name_by_index(sim, *channel as usize);
+                            if &ch_name == ch {
+                                let node_name = node_name_by_index(sim, *dst_node as usize);
+                                receivers.push(ReceiverInfo {
+                                    node: node_name,
+                                    outcome: ReceiverOutcome::Received,
+                                    has_bit_errors: *bit_errors,
+                                });
+                            }
+                        }
+                        TraceEvent::MessageDropped {
+                            src_node,
+                            channel,
+                            reason,
+                        } => {
+                            let ch_name = channel_name_by_index(sim, *channel as usize);
+                            if &ch_name == ch {
+                                let drop_node = node_name_by_index(sim, *src_node as usize);
+                                receivers.push(ReceiverInfo {
+                                    node: drop_node,
+                                    outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
+                                    has_bit_errors: false,
+                                });
+                            }
+                        }
+                        _ => {}
+                    }
+                }
+                msg.receivers = receivers;
+            }
+            MessageKind::Received | MessageKind::Dropped(_) => {
+                if msg.dst_node.is_none() {
+                    for (ts, ch, sender) in &tx_senders {
+                        if *ts == msg.timestep && ch == &msg.channel {
+                            msg.dst_node = Some(sender.clone());
+                            break;
+                        }
+                    }
+                }
+            }
+        }
     }
 }
