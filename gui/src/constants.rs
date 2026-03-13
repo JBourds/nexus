@@ -87,10 +87,11 @@ pub const SEQ_ARROW_HEAD_WIDTH: f32 = 3.0;
 pub const SEQ_DROP_X_HALF: f32 = 4.0;
 pub const SEQ_DROP_X_STROKE: f32 = 2.0;
 pub const SEQ_HOVER_RECT_SIZE: f32 = 12.0;
-pub const SEQ_RX_DASH: f32 = 3.0;
-pub const SEQ_RX_GAP: f32 = 2.0;
-pub const SEQ_RX_SEG_HALF_FACTOR: f32 = 0.35;
 pub const SEQ_BOTTOM_PADDING: f32 = 20.0;
+pub const SEQ_DOT_RADIUS: f32 = 3.5;
+pub const SEQ_DOT_RADIUS_CURRENT: f32 = 5.0;
+pub const SEQ_SELECTION_RING_RADIUS: f32 = 7.0;
+pub const SEQ_SELECTION_RING_STROKE: f32 = 1.5;
 
 // -- Grid view ----------------------------------------------------------------
 pub const GRID_ZOOM_MIN: f32 = 0.01;

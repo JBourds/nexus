@@ -183,6 +183,40 @@ pub fn show_sequence_diagram(
                 };
                 let is_current = current_event.is_some() && msg.record_index == current_event;
 
+                let dot_r = if is_current {
+                    SEQ_DOT_RADIUS_CURRENT
+                } else {
+                    SEQ_DOT_RADIUS
+                };
+
+                // Selection ring around the currently selected event
+                if is_current {
+                    let center = match &msg.kind {
+                        MessageKind::Sent => sorted_names
+                            .iter()
+                            .position(|n| n == &msg.src_node)
+                            .map(|i| Pos2::new(lifeline_x[i], y)),
+                        MessageKind::Received => sorted_names
+                            .iter()
+                            .position(|n| n == &msg.src_node)
+                            .map(|i| Pos2::new(lifeline_x[i], y)),
+                        MessageKind::Dropped(_) => sorted_names
+                            .iter()
+                            .position(|n| n == &msg.src_node)
+                            .map(|i| Pos2::new(lifeline_x[i], y)),
+                    };
+                    if let Some(center) = center {
+                        painter.circle_stroke(
+                            center,
+                            SEQ_SELECTION_RING_RADIUS,
+                            Stroke::new(
+                                SEQ_SELECTION_RING_STROKE,
+                                egui::Color32::WHITE,
+                            ),
+                        );
+                    }
+                }
+
                 match &msg.kind {
                     // ========================================================
                     // TX: draw arrows from sender to every receiver
@@ -194,44 +228,133 @@ pub fn show_sequence_diagram(
                         };
                         let src_x = lifeline_x[src_x_idx];
 
-                        if msg.receivers.is_empty() {
-                            // No correlated receivers yet: just a dot on sender
-                            let radius = if is_current { 4.0 } else { 2.5 };
-                            painter.circle_filled(Pos2::new(src_x, y), radius, COLOR_TX_OK);
-                        } else {
-                            // Draw a small dot on the sender lifeline
-                            painter.circle_filled(
-                                Pos2::new(src_x, y),
-                                if is_current { 3.5 } else { 2.0 },
-                                COLOR_TX_OK,
+                        // Sender dot
+                        painter.circle_filled(Pos2::new(src_x, y), dot_r, COLOR_TX_OK);
+
+                        for recv in &msg.receivers {
+                            let Some(dst_x_idx) =
+                                sorted_names.iter().position(|n| n == &recv.node)
+                            else {
+                                continue;
+                            };
+                            let dst_x = lifeline_x[dst_x_idx];
+
+                            let (recv_color, is_drop) = match &recv.outcome {
+                                ReceiverOutcome::Received if recv.has_bit_errors => {
+                                    (COLOR_BIT_ERR, false)
+                                }
+                                ReceiverOutcome::Received => (COLOR_TX_OK, false),
+                                ReceiverOutcome::Dropped(_) => (COLOR_DROP, true),
+                            };
+                            let thickness = if is_current { 2.5 } else { 1.5 };
+
+                            // Arrow line
+                            painter.line_segment(
+                                [Pos2::new(src_x, y), Pos2::new(dst_x, y)],
+                                Stroke::new(thickness, recv_color),
                             );
 
-                            for recv in &msg.receivers {
-                                let Some(dst_x_idx) =
-                                    sorted_names.iter().position(|n| n == &recv.node)
-                                else {
-                                    continue;
-                                };
-                                let dst_x = lifeline_x[dst_x_idx];
+                            // Arrowhead
+                            let dir = if dst_x > src_x { 1.0_f32 } else { -1.0 };
+                            let tip = Pos2::new(dst_x, y);
+                            let base_x = tip.x - dir * SEQ_ARROW_HEAD_LENGTH;
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![
+                                    tip,
+                                    Pos2::new(base_x, y - SEQ_ARROW_HEAD_WIDTH),
+                                    Pos2::new(base_x, y + SEQ_ARROW_HEAD_WIDTH),
+                                ],
+                                recv_color,
+                                Stroke::NONE,
+                            ));
 
-                                let (recv_color, is_drop) = match &recv.outcome {
-                                    ReceiverOutcome::Received if recv.has_bit_errors => {
-                                        (COLOR_BIT_ERR, false)
-                                    }
-                                    ReceiverOutcome::Received => (COLOR_TX_OK, false),
-                                    ReceiverOutcome::Dropped(_) => (COLOR_DROP, true),
-                                };
-                                let thickness = if is_current { 2.5 } else { 1.5 };
-
-                                // Arrow line
+                            // Drop X at destination
+                            if is_drop {
+                                let half = SEQ_DROP_X_HALF;
+                                let stroke = Stroke::new(SEQ_DROP_X_STROKE, recv_color);
                                 painter.line_segment(
-                                    [Pos2::new(src_x, y), Pos2::new(dst_x, y)],
-                                    Stroke::new(thickness, recv_color),
+                                    [
+                                        Pos2::new(dst_x - half, y - half),
+                                        Pos2::new(dst_x + half, y + half),
+                                    ],
+                                    stroke,
                                 );
+                                painter.line_segment(
+                                    [
+                                        Pos2::new(dst_x - half, y + half),
+                                        Pos2::new(dst_x + half, y - half),
+                                    ],
+                                    stroke,
+                                );
+                            }
 
-                                // Arrowhead
-                                let dir = if dst_x > src_x { 1.0_f32 } else { -1.0 };
-                                let tip = Pos2::new(dst_x, y);
+                            // Tooltip on hover
+                            let hover_rect = Rect::from_center_size(
+                                Pos2::new(dst_x, y),
+                                Vec2::splat(SEQ_HOVER_RECT_SIZE),
+                            );
+                            if ui.rect_contains_pointer(hover_rect) {
+                                let tip_text = match &recv.outcome {
+                                    ReceiverOutcome::Dropped(reason) => {
+                                        format!("{} dropped: {reason}", recv.node)
+                                    }
+                                    ReceiverOutcome::Received if recv.has_bit_errors => {
+                                        format!("{}: bit errors", recv.node)
+                                    }
+                                    ReceiverOutcome::Received => {
+                                        format!("{}: received", recv.node)
+                                    }
+                                };
+                                egui::containers::popup::show_tooltip_at_pointer(
+                                    ui.ctx(),
+                                    egui::LayerId::new(
+                                        egui::Order::Tooltip,
+                                        ui.id().with("recv_tip"),
+                                    ),
+                                    ui.id().with(("recv_tip", msg.timestep, &recv.node)),
+                                    |ui| {
+                                        ui.label(tip_text);
+                                    },
+                                );
+                            }
+                        }
+                    }
+
+                    // ========================================================
+                    // RX: arrow from sender to this node
+                    // ========================================================
+                    MessageKind::Received => {
+                        let Some(rx_idx) = sorted_names.iter().position(|n| n == &msg.src_node)
+                        else {
+                            continue;
+                        };
+                        let rx_x = lifeline_x[rx_idx];
+                        let thickness = if is_current { 2.5 } else { 1.5 };
+
+                        // Draw arrow from sender to receiver (if sender known)
+                        if let Some(ref sender) = msg.dst_node {
+                            if let Some(sender_idx) =
+                                sorted_names.iter().position(|n| n == sender)
+                            {
+                                let sender_x = lifeline_x[sender_idx];
+                                // Dashed arrow line from sender to receiver
+                                let dash_len = 4.0;
+                                let gap_len = 3.0;
+                                let total_dist = (rx_x - sender_x).abs();
+                                let dir = if rx_x > sender_x { 1.0_f32 } else { -1.0 };
+                                let mut drawn = 0.0;
+                                while drawn < total_dist {
+                                    let seg_start = sender_x + dir * drawn;
+                                    let seg_end = sender_x
+                                        + dir * (drawn + dash_len).min(total_dist);
+                                    painter.line_segment(
+                                        [Pos2::new(seg_start, y), Pos2::new(seg_end, y)],
+                                        Stroke::new(thickness, COLOR_RX),
+                                    );
+                                    drawn += dash_len + gap_len;
+                                }
+                                // Arrowhead at receiver
+                                let tip = Pos2::new(rx_x, y);
                                 let base_x = tip.x - dir * SEQ_ARROW_HEAD_LENGTH;
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![
@@ -239,110 +362,40 @@ pub fn show_sequence_diagram(
                                         Pos2::new(base_x, y - SEQ_ARROW_HEAD_WIDTH),
                                         Pos2::new(base_x, y + SEQ_ARROW_HEAD_WIDTH),
                                     ],
-                                    recv_color,
+                                    COLOR_RX,
                                     Stroke::NONE,
                                 ));
-
-                                // Drop X at destination
-                                if is_drop {
-                                    let half = SEQ_DROP_X_HALF;
-                                    let stroke = Stroke::new(SEQ_DROP_X_STROKE, recv_color);
-                                    painter.line_segment(
-                                        [
-                                            Pos2::new(dst_x - half, y - half),
-                                            Pos2::new(dst_x + half, y + half),
-                                        ],
-                                        stroke,
-                                    );
-                                    painter.line_segment(
-                                        [
-                                            Pos2::new(dst_x - half, y + half),
-                                            Pos2::new(dst_x + half, y - half),
-                                        ],
-                                        stroke,
-                                    );
-                                }
-
-                                // Tooltip on hover (drop reason or bit-error note)
-                                let hover_rect = Rect::from_center_size(
-                                    Pos2::new(dst_x, y),
-                                    Vec2::splat(SEQ_HOVER_RECT_SIZE),
-                                );
-                                if ui.rect_contains_pointer(hover_rect) {
-                                    let tip_text = match &recv.outcome {
-                                        ReceiverOutcome::Dropped(reason) => {
-                                            format!("{} dropped: {reason}", recv.node)
-                                        }
-                                        ReceiverOutcome::Received if recv.has_bit_errors => {
-                                            format!("{}: bit errors", recv.node)
-                                        }
-                                        ReceiverOutcome::Received => {
-                                            format!("{}: received", recv.node)
-                                        }
-                                    };
-                                    egui::containers::popup::show_tooltip_at_pointer(
-                                        ui.ctx(),
-                                        egui::LayerId::new(
-                                            egui::Order::Tooltip,
-                                            ui.id().with("recv_tip"),
-                                        ),
-                                        ui.id().with(("recv_tip", msg.timestep, &recv.node)),
-                                        |ui| {
-                                            ui.label(tip_text);
-                                        },
-                                    );
-                                }
                             }
                         }
-                    }
 
-                    // ========================================================
-                    // RX: dashed vertical segment on the receiver lifeline
-                    // ========================================================
-                    MessageKind::Received => {
-                        let Some(rx_idx) = sorted_names.iter().position(|n| n == &msg.src_node)
-                        else {
-                            continue;
-                        };
-                        let x = lifeline_x[rx_idx];
-                        let seg_half = (row_height * SEQ_RX_SEG_HALF_FACTOR).max(4.0);
-                        let dash = SEQ_RX_DASH;
-                        let gap = SEQ_RX_GAP;
-                        let thickness = if is_current { 2.5 } else { 1.5 };
-
-                        // Draw dashed vertical segment centred on the row
-                        let mut cy = y - seg_half;
-                        let y_end = y + seg_half;
-                        while cy < y_end {
-                            let d_end = (cy + dash).min(y_end);
-                            painter.line_segment(
-                                [Pos2::new(x, cy), Pos2::new(x, d_end)],
-                                Stroke::new(thickness, COLOR_RX),
-                            );
-                            cy += dash + gap;
-                        }
-
-                        // Small filled circle at centre
-                        let radius = if is_current { 3.5 } else { 2.0 };
-                        painter.circle_filled(Pos2::new(x, y), radius, COLOR_RX);
+                        // Filled circle on receiver lifeline
+                        painter.circle_filled(Pos2::new(rx_x, y), dot_r, COLOR_RX);
                     }
 
                     // ========================================================
                     // Drop (standalone): X on the dropping node's lifeline
                     // ========================================================
                     MessageKind::Dropped(reason) => {
-                        let Some(idx) = sorted_names.iter().position(|n| n == &msg.src_node) else {
+                        let Some(idx) = sorted_names.iter().position(|n| n == &msg.src_node)
+                        else {
                             continue;
                         };
                         let x = lifeline_x[idx];
                         let half = SEQ_DROP_X_HALF;
-                        let stroke = Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
+                        let stroke =
+                            Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
                         painter.line_segment(
-                            [Pos2::new(x - half, y - half), Pos2::new(x + half, y + half)],
+                            [
+                                Pos2::new(x - half, y - half),
+                                Pos2::new(x + half, y + half),
+                            ],
                             stroke,
                         );
                         painter.line_segment(
-                            [Pos2::new(x - half, y + half), Pos2::new(x + half, y - half)],
+                            [
+                                Pos2::new(x - half, y + half),
+                                Pos2::new(x + half, y - half),
+                            ],
                             stroke,
                         );
 
@@ -354,7 +407,10 @@ pub fn show_sequence_diagram(
                         if ui.rect_contains_pointer(hover_rect) {
                             egui::containers::popup::show_tooltip_at_pointer(
                                 ui.ctx(),
-                                egui::LayerId::new(egui::Order::Tooltip, ui.id().with("drop_tip")),
+                                egui::LayerId::new(
+                                    egui::Order::Tooltip,
+                                    ui.id().with("drop_tip"),
+                                ),
                                 ui.id().with(("drop_tip", msg.timestep, &msg.src_node)),
                                 |ui| {
                                     ui.label(format!("Dropped: {reason}"));
@@ -373,7 +429,8 @@ pub fn show_sequence_diagram(
                             Pos2::new(x, y),
                             Vec2::new(lifeline_spacing, row_height),
                         );
-                        if ui.rect_contains_pointer(hit_rect) && ui.input(|i| i.pointer.any_click())
+                        if ui.rect_contains_pointer(hit_rect)
+                            && ui.input(|i| i.pointer.any_click())
                         {
                             action = SequenceAction::JumpToEvent {
                                 record_index: record_idx,
