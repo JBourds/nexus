@@ -284,6 +284,8 @@ pub struct LiveSimState {
     pub all_records: Vec<trace::format::TraceRecord>,
     /// View mode: Grid or Sequence diagram.
     pub view_mode: ViewMode,
+    /// Persistent input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
 }
 
 /// State for replay mode.
@@ -330,6 +332,8 @@ pub struct ReplayState {
     pub expanded_messages: HashSet<usize>,
     /// View mode: Grid or Sequence diagram.
     pub view_mode: ViewMode,
+    /// Persistent input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
 }
 
 /// Per-node runtime state for visualization.
@@ -432,12 +436,20 @@ pub struct Breakpoint {
 /// What triggers a breakpoint.
 #[derive(Clone, Debug, PartialEq)]
 pub enum BreakpointKind {
+    /// Stop at the very next event (any event).
+    NextEvent,
     /// Stop at a specific timestep.
     Timestep(u64),
     /// Stop on any event involving this node.
     NodeEvent(String),
     /// Stop on any TX/RX on this channel.
     ChannelActivity(String),
+}
+
+/// Persistent UI state for the breakpoints panel input fields.
+#[derive(Default)]
+pub struct BreakpointInput {
+    pub timestep_buf: String,
 }
 
 /// Which main view is shown in the central panel.

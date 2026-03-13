@@ -270,11 +270,18 @@ impl NexusApp {
                     }
 
                     ui.separator();
+                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
+                    node_names.sort();
+                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
+                    channel_names.sort();
                     let bp_action = breakpoints::show_breakpoints(
                         ui,
                         &mut state.breakpoints,
                         &mut state.run_until,
                         state.current_timestep,
+                        &node_names,
+                        &channel_names,
+                        &mut state.bp_input,
                     );
                     match bp_action {
                         breakpoints::BreakpointsAction::Add(bp) => {
@@ -495,6 +502,7 @@ impl NexusApp {
                 breakpoints: Vec::new(),
                 expanded_messages: HashSet::new(),
                 view_mode: ViewMode::default(),
+                bp_input: BreakpointInput::default(),
             }));
         }
     }
@@ -623,11 +631,18 @@ impl NexusApp {
                     }
 
                     ui.separator();
+                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
+                    node_names.sort();
+                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
+                    channel_names.sort();
                     let bp_action = breakpoints::show_breakpoints(
                         ui,
                         &mut state.breakpoints,
                         &mut state.run_until,
                         state.current_timestep,
+                        &node_names,
+                        &channel_names,
+                        &mut state.bp_input,
                     );
                     match bp_action {
                         breakpoints::BreakpointsAction::Add(bp) => {
@@ -893,6 +908,7 @@ impl NexusApp {
                     expanded_messages: HashSet::new(),
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
+                    bp_input: BreakpointInput::default(),
                 }));
             }
             Err(e) => {
@@ -938,6 +954,7 @@ impl NexusApp {
                     expanded_messages: HashSet::new(),
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
+                    bp_input: BreakpointInput::default(),
                 }));
             }
             Err(e) => {
@@ -1049,6 +1066,7 @@ impl NexusApp {
                         breakpoints: Vec::new(),
                         expanded_messages: HashSet::new(),
                         view_mode: ViewMode::default(),
+                        bp_input: BreakpointInput::default(),
                     }));
                 }
                 Err(e) => {

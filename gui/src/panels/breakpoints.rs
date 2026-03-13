@@ -1,6 +1,6 @@
 use egui::Ui;
 
-use crate::state::{Breakpoint, BreakpointKind};
+use crate::state::{Breakpoint, BreakpointInput, BreakpointKind};
 
 /// Action from the breakpoints panel.
 pub enum BreakpointsAction {
@@ -13,13 +13,16 @@ pub enum BreakpointsAction {
 
 /// Show the breakpoints panel/section.
 ///
-/// `run_until` is the current one-shot condition (shown and clearable).
-/// `current_timestep` is used for default values in quick-add.
+/// `node_names` and `channel_names` are sorted lists for the combo boxes.
+/// `input` holds persistent text buffer state across frames.
 pub fn show_breakpoints(
     ui: &mut Ui,
     breakpoints: &mut Vec<Breakpoint>,
     run_until: &mut Option<BreakpointKind>,
     current_timestep: u64,
+    node_names: &[String],
+    channel_names: &[String],
+    input: &mut BreakpointInput,
 ) -> BreakpointsAction {
     let mut action = BreakpointsAction::None;
     let mut to_remove = Vec::new();
@@ -32,15 +35,9 @@ pub fn show_breakpoints(
     } else {
         for (i, bp) in breakpoints.iter_mut().enumerate() {
             ui.horizontal(|ui| {
-                // Enable/disable toggle
                 ui.checkbox(&mut bp.enabled, "");
 
-                // Description
-                let desc = match &bp.kind {
-                    BreakpointKind::Timestep(ts) => format!("t={ts}"),
-                    BreakpointKind::NodeEvent(name) => format!("node: {name}"),
-                    BreakpointKind::ChannelActivity(ch) => format!("channel: {ch}"),
-                };
+                let desc = describe_kind(&bp.kind);
                 let color = if bp.enabled {
                     egui::Color32::from_rgb(255, 80, 80)
                 } else {
@@ -48,7 +45,6 @@ pub fn show_breakpoints(
                 };
                 ui.colored_label(color, desc);
 
-                // Remove button
                 if ui.small_button("\u{2717}").on_hover_text("Remove").clicked() {
                     to_remove.push(i);
                 }
@@ -56,35 +52,74 @@ pub fn show_breakpoints(
         }
     }
 
-    // Remove in reverse order to preserve indices
     for i in to_remove.into_iter().rev() {
         breakpoints.remove(i);
     }
 
     ui.separator();
 
-    // Quick-add section
+    // --- Add breakpoint section ---
+    ui.label("Add breakpoint:");
+
+    // Timestep input
     ui.horizontal(|ui| {
-        ui.label("Add:");
-        if ui.button("Timestep").on_hover_text("Break at current timestep").clicked() {
+        ui.label("Timestep:");
+        let te = egui::TextEdit::singleline(&mut input.timestep_buf)
+            .desired_width(60.0)
+            .hint_text(current_timestep.to_string());
+        ui.add(te);
+        if ui.button("+").on_hover_text("Add timestep breakpoint").clicked() {
+            let ts = input
+                .timestep_buf
+                .trim()
+                .parse::<u64>()
+                .unwrap_or(current_timestep);
             action = BreakpointsAction::Add(Breakpoint {
-                kind: BreakpointKind::Timestep(current_timestep),
+                kind: BreakpointKind::Timestep(ts),
                 enabled: true,
             });
+            input.timestep_buf.clear();
         }
     });
 
+    // Node event breakpoint
+    if !node_names.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label("Node:");
+            for name in node_names {
+                if ui.small_button(name).on_hover_text(format!("Break on any event involving {name}")).clicked() {
+                    action = BreakpointsAction::Add(Breakpoint {
+                        kind: BreakpointKind::NodeEvent(name.clone()),
+                        enabled: true,
+                    });
+                }
+            }
+        });
+    }
+
+    // Channel activity breakpoint
+    if !channel_names.is_empty() {
+        ui.horizontal(|ui| {
+            ui.label("Channel:");
+            for name in channel_names {
+                if ui.small_button(name).on_hover_text(format!("Break on activity on {name}")).clicked() {
+                    action = BreakpointsAction::Add(Breakpoint {
+                        kind: BreakpointKind::ChannelActivity(name.clone()),
+                        enabled: true,
+                    });
+                }
+            }
+        });
+    }
+
     ui.separator();
 
-    // Run-Until section
+    // --- Run-Until section ---
     ui.label("Run Until");
+
     let has_run_until = run_until.is_some();
     if has_run_until {
-        let desc = match run_until.as_ref().unwrap() {
-            BreakpointKind::Timestep(ts) => format!("t={ts}"),
-            BreakpointKind::NodeEvent(name) => format!("node: {name}"),
-            BreakpointKind::ChannelActivity(ch) => format!("channel: {ch}"),
-        };
+        let desc = describe_kind(run_until.as_ref().unwrap());
         let mut clear = false;
         ui.horizontal(|ui| {
             ui.colored_label(egui::Color32::from_rgb(255, 200, 80), desc);
@@ -96,17 +131,86 @@ pub fn show_breakpoints(
             *run_until = None;
         }
     } else {
+        // Quick run-until buttons
         ui.horizontal(|ui| {
-            ui.label("(none)");
-            if ui.button("Set...").on_hover_text("Run until this timestep").clicked() {
-                action = BreakpointsAction::RunUntil(
-                    BreakpointKind::Timestep(current_timestep + 10),
-                );
+            if ui
+                .button("Next event")
+                .on_hover_text("Run until the next trace event occurs")
+                .clicked()
+            {
+                action = BreakpointsAction::RunUntil(BreakpointKind::NextEvent);
             }
         });
+
+        // Run until timestep
+        ui.horizontal(|ui| {
+            ui.label("Until t=");
+            let te = egui::TextEdit::singleline(&mut input.timestep_buf)
+                .desired_width(60.0)
+                .hint_text((current_timestep + 10).to_string());
+            ui.add(te);
+            if ui
+                .button("Go")
+                .on_hover_text("Run until this timestep")
+                .clicked()
+            {
+                let ts = input
+                    .timestep_buf
+                    .trim()
+                    .parse::<u64>()
+                    .unwrap_or(current_timestep + 10);
+                action = BreakpointsAction::RunUntil(BreakpointKind::Timestep(ts));
+                input.timestep_buf.clear();
+            }
+        });
+
+        // Run until node event
+        if !node_names.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("Until node:");
+                for name in node_names {
+                    if ui
+                        .small_button(name)
+                        .on_hover_text(format!("Run until any event on {name}"))
+                        .clicked()
+                    {
+                        action = BreakpointsAction::RunUntil(BreakpointKind::NodeEvent(
+                            name.clone(),
+                        ));
+                    }
+                }
+            });
+        }
+
+        // Run until channel activity
+        if !channel_names.is_empty() {
+            ui.horizontal(|ui| {
+                ui.label("Until ch:");
+                for name in channel_names {
+                    if ui
+                        .small_button(name)
+                        .on_hover_text(format!("Run until activity on {name}"))
+                        .clicked()
+                    {
+                        action = BreakpointsAction::RunUntil(BreakpointKind::ChannelActivity(
+                            name.clone(),
+                        ));
+                    }
+                }
+            });
+        }
     }
 
     action
+}
+
+fn describe_kind(kind: &BreakpointKind) -> String {
+    match kind {
+        BreakpointKind::NextEvent => "next event".to_string(),
+        BreakpointKind::Timestep(ts) => format!("t={ts}"),
+        BreakpointKind::NodeEvent(name) => format!("node: {name}"),
+        BreakpointKind::ChannelActivity(ch) => format!("channel: {ch}"),
+    }
 }
 
 /// Check if any enabled breakpoint matches the given event context.
@@ -124,6 +228,7 @@ pub fn check_breakpoints(
             continue;
         }
         let matches = match &bp.kind {
+            BreakpointKind::NextEvent => true,
             BreakpointKind::Timestep(ts) => timestep == *ts,
             BreakpointKind::NodeEvent(name) => {
                 let node_idx = match event {
