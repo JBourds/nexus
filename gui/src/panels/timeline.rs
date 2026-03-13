@@ -113,13 +113,15 @@ pub fn show_timeline(
 
             ui.separator();
 
-            // Speed control
+            // Speed control (only commits on Enter or focus loss to avoid
+            // intermediate values while the user is typing)
             ui.label("Speed:");
             ui.add(
                 egui::DragValue::new(playback_speed)
                     .speed(0.1)
                     .range(0.1..=10.0)
-                    .suffix("x"),
+                    .suffix("x")
+                    .update_while_editing(false),
             );
 
             // Timestep + event display

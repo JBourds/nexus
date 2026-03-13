@@ -394,7 +394,12 @@ impl NexusApp {
         let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             let mut playing = !state.paused;
-            let mut speed = 1.0;
+            // Speed control reads/writes the kernel's time_dilation atomic directly.
+            let mut speed = f64::from_bits(
+                state
+                    .time_dilation
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ) as f32;
             let total_records = state.all_records.len();
             let action = timeline::show_timeline(
                 ui,
@@ -407,31 +412,14 @@ impl NexusApp {
                 total_records,
                 &state.breakpoints,
             );
+            // Push speed changes back to the kernel's time_dilation atomic.
+            state
+                .time_dilation
+                .store((speed as f64).to_bits(), std::sync::atomic::Ordering::Relaxed);
             if action.toggle_play {
                 state.paused = !state.paused;
                 state.controller.set_paused(state.paused);
             }
-            // Time dilation slider
-            ui.horizontal(|ui| {
-                ui.label("Dilation:");
-                let mut td = f64::from_bits(
-                    state
-                        .time_dilation
-                        .load(std::sync::atomic::Ordering::Relaxed),
-                ) as f32;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut td, 0.1..=10.0)
-                            .logarithmic(true)
-                            .suffix("x"),
-                    )
-                    .changed()
-                {
-                    state
-                        .time_dilation
-                        .store((td as f64).to_bits(), std::sync::atomic::Ordering::Relaxed);
-                }
-            });
             if finished {
                 ui.horizontal(|ui| {
                     ui.label("Simulation complete.");
