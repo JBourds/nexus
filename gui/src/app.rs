@@ -92,12 +92,12 @@ impl App for NexusApp {
                     }
                     _ => {}
                 },
-                toolbar::ToolbarAction::ToggleMessages => match &mut self.mode {
+                toolbar::ToolbarAction::ToggleDebugger => match &mut self.mode {
                     AppMode::LiveSimulation(state) => {
-                        state.panels.messages = !state.panels.messages;
+                        state.panels.debugger = !state.panels.debugger;
                     }
                     AppMode::Replay(state) => {
-                        state.panels.messages = !state.panels.messages;
+                        state.panels.debugger = !state.panels.debugger;
                     }
                     _ => {}
                 },
@@ -469,44 +469,68 @@ impl NexusApp {
         }
 
         // Right panel: debugger (breakpoints + run-until)
-        egui::SidePanel::right("debugger")
-            .default_width(INSPECTOR_PANEL_WIDTH)
-            .resizable(true)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
-                    node_names.sort();
-                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
-                    channel_names.sort();
-                    let bp_action = breakpoints::show_breakpoints(
-                        ui,
-                        &mut state.breakpoints,
-                        Some(&mut state.run_until),
-                        state.current_timestep,
-                        &node_names,
-                        &channel_names,
-                        &mut state.bp_input,
-                    );
-                    match bp_action {
-                        breakpoints::BreakpointsAction::Add(bp) => {
-                            state.breakpoints.push(bp);
+        if state.panels.debugger {
+            egui::SidePanel::right("debugger")
+                .default_width(INSPECTOR_PANEL_WIDTH)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let mut node_names: Vec<_> =
+                            state.sim.nodes.keys().cloned().collect();
+                        node_names.sort();
+                        let mut channel_names: Vec<_> =
+                            state.sim.channels.keys().cloned().collect();
+                        channel_names.sort();
+                        let bp_action = breakpoints::show_breakpoints(
+                            ui,
+                            &mut state.breakpoints,
+                            Some(&mut state.run_until),
+                            state.current_timestep,
+                            &node_names,
+                            &channel_names,
+                            &mut state.bp_input,
+                        );
+                        match bp_action {
+                            breakpoints::BreakpointsAction::Add(bp) => {
+                                state.breakpoints.push(bp);
+                            }
+                            breakpoints::BreakpointsAction::RunUntil(kind) => {
+                                state.run_until = Some(kind);
+                            }
+                            breakpoints::BreakpointsAction::None => {}
                         }
-                        breakpoints::BreakpointsAction::RunUntil(kind) => {
-                            state.run_until = Some(kind);
+                        ui.separator();
+                        ui.checkbox(
+                            &mut state.persistent_next_event,
+                            "Persistent event stepping",
+                        )
+                        .on_hover_text(
+                            "When enabled, each resume automatically sets a \
+                             \"run until next event\" condition",
+                        );
+
+                        // Trace history
+                        if !trace_history.is_empty() {
+                            ui.separator();
+                            ui.collapsing("Traces", |ui| {
+                                for entry in trace_history.iter().rev() {
+                                    ui.horizontal(|ui| {
+                                        let dir_str =
+                                            entry.sim_dir.display().to_string();
+                                        ui.label(format!(
+                                            "[{}] {}",
+                                            entry.timestamp, entry.config_name
+                                        ));
+                                        if ui.small_button("Copy").clicked() {
+                                            ui.ctx().copy_text(dir_str);
+                                        }
+                                    });
+                                }
+                            });
                         }
-                        breakpoints::BreakpointsAction::None => {}
-                    }
-                    ui.separator();
-                    ui.checkbox(
-                        &mut state.persistent_next_event,
-                        "Persistent event stepping",
-                    )
-                    .on_hover_text(
-                        "When enabled, each resume automatically sets a \
-                         \"run until next event\" condition",
-                    );
+                    });
                 });
-            });
+        }
 
         // Timeline at bottom
         let total = state.sim.params.timestep.count.get();
@@ -518,6 +542,17 @@ impl NexusApp {
             state.paused = true;
             state.current_timestep = total;
             state.build_status = SimBuildStatus::Complete;
+            // Record in session trace history
+            let config_name = state
+                .sim_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_else(|| "simulation".to_string());
+            trace_history.push(TraceHistoryEntry {
+                sim_dir: state.sim_dir.clone(),
+                config_name,
+                timestamp: chrono::Local::now().format("%H:%M:%S").to_string(),
+            });
         }
         let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
@@ -695,75 +730,62 @@ impl NexusApp {
             }
         });
 
-        // Process output window (shown when a node is selected and outputs are available)
-        if !state.process_outputs.is_empty() {
-            let mut open = state.viewing_output.is_some();
-            if let Some(ref node_name) = state.viewing_output.clone() {
-                egui::Window::new(format!("Output: {node_name}"))
-                    .open(&mut open)
-                    .default_width(500.0)
-                    .default_height(300.0)
-                    .show(ctx, |ui| {
-                        let outputs: Vec<_> = state
-                            .process_outputs
-                            .iter()
-                            .filter(|o| o.node == *node_name)
-                            .collect();
-                        if outputs.is_empty() {
-                            ui.label("No output captured for this node.");
-                        } else {
-                            for output in &outputs {
-                                ui.collapsing(&output.protocol, |ui| {
-                                    if !output.stdout.is_empty() {
-                                        ui.label("stdout:");
-                                        egui::ScrollArea::vertical()
-                                            .max_height(200.0)
-                                            .id_salt(format!("stdout_{}_{}", node_name, output.protocol))
-                                            .show(ui, |ui| {
-                                                ui.add(
-                                                    egui::TextEdit::multiline(
-                                                        &mut output.stdout.as_str(),
-                                                    )
-                                                    .code_editor()
-                                                    .desired_width(f32::INFINITY),
-                                                );
-                                            });
-                                    }
-                                    if !output.stderr.is_empty() {
-                                        ui.label("stderr:");
-                                        egui::ScrollArea::vertical()
-                                            .max_height(200.0)
-                                            .id_salt(format!("stderr_{}_{}", node_name, output.protocol))
-                                            .show(ui, |ui| {
-                                                ui.add(
-                                                    egui::TextEdit::multiline(
-                                                        &mut output.stderr.as_str(),
-                                                    )
-                                                    .code_editor()
-                                                    .desired_width(f32::INFINITY),
-                                                );
-                                            });
-                                    }
-                                });
+        // Per-node-protocol floating output windows
+        let mut windows_to_close = Vec::new();
+        for key in state.open_output_windows.iter() {
+            let Some((node_name, protocol_name)) = key.split_once('.') else {
+                continue;
+            };
+            let output = state
+                .process_outputs
+                .iter()
+                .find(|o| o.node == node_name && o.protocol == protocol_name);
+            let mut open = true;
+            egui::Window::new(format!("{node_name}.{protocol_name}"))
+                .id(egui::Id::new(format!("output_window_{key}")))
+                .open(&mut open)
+                .default_width(480.0)
+                .default_height(300.0)
+                .show(ctx, |ui| {
+                    let Some(output) = output else {
+                        ui.label("Waiting for output...");
+                        return;
+                    };
+                    egui::ScrollArea::vertical()
+                        .id_salt(format!("out_scroll_{key}"))
+                        .stick_to_bottom(true)
+                        .show(ui, |ui| {
+                            if !output.stdout.is_empty() {
+                                ui.label("stdout:");
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut output.stdout.as_str())
+                                        .code_editor()
+                                        .desired_width(f32::INFINITY),
+                                );
                             }
-                        }
-                    });
-                if !open {
-                    state.viewing_output = None;
-                }
+                            if !output.stderr.is_empty() {
+                                ui.add_space(4.0);
+                                ui.label("stderr:");
+                                ui.add(
+                                    egui::TextEdit::multiline(&mut output.stderr.as_str())
+                                        .code_editor()
+                                        .desired_width(f32::INFINITY),
+                                );
+                            }
+                            if output.stdout.is_empty() && output.stderr.is_empty() {
+                                ui.label("No output yet.");
+                            }
+                        });
+                });
+            if !open {
+                windows_to_close.push(key.clone());
             }
+        }
+        for key in windows_to_close {
+            state.open_output_windows.remove(&key);
         }
 
-        // Show "View Output" button in inspector when simulation is finished
-        if finished && !state.process_outputs.is_empty() {
-            if let Some(ref selected) = state.selected_node {
-                if state.process_outputs.iter().any(|o| o.node == *selected)
-                    && state.viewing_output.as_ref() != Some(selected)
-                {
-                    state.viewing_output = Some(selected.clone());
-                }
-            }
-        }
+
 
         // Keep requesting repaints during live sim, during active animations,
         // and one extra frame after completion for remaining buffered events.
@@ -821,7 +843,8 @@ impl NexusApp {
     }
 
     fn show_replay_mode(&mut self, ctx: &Context) {
-        let AppMode::Replay(state) = &mut self.mode else {
+        let Self { mode, trace_history } = self;
+        let AppMode::Replay(state) = mode else {
             return;
         };
 
@@ -992,35 +1015,59 @@ impl NexusApp {
         }
 
         // Right panel: debugger (breakpoints + run-until)
-        egui::SidePanel::right("debugger")
-            .default_width(INSPECTOR_PANEL_WIDTH)
-            .resizable(true)
-            .show(ctx, |ui| {
-                egui::ScrollArea::vertical().show(ui, |ui| {
-                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
-                    node_names.sort();
-                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
-                    channel_names.sort();
-                    let bp_action = breakpoints::show_breakpoints(
-                        ui,
-                        &mut state.breakpoints,
-                        Some(&mut state.run_until),
-                        state.current_timestep,
-                        &node_names,
-                        &channel_names,
-                        &mut state.bp_input,
-                    );
-                    match bp_action {
-                        breakpoints::BreakpointsAction::Add(bp) => {
-                            state.breakpoints.push(bp);
+        if state.panels.debugger {
+            egui::SidePanel::right("debugger")
+                .default_width(INSPECTOR_PANEL_WIDTH)
+                .resizable(true)
+                .show(ctx, |ui| {
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        let mut node_names: Vec<_> =
+                            state.sim.nodes.keys().cloned().collect();
+                        node_names.sort();
+                        let mut channel_names: Vec<_> =
+                            state.sim.channels.keys().cloned().collect();
+                        channel_names.sort();
+                        let bp_action = breakpoints::show_breakpoints(
+                            ui,
+                            &mut state.breakpoints,
+                            Some(&mut state.run_until),
+                            state.current_timestep,
+                            &node_names,
+                            &channel_names,
+                            &mut state.bp_input,
+                        );
+                        match bp_action {
+                            breakpoints::BreakpointsAction::Add(bp) => {
+                                state.breakpoints.push(bp);
+                            }
+                            breakpoints::BreakpointsAction::RunUntil(kind) => {
+                                state.run_until = Some(kind);
+                            }
+                            breakpoints::BreakpointsAction::None => {}
                         }
-                        breakpoints::BreakpointsAction::RunUntil(kind) => {
-                            state.run_until = Some(kind);
+
+                        // Trace history
+                        if !trace_history.is_empty() {
+                            ui.separator();
+                            ui.collapsing("Traces", |ui| {
+                                for entry in trace_history.iter().rev() {
+                                    ui.horizontal(|ui| {
+                                        let dir_str =
+                                            entry.sim_dir.display().to_string();
+                                        ui.label(format!(
+                                            "[{}] {}",
+                                            entry.timestamp, entry.config_name
+                                        ));
+                                        if ui.small_button("Copy").clicked() {
+                                            ui.ctx().copy_text(dir_str);
+                                        }
+                                    });
+                                }
+                            });
                         }
-                        breakpoints::BreakpointsAction::None => {}
-                    }
+                    });
                 });
-            });
+        }
 
         // Timeline
         let total_records = state.controller.total_records();
@@ -1250,7 +1297,7 @@ impl NexusApp {
                     persistent_next_event: persistent,
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
-                    viewing_output: None,
+                    open_output_windows: HashSet::new(),
                 }));
             }
             Err(e) => {
@@ -1264,6 +1311,11 @@ impl NexusApp {
             return;
         };
         let sim = state.sim.clone();
+
+        // Stop the old simulation and drop its controller so the FUSE mount
+        // is fully unmounted before the new simulation tries to mount.
+        state.controller.stop();
+        self.mode = AppMode::Home; // drops old LiveSimState + SimController (joins thread)
 
         match crate::sim::launch::launch_simulation(sim.clone(), None) {
             Ok((controller, sim_dir, td)) => {
@@ -1301,7 +1353,7 @@ impl NexusApp {
                     persistent_next_event: false,
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
-                    viewing_output: None,
+                    open_output_windows: HashSet::new(),
                 }));
             }
             Err(e) => {
@@ -1713,7 +1765,7 @@ fn process_gui_event(
         | GuiEvent::SimulationError(_)
         | GuiEvent::BuildStarted
         | GuiEvent::BuildComplete
-        | GuiEvent::ProcessOutput { .. } => {}
+        | GuiEvent::ProcessOutputLine { .. } => {}
     }
 }
 

@@ -178,47 +178,6 @@ fn show_node_events(
                 return;
             }
 
-            // Prev/Next buttons for jumping within this node's events
-            ui.horizontal(|ui| {
-                if ui
-                    .small_button("< Prev")
-                    .on_hover_text("Previous event for this node")
-                    .clicked()
-                {
-                    // Find the previous event before current_event
-                    if let Some(cur) = current_event {
-                        for (_, msg) in node_msgs.iter().rev() {
-                            if let Some(ri) = msg.record_index
-                                && ri < cur {
-                                    action = InspectorAction::JumpToEvent(ri);
-                                    break;
-                                }
-                        }
-                    } else if let Some((_, msg)) = node_msgs.last()
-                        && let Some(ri) = msg.record_index {
-                            action = InspectorAction::JumpToEvent(ri);
-                        }
-                }
-                if ui
-                    .small_button("Next >")
-                    .on_hover_text("Next event for this node")
-                    .clicked()
-                {
-                    if let Some(cur) = current_event {
-                        for (_, msg) in &node_msgs {
-                            if let Some(ri) = msg.record_index
-                                && ri > cur {
-                                    action = InspectorAction::JumpToEvent(ri);
-                                    break;
-                                }
-                        }
-                    } else if let Some((_, msg)) = node_msgs.first()
-                        && let Some(ri) = msg.record_index {
-                            action = InspectorAction::JumpToEvent(ri);
-                        }
-                }
-            });
-
             // Scrollable event list
             egui::ScrollArea::vertical()
                 .max_height(INSPECTOR_EVENTS_SCROLL_HEIGHT)

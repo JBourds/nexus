@@ -22,7 +22,7 @@ use runner::cli::RunCmd;
 use trace::format::TraceHeader;
 use trace::writer::TraceWriter;
 
-use crate::sim::bridge::{GuiEvent, ReloadableSimLayer, SimSinks};
+use crate::sim::bridge::{GuiEvent, OutputStream, ReloadableSimLayer, SimSinks};
 use crate::sim::controller::SimController;
 
 /// Global sinks handle, initialised once on first simulation launch.
@@ -166,11 +166,12 @@ fn run_simulation(
     // Install sinks for this simulation run.
     sinks.install(gui_tx.clone(), writer);
 
-    run_inner(sim, fs_root, gui_tx, abort, pause, time_dilation)
+    run_inner(sim, root, fs_root, gui_tx, abort, pause, time_dilation)
 }
 
 fn run_inner(
     sim: ast::Simulation,
+    sim_dir: PathBuf,
     fs_root: Option<PathBuf>,
     gui_tx: Sender<GuiEvent>,
     abort: Arc<AtomicBool>,
@@ -182,7 +183,11 @@ fn run_inner(
     let _ = gui_tx.send(GuiEvent::BuildStarted);
     runner::build(&sim)?;
     let _ = gui_tx.send(GuiEvent::BuildComplete);
-    let runc = runner::run(&sim)?;
+    let mut runc = runner::run(&sim)?;
+
+    // Freeze all processes so they don't try to access FUSE files before
+    // the filesystem is mounted.
+    runc.cgroups.freeze_nodes();
 
     // Take stdout/stderr from child processes before the kernel consumes the
     // handles. Spawn per-stream reader threads that send lines to the GUI and
@@ -203,6 +208,9 @@ fn run_inner(
         .add_channels(protocol_channels)?
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
+
+    // FUSE is mounted; unfreeze processes so they can access their files.
+    runc.cgroups.unfreeze_nodes();
 
     let kernel = KernelBuilder::new(sim, runc, file_handles, rx, tx, remap_tx)
         .abort_flag(abort)

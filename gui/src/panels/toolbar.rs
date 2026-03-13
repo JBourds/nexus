@@ -14,7 +14,7 @@ pub enum ToolbarAction {
     StopSimulation,
     RerunSimulation,
     ToggleInspector,
-    ToggleMessages,
+    ToggleDebugger,
     ToggleViewMode,
 }
 
@@ -112,17 +112,17 @@ pub fn show_toolbar(
                     {
                         action = ToolbarAction::ToggleInspector;
                     }
-                    let msg_label = if panels.messages {
-                        "Messages \u{2713}"
+                    let dbg_label = if panels.debugger {
+                        "Debugger \u{2713}"
                     } else {
-                        "Messages"
+                        "Debugger"
                     };
                     if ui
-                        .button(msg_label)
-                        .on_hover_text("Toggle messages panel")
+                        .button(dbg_label)
+                        .on_hover_text("Toggle debugger panel")
                         .clicked()
                     {
-                        action = ToolbarAction::ToggleMessages;
+                        action = ToolbarAction::ToggleDebugger;
                     }
                 }
 

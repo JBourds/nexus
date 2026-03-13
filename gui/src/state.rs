@@ -414,6 +414,7 @@ pub enum ReceiverOutcome {
 pub struct PanelVisibility {
     pub inspector: bool,
     pub messages: bool,
+    pub debugger: bool,
 }
 
 impl Default for PanelVisibility {
@@ -421,6 +422,7 @@ impl Default for PanelVisibility {
         Self {
             inspector: true,
             messages: true,
+            debugger: true,
         }
     }
 }
