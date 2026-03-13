@@ -84,7 +84,7 @@ pub fn show_timeline(
 
                 // Timeline scrubber
                 let mut ts_f32 = *current_timestep as f32;
-                let max = (total_timesteps.saturating_sub(1)) as f32;
+                let max = total_timesteps as f32;
                 let slider = egui::Slider::new(&mut ts_f32, 0.0..=max)
                     .text("timestep")
                     .integer();
