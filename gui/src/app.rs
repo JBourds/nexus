@@ -391,6 +391,13 @@ impl NexusApp {
         // Timeline at bottom
         let total = state.sim.params.timestep.count.get();
         let finished = state.controller.is_finished();
+        // Sync pause state: when the simulation finishes, mark as paused so
+        // the play/pause button shows the correct state. Also snap the
+        // displayed timestep to the total count to avoid an off-by-one.
+        if finished && !state.paused {
+            state.paused = true;
+            state.current_timestep = total;
+        }
         let mut view_replay = false;
         egui::TopBottomPanel::bottom("timeline").show(ctx, |ui| {
             let mut playing = !state.paused;
