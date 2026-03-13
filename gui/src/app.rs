@@ -1333,6 +1333,7 @@ fn process_gui_event(
                     dst_node,
                     channel,
                     data,
+                    bit_errors,
                 } => {
                     let dst_idx = *dst_node as usize;
                     let ch_idx = *channel as usize;
@@ -1343,6 +1344,8 @@ fn process_gui_event(
                         .get(ch_idx)
                         .and_then(|s| s.as_ref())
                         .map(|&idx| node_name_by_index(sim, idx));
+                    let dst_name_clone = dst_name.clone();
+                    let ch_name_clone = ch_name.clone();
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Received,
@@ -1354,6 +1357,18 @@ fn process_gui_event(
                         receivers: Vec::new(),
                         record_index: None,
                     });
+                    // Correlate: attach this RX to matching TX entry
+                    if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {
+                        m.kind == MessageKind::Sent
+                            && m.timestep == record.timestep
+                            && m.channel == ch_name_clone
+                    }) {
+                        tx_entry.receivers.push(ReceiverInfo {
+                            node: dst_name_clone,
+                            outcome: ReceiverOutcome::Received,
+                            has_bit_errors: *bit_errors,
+                        });
+                    }
                     // Create RX arrow from last known sender
                     if let Some(Some(src_idx)) = last_sender.get(ch_idx) {
                         active_arrows.push(ArrowAnimation {
@@ -1378,9 +1393,12 @@ fn process_gui_event(
                         .get(ch_idx)
                         .and_then(|s| s.as_ref())
                         .map(|&idx| node_name_by_index(sim, idx));
+                    let src_name_clone = src_name.clone();
+                    let ch_name_clone = ch_name.clone();
+                    let reason_str = format!("{reason:?}");
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
-                        kind: MessageKind::Dropped(format!("{reason:?}")),
+                        kind: MessageKind::Dropped(reason_str.clone()),
                         src_node: src_name,
                         dst_node: sender_name,
                         channel: ch_name,
@@ -1389,6 +1407,18 @@ fn process_gui_event(
                         receivers: Vec::new(),
                         record_index: None,
                     });
+                    // Correlate: attach this Drop to matching TX entry
+                    if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {
+                        m.kind == MessageKind::Sent
+                            && m.timestep == record.timestep
+                            && m.channel == ch_name_clone
+                    }) {
+                        tx_entry.receivers.push(ReceiverInfo {
+                            node: src_name_clone,
+                            outcome: ReceiverOutcome::Dropped(reason_str),
+                            has_bit_errors: false,
+                        });
+                    }
                     // Create drop arrows to all subscribers
                     if let Some(subs) = channel_subscribers.get(ch_idx) {
                         for &dst_idx in subs {
@@ -1591,7 +1621,7 @@ fn correlate_all_tx_receivers(
                 for record in controller.records_at(ts) {
                     match &record.event {
                         TraceEvent::MessageRecv {
-                            dst_node, channel, ..
+                            dst_node, channel, bit_errors, ..
                         } => {
                             let ch_name = channel_name_by_index(sim, *channel as usize);
                             if &ch_name == ch {
@@ -1600,17 +1630,20 @@ fn correlate_all_tx_receivers(
                                 receivers.push(ReceiverInfo {
                                     node: node_name,
                                     outcome: ReceiverOutcome::Received,
+                                    has_bit_errors: *bit_errors,
                                 });
                             }
                         }
                         TraceEvent::MessageDropped {
-                            channel, reason, ..
+                            src_node, channel, reason,
                         } => {
                             let ch_name = channel_name_by_index(sim, *channel as usize);
                             if &ch_name == ch {
+                                let drop_node = node_name_by_index(sim, *src_node as usize);
                                 receivers.push(ReceiverInfo {
-                                    node: msg.src_node.clone(),
+                                    node: drop_node,
                                     outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
+                                    has_bit_errors: false,
                                 });
                             }
                         }
@@ -1731,6 +1764,7 @@ fn trace_record_to_message(
             dst_node,
             channel,
             data,
+            ..
         } => Some(MessageEntry {
             timestep: record.timestep,
             kind: MessageKind::Received,

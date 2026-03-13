@@ -71,6 +71,7 @@ struct BridgeVisitor {
     channel: u32,
     node: u32,
     is_tx: bool,
+    bit_errors: bool,
     data: Vec<u8>,
     reason: Option<String>,
     motion_spec: Option<String>,
@@ -103,8 +104,10 @@ impl Visit for BridgeVisitor {
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        if field.name() == "tx" {
-            self.is_tx = value;
+        match field.name() {
+            "tx" => self.is_tx = value,
+            "bit_errors" => self.bit_errors = value,
+            _ => {}
         }
     }
 
@@ -220,6 +223,7 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                 dst_node: visitor.node,
                 channel: visitor.channel,
                 data: visitor.data,
+                bit_errors: visitor.bit_errors,
             }
         };
 

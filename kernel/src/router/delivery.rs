@@ -15,6 +15,8 @@ pub(crate) struct QueuedMessage {
     pub(super) src: NodeHandle,
     pub(super) buf: Rc<[u8]>,
     pub(super) expiration: Option<NonZeroU64>,
+    /// Whether the data was corrupted by bit errors during link simulation.
+    pub(super) bit_errors: bool,
 }
 
 impl RoutingServer {
@@ -65,8 +67,8 @@ impl RoutingServer {
 
             // For exclusive channels, run link simulation now; drop the
             // message if it doesn't survive.
-            let buf: Rc<[u8]> = if is_shared {
-                Rc::clone(&shared_buf)
+            let (buf, msg_bit_errors): (Rc<[u8]>, bool) = if is_shared {
+                (Rc::clone(&shared_buf), false)
             } else {
                 match Self::send_through_channel(
                     channel,
@@ -75,7 +77,7 @@ impl RoutingServer {
                     distance_unit,
                     &mut self.rng,
                 ) {
-                    Some(b) => b.into(),
+                    Some((b, be)) => (b.into(), be),
                     None => continue,
                 }
             };
@@ -89,6 +91,7 @@ impl RoutingServer {
                     src: src_node,
                     buf,
                     expiration,
+                    bit_errors: msg_bit_errors,
                 },
             };
 
@@ -134,7 +137,7 @@ impl RoutingServer {
                     &self.channels.nodes[node_handle.0].position,
                 );
 
-                if let Some(buf) = Self::send_through_channel(
+                if let Some((buf, bit_errors)) = Self::send_through_channel(
                     channel,
                     Cow::from(msg.buf.as_ref()),
                     distance,
@@ -150,6 +153,10 @@ impl RoutingServer {
                             msg.expiration,
                         );
                     }
+                    event!(
+                        target: "rx", Level::INFO, timestep, channel = channel_handle.0,
+                        node = node_handle.0, tx = false, bit_errors, data = buf.as_ref()
+                    );
                     let msg = fuse::Message {
                         id: (pid, node_name.to_string()),
                         data: buf.to_vec(),
@@ -180,18 +187,26 @@ impl RoutingServer {
                     )
                 });
 
-                // Combine signals
-                let buf = filtered.fold(Vec::with_capacity(max_size.get()), |mut v, msg| {
-                    let small = v.len().min(msg.len());
-                    for i in 0..small {
-                        v[i] |= msg[i];
-                    }
-                    v.extend_from_slice(&msg[small..]);
-                    v
-                });
+                // Combine signals; track whether any contributing message had
+                // bit errors.
+                let mut any_bit_errors = false;
+                let buf = filtered.fold(
+                    Vec::with_capacity(max_size.get()),
+                    |mut v, (msg, bit_errors)| {
+                        any_bit_errors |= bit_errors;
+                        let small = v.len().min(msg.len());
+                        for i in 0..small {
+                            v[i] |= msg[i];
+                        }
+                        v.extend_from_slice(&msg[small..]);
+                        v
+                    },
+                );
+                // Collisions always corrupt the signal.
+                let bit_errors = any_bit_errors || mailbox.len() > 1;
                 event!(
                     target: "rx", Level::INFO, timestep, channel = channel_handle.0,
-                    node = node_handle.0, tx = false, data = buf.as_slice()
+                    node = node_handle.0, tx = false, bit_errors, data = buf.as_slice()
                 );
                 let msg = fuse::Message {
                     id: (pid, node_name.to_string()),
@@ -235,13 +250,14 @@ impl RoutingServer {
                     msg.expiration,
                 );
             }
+            let bit_errors = msg.bit_errors;
             let msg = fuse::Message {
                 id: (pid, self.channels.node_names[node_handle.0].to_string()),
                 data: msg.buf.to_vec(),
             };
             event!(
                 target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle.0,
-                node = node_handle.0, tx = false, data = msg.data.as_slice()
+                node = node_handle.0, tx = false, bit_errors, data = msg.data.as_slice()
             );
 
             self.tx

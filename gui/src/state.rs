@@ -388,6 +388,8 @@ pub struct MessageEntry {
 pub struct ReceiverInfo {
     pub node: String,
     pub outcome: ReceiverOutcome,
+    /// True when the received data differs from the transmitted data (bit flips).
+    pub has_bit_errors: bool,
 }
 
 /// Whether a node received or dropped a message.
