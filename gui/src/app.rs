@@ -11,6 +11,7 @@ use crate::config_editor;
 use crate::panels::{breakpoints, grid, inspector, messages, sequence, timeline, toolbar};
 use crate::render::grid::GridView;
 use crate::sim::bridge::GuiEvent;
+use crate::constants::*;
 use crate::state::*;
 use trace::format::TraceEvent;
 
@@ -156,7 +157,7 @@ impl NexusApp {
 
         // Right panel: breakpoints (pre-simulation)
         egui::SidePanel::right("config_breakpoints")
-            .default_width(180.0)
+            .default_width(INSPECTOR_PANEL_WIDTH)
             .resizable(true)
             .show(ctx, |ui| {
                 let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
@@ -304,7 +305,7 @@ impl NexusApp {
         // Left panel: inspector + messages (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
-                .default_width(220.0)
+                .default_width(BREAKPOINTS_PANEL_WIDTH)
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -335,7 +336,7 @@ impl NexusApp {
                                     let msg_action = messages::show_messages(
                                         ui,
                                         &state.messages,
-                                        200,
+                                        MAX_MESSAGES_DISPLAY,
                                         state.event_cursor,
                                         &mut state.expanded_messages,
                                     );
@@ -359,7 +360,7 @@ impl NexusApp {
 
         // Right panel: debugger (breakpoints + run-until)
         egui::SidePanel::right("debugger")
-            .default_width(180.0)
+            .default_width(INSPECTOR_PANEL_WIDTH)
             .resizable(true)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -551,7 +552,7 @@ impl NexusApp {
                 current_timestep: 0,
                 total_timesteps,
                 playing: false,
-                playback_speed: 1.0,
+                playback_speed: PLAYBACK_SPEED_DEFAULT,
                 messages: Vec::new(),
                 node_states: initial_states.clone(),
                 initial_states,
@@ -571,7 +572,7 @@ impl NexusApp {
                 expanded_messages: HashSet::new(),
                 view_mode: ViewMode::default(),
                 bp_input: BreakpointInput::default(),
-                seq_zoom: 1.0,
+                seq_zoom: SEQ_ZOOM_DEFAULT,
             }));
         }
     }
@@ -696,7 +697,7 @@ impl NexusApp {
         // Left panel: inspector + messages (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
-                .default_width(220.0)
+                .default_width(BREAKPOINTS_PANEL_WIDTH)
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
@@ -727,7 +728,7 @@ impl NexusApp {
                                     let msg_action = messages::show_messages(
                                         ui,
                                         &state.messages,
-                                        200,
+                                        MAX_MESSAGES_DISPLAY,
                                         state.event_cursor,
                                         &mut state.expanded_messages,
                                     );
@@ -751,7 +752,7 @@ impl NexusApp {
 
         // Right panel: debugger (breakpoints + run-until)
         egui::SidePanel::right("debugger")
-            .default_width(180.0)
+            .default_width(INSPECTOR_PANEL_WIDTH)
             .resizable(true)
             .show(ctx, |ui| {
                 egui::ScrollArea::vertical().show(ui, |ui| {
@@ -1014,7 +1015,7 @@ impl NexusApp {
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
-                    seq_zoom: 1.0,
+                    seq_zoom: SEQ_ZOOM_DEFAULT,
                 }));
             }
             Err(e) => {
@@ -1061,7 +1062,7 @@ impl NexusApp {
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
-                    seq_zoom: 1.0,
+                    seq_zoom: SEQ_ZOOM_DEFAULT,
                 }));
             }
             Err(e) => {
@@ -1156,7 +1157,7 @@ impl NexusApp {
                         current_timestep: 0,
                         total_timesteps,
                         playing: false,
-                        playback_speed: 1.0,
+                        playback_speed: PLAYBACK_SPEED_DEFAULT,
                         messages: Vec::new(),
                         node_states: initial_states.clone(),
                         initial_states,
@@ -1176,7 +1177,7 @@ impl NexusApp {
                         expanded_messages: HashSet::new(),
                         view_mode: ViewMode::default(),
                         bp_input: BreakpointInput::default(),
-                        seq_zoom: 1.0,
+                        seq_zoom: SEQ_ZOOM_DEFAULT,
                     }));
                 }
                 Err(e) => {
@@ -1198,8 +1199,8 @@ fn build_receiver_highlights(
         if let Some(msg) = messages.get(idx) {
             for recv in &msg.receivers {
                 let color = match &recv.outcome {
-                    ReceiverOutcome::Received => egui::Color32::from_rgb(100, 200, 100),
-                    ReceiverOutcome::Dropped(_) => egui::Color32::from_rgb(255, 100, 100),
+                    ReceiverOutcome::Received => COLOR_TX_OK,
+                    ReceiverOutcome::Dropped(_) => COLOR_DROP,
                 };
                 highlights.insert(recv.node.clone(), color);
             }
@@ -1323,7 +1324,7 @@ fn process_gui_event(
                                     dst_node: dst_idx,
                                     kind: ArrowKind::Sent,
                                     start_time: egui_time,
-                                    duration: 0.25,
+                                    duration: ARROW_DURATION,
                                 });
                             }
                         }
@@ -1376,7 +1377,7 @@ fn process_gui_event(
                             dst_node: dst_idx,
                             kind: ArrowKind::Received,
                             start_time: egui_time,
-                            duration: 0.25,
+                            duration: ARROW_DURATION,
                         });
                     }
                 }
@@ -1428,7 +1429,7 @@ fn process_gui_event(
                                     dst_node: dst_idx,
                                     kind: ArrowKind::Dropped,
                                     start_time: egui_time,
-                                    duration: 0.25,
+                                    duration: ARROW_DURATION,
                                 });
                             }
                         }
@@ -1694,7 +1695,7 @@ fn gather_arrows_at(
                                 dst_node: dst_idx,
                                 kind: ArrowKind::Sent,
                                 start_time: egui_time,
-                                duration: 0.25,
+                                duration: ARROW_DURATION,
                             });
                         }
                     }
@@ -1711,7 +1712,7 @@ fn gather_arrows_at(
                         dst_node: dst_idx,
                         kind: ArrowKind::Received,
                         start_time: egui_time,
-                        duration: 0.25,
+                        duration: ARROW_DURATION,
                     });
                 }
             }
@@ -1728,7 +1729,7 @@ fn gather_arrows_at(
                                 dst_node: dst_idx,
                                 kind: ArrowKind::Dropped,
                                 start_time: egui_time,
-                                duration: 0.25,
+                                duration: ARROW_DURATION,
                             });
                         }
                     }

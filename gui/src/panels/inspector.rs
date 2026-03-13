@@ -3,6 +3,7 @@ use std::collections::HashSet;
 use config::ast;
 use egui::Ui;
 
+use crate::constants::*;
 use crate::state::{MessageEntry, MessageKind, NodeState};
 
 /// Action from the inspector panel.
@@ -28,7 +29,7 @@ pub fn show_inspector(
 ) -> InspectorAction {
     let mut action = InspectorAction::None;
 
-    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(PANEL_FRAME_MARGIN).show(ui, |ui| {
         if node_states.is_empty() {
             ui.label("No nodes");
             return;
@@ -112,7 +113,7 @@ fn show_node_details(ui: &mut Ui, sim: &ast::Simulation, node_states: &[NodeStat
             if rt.motion_spec == "none" {
                 ui.label("Static");
             } else {
-                ui.colored_label(egui::Color32::from_rgb(180, 180, 255), &rt.motion_spec);
+                ui.colored_label(COLOR_MOTION_SPEC, &rt.motion_spec);
             }
         });
     }
@@ -216,7 +217,7 @@ fn show_node_events(
 
             // Scrollable event list
             egui::ScrollArea::vertical()
-                .max_height(200.0)
+                .max_height(INSPECTOR_EVENTS_SCROLL_HEIGHT)
                 .id_salt(ui.id().with(("node_events_scroll", node_name)))
                 .show(ui, |ui| {
                     for (_, msg) in &node_msgs {
@@ -225,23 +226,14 @@ fn show_node_events(
                             && msg.record_index == current_event;
 
                         let (icon, color) = match &msg.kind {
-                            MessageKind::Sent => (
-                                "TX",
-                                egui::Color32::from_rgb(100, 200, 100),
-                            ),
-                            MessageKind::Received => (
-                                "RX",
-                                egui::Color32::from_rgb(100, 150, 255),
-                            ),
-                            MessageKind::Dropped(_) => (
-                                "XX",
-                                egui::Color32::from_rgb(255, 100, 100),
-                            ),
+                            MessageKind::Sent => ("TX", COLOR_TX_OK),
+                            MessageKind::Received => ("RX", COLOR_RX),
+                            MessageKind::Dropped(_) => ("XX", COLOR_DROP),
                         };
 
                         let frame = if is_current {
                             egui::Frame::NONE
-                                .fill(egui::Color32::from_rgba_premultiplied(255, 255, 100, 30))
+                                .fill(COLOR_EVENT_HIGHLIGHT)
                                 .inner_margin(2.0)
                                 .corner_radius(2.0)
                         } else {
@@ -260,7 +252,7 @@ fn show_node_events(
                                     ui.label(
                                         egui::RichText::new(&msg.channel)
                                             .small()
-                                            .color(egui::Color32::from_gray(160)),
+                                            .color(COLOR_LABEL_DIM),
                                     );
                                 });
                                 // Show sender/receiver info on the second line
@@ -271,7 +263,7 @@ fn show_node_events(
                                             ui.label(
                                                 egui::RichText::new(&msg.data_preview)
                                                     .small()
-                                                    .color(egui::Color32::from_gray(140)),
+                                                    .color(COLOR_LABEL_DIMMER),
                                             );
                                         }
                                     }
@@ -280,7 +272,7 @@ fn show_node_events(
                                             ui.label(
                                                 egui::RichText::new(format!("from: {sender}"))
                                                     .small()
-                                                    .color(egui::Color32::from_rgb(100, 150, 255)),
+                                                    .color(COLOR_RX),
                                             );
                                         }
                                     }
@@ -293,7 +285,7 @@ fn show_node_events(
                                         ui.label(
                                             egui::RichText::new(parts.join(" - "))
                                                 .small()
-                                                .color(egui::Color32::from_rgb(255, 100, 100)),
+                                                .color(COLOR_DROP),
                                         );
                                     }
                                 }

@@ -3,13 +3,14 @@ use std::path::Path;
 use config::parse::NodeProfile;
 use egui::Ui;
 
+use crate::constants::{COLOR_IMPORTED_GREEN, COLOR_MODULE_REMOVE};
 use crate::state::ModuleState;
 
 /// Small red "X" remove button with tooltip. Returns `true` when clicked.
 fn module_remove_button(ui: &mut Ui) -> bool {
     let button = egui::Button::new(
         egui::RichText::new("\u{2716}")
-            .color(egui::Color32::from_rgb(220, 60, 60))
+            .color(COLOR_MODULE_REMOVE)
             .size(13.0),
     )
     .small()
@@ -236,7 +237,7 @@ pub fn show_module_browser(
 
                                     let resp = if already_imported {
                                         // Draw with green border to indicate imported
-                                        let green = egui::Color32::from_rgb(60, 160, 60);
+                                        let green = COLOR_IMPORTED_GREEN;
                                         let (rect, resp) = ui.allocate_exact_size(
                                             egui::vec2(ui.available_width(), 20.0),
                                             egui::Sense::click(),

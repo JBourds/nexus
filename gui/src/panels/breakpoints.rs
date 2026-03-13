@@ -1,5 +1,6 @@
 use egui::Ui;
 
+use crate::constants::*;
 use crate::state::{Breakpoint, BreakpointInput, BreakpointKind};
 
 /// Action from the breakpoints panel.
@@ -38,9 +39,9 @@ pub fn show_breakpoints(
 
                 let desc = describe_kind(&bp.kind);
                 let color = if bp.enabled {
-                    egui::Color32::from_rgb(255, 80, 80)
+                    COLOR_BREAKPOINT_ENABLED
                 } else {
-                    egui::Color32::from_gray(120)
+                    COLOR_BREAKPOINT_DISABLED
                 };
                 ui.colored_label(color, desc);
 
@@ -141,7 +142,7 @@ pub fn show_breakpoints(
             let desc = describe_kind(run_until.as_ref().unwrap());
             let mut clear = false;
             ui.horizontal(|ui| {
-                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), desc);
+                ui.colored_label(COLOR_RUN_UNTIL, desc);
                 if ui.small_button("Clear").clicked() {
                     clear = true;
                 }
@@ -260,7 +261,7 @@ fn show_searchable_list(
         ui.label("(no matches)");
     } else {
         egui::ScrollArea::vertical()
-            .max_height(120.0)
+            .max_height(BREAKPOINTS_SCROLL_HEIGHT)
             .id_salt(format!("{id_salt}_scroll"))
             .show(ui, |ui| {
                 for name in &filtered {

@@ -2,6 +2,7 @@ use std::collections::HashSet;
 
 use egui::Ui;
 
+use crate::constants::*;
 use crate::state::{MessageEntry, MessageKind, ReceiverOutcome};
 
 /// Action from the messages panel that the caller should handle.
@@ -26,7 +27,7 @@ pub fn show_messages(
 ) -> MessagesAction {
     let mut action = MessagesAction::None;
 
-    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(PANEL_FRAME_MARGIN).show(ui, |ui| {
         if messages.is_empty() {
             ui.label("No messages yet");
             return;
@@ -44,9 +45,9 @@ pub fn show_messages(
                         MessageKind::Dropped(_) => "XX",
                     };
                     let color = match &msg.kind {
-                        MessageKind::Sent => egui::Color32::from_rgb(100, 200, 100),
-                        MessageKind::Received => egui::Color32::from_rgb(100, 150, 255),
-                        MessageKind::Dropped(_) => egui::Color32::from_rgb(255, 100, 100),
+                        MessageKind::Sent => COLOR_TX_OK,
+                        MessageKind::Received => COLOR_RX,
+                        MessageKind::Dropped(_) => COLOR_DROP,
                     };
 
                     // Highlight the current event row
@@ -56,7 +57,7 @@ pub fn show_messages(
 
                     let frame = if is_current {
                         egui::Frame::NONE
-                            .fill(egui::Color32::from_rgba_premultiplied(255, 255, 100, 30))
+                            .fill(COLOR_EVENT_HIGHLIGHT)
                             .inner_margin(2.0)
                             .corner_radius(2.0)
                     } else {
@@ -124,22 +125,14 @@ pub fn show_messages(
                                     ui.horizontal(|ui| {
                                         match &recv.outcome {
                                             ReceiverOutcome::Received => {
-                                                ui.colored_label(
-                                                    egui::Color32::from_rgb(100, 200, 100),
-                                                    "\u{2713}",
-                                                );
+                                                ui.colored_label(COLOR_TX_OK, "\u{2713}");
                                             }
                                             ReceiverOutcome::Dropped(reason) => {
-                                                ui.colored_label(
-                                                    egui::Color32::from_rgb(255, 100, 100),
-                                                    "\u{2717}",
-                                                );
+                                                ui.colored_label(COLOR_DROP, "\u{2717}");
                                                 ui.label(
                                                     egui::RichText::new(reason)
                                                         .small()
-                                                        .color(egui::Color32::from_rgb(
-                                                            255, 100, 100,
-                                                        )),
+                                                        .color(COLOR_DROP),
                                                 );
                                             }
                                         }

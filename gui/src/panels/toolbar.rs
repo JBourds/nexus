@@ -1,5 +1,6 @@
 use egui::Ui;
 
+use crate::constants::PANEL_FRAME_MARGIN;
 use crate::state::{AppMode, PanelVisibility, ViewMode};
 
 #[derive(Clone, Copy, PartialEq)]
@@ -26,7 +27,7 @@ pub fn show_toolbar(
 ) -> ToolbarAction {
     let mut action = ToolbarAction::None;
 
-    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(PANEL_FRAME_MARGIN).show(ui, |ui| {
         ui.horizontal(|ui| {
             let home_label = match mode {
                 AppMode::Home => "[ Home ]",

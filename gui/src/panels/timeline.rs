@@ -1,5 +1,6 @@
 use egui::Ui;
 
+use crate::constants::*;
 use crate::state::Breakpoint;
 
 pub struct TimelineAction {
@@ -31,7 +32,7 @@ pub fn show_timeline(
         step_backward: false,
     };
 
-    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
+    egui::Frame::NONE.inner_margin(PANEL_FRAME_MARGIN).show(ui, |ui| {
         ui.horizontal(|ui| {
             // Playback controls
             if ui.button("|<").on_hover_text("Jump to start").clicked() {
@@ -105,7 +106,7 @@ pub fn show_timeline(
                         painter.circle_filled(
                             egui::Pos2::new(x, y),
                             3.0,
-                            egui::Color32::from_rgb(255, 80, 80),
+                            COLOR_BREAKPOINT_ENABLED,
                         );
                     }
                 }
@@ -118,8 +119,8 @@ pub fn show_timeline(
             ui.label("Speed:");
             ui.add(
                 egui::DragValue::new(playback_speed)
-                    .speed(0.1)
-                    .range(0.1..=10.0)
+                    .speed(PLAYBACK_SPEED_MIN)
+                    .range(PLAYBACK_SPEED_MIN..=PLAYBACK_SPEED_MAX)
                     .suffix("x")
                     .update_while_editing(false),
             );

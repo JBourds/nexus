@@ -1,16 +1,7 @@
-use egui::{Color32, Pos2, Rect, Stroke, Ui, Vec2};
+use egui::{Pos2, Rect, Stroke, Ui, Vec2};
 
+use crate::constants::*;
 use crate::state::{MessageEntry, MessageKind, ReceiverOutcome};
-
-// -- Palette (no raw hex) --------------------------------------------------
-const COLOR_TX_OK: Color32 = Color32::from_rgb(100, 200, 100);
-const COLOR_RX: Color32 = Color32::from_rgb(100, 150, 255);
-const COLOR_DROP: Color32 = Color32::from_rgb(255, 100, 100);
-const COLOR_BIT_ERR: Color32 = Color32::from_rgb(255, 210, 60);
-const COLOR_LIFELINE: Color32 = Color32::from_gray(60);
-const COLOR_HEADER: Color32 = Color32::from_gray(220);
-const COLOR_TS_LABEL: Color32 = Color32::from_gray(100);
-const COLOR_HIGHLIGHT: Color32 = Color32::from_rgba_premultiplied(255, 255, 100, 15);
 
 /// Action from the sequence diagram panel.
 pub enum SequenceAction {
@@ -61,16 +52,14 @@ pub fn show_sequence_diagram(
         }
     });
     if scroll_delta != 0.0 {
-        let factor = 1.0 + scroll_delta * 0.002;
-        *zoom = (*zoom * factor).clamp(0.15, 5.0);
+        let factor = 1.0 + scroll_delta * GRID_SCROLL_ZOOM_FACTOR;
+        *zoom = (*zoom * factor).clamp(SEQ_ZOOM_MIN, SEQ_ZOOM_MAX);
     }
 
-    let base_row_height = 24.0_f32;
-    let base_lifeline_spacing = 100.0_f32;
-    let row_height = base_row_height * *zoom;
-    let lifeline_spacing = base_lifeline_spacing * *zoom;
-    let header_height = 30.0_f32;
-    let ts_label_margin = 50.0_f32;
+    let row_height = SEQ_BASE_ROW_HEIGHT * *zoom;
+    let lifeline_spacing = SEQ_BASE_LIFELINE_SPACING * *zoom;
+    let header_height = SEQ_HEADER_HEIGHT;
+    let ts_label_margin = SEQ_TS_LABEL_MARGIN;
 
     // Sorted node names for stable ordering
     let mut sorted_names: Vec<String> = node_names.to_vec();
@@ -107,7 +96,7 @@ pub fn show_sequence_diagram(
                 });
             }
 
-            let total_height = header_height + (num_rows as f32) * row_height + 20.0;
+            let total_height = header_height + (num_rows as f32) * row_height + SEQ_BOTTOM_PADDING;
 
             let (rect, _response) = ui.allocate_exact_size(
                 Vec2::new(
@@ -129,7 +118,7 @@ pub fn show_sequence_diagram(
                 .collect();
 
             // --- Header (node names) -----------------------------------------
-            let font_size = (12.0 * *zoom).clamp(7.0, 18.0);
+            let font_size = (SEQ_FONT_SIZE_BASE * *zoom).clamp(SEQ_FONT_SIZE_MIN, SEQ_FONT_SIZE_MAX);
             for (i, name) in sorted_names.iter().enumerate() {
                 let x = lifeline_x[i];
                 painter.text(
@@ -144,17 +133,15 @@ pub fn show_sequence_diagram(
             // --- Lifelines (dashed vertical lines) ---------------------------
             let body_top = rect.top() + header_height;
             let body_bottom = rect.top() + total_height;
-            let dash_len = 6.0;
-            let gap_len = 4.0;
             for &x in &lifeline_x {
                 let mut y = body_top;
                 while y < body_bottom {
-                    let y_end = (y + dash_len).min(body_bottom);
+                    let y_end = (y + SEQ_LIFELINE_DASH).min(body_bottom);
                     painter.line_segment(
                         [Pos2::new(x, y), Pos2::new(x, y_end)],
-                        Stroke::new(1.0, COLOR_LIFELINE),
+                        Stroke::new(SEQ_LIFELINE_STROKE, COLOR_LIFELINE),
                     );
-                    y += dash_len + gap_len;
+                    y += SEQ_LIFELINE_DASH + SEQ_LIFELINE_GAP;
                 }
             }
 
@@ -169,11 +156,11 @@ pub fn show_sequence_diagram(
             }
 
             // --- Timestep labels ---------------------------------------------
-            let ts_font = (9.0 * *zoom).clamp(6.0, 14.0);
+            let ts_font = (SEQ_TS_FONT_BASE * *zoom).clamp(SEQ_TS_FONT_MIN, SEQ_TS_FONT_MAX);
             for (row, &ts) in active_timesteps.iter().enumerate() {
                 let y = body_top + (row as f32) * row_height + row_height / 2.0;
                 painter.text(
-                    Pos2::new(rect.left() + 2.0, y),
+                    Pos2::new(rect.left() + GRID_LABEL_OFFSET, y),
                     egui::Align2::LEFT_CENTER,
                     format!("t={ts}"),
                     egui::FontId::proportional(ts_font),
@@ -193,16 +180,14 @@ pub fn show_sequence_diagram(
                 let Some(y) = y_for_ts(msg.timestep) else {
                     continue;
                 };
-                let is_current =
-                    current_event.is_some() && msg.record_index == current_event;
+                let is_current = current_event.is_some() && msg.record_index == current_event;
 
                 match &msg.kind {
                     // ========================================================
                     // TX: draw arrows from sender to every receiver
                     // ========================================================
                     MessageKind::Sent => {
-                        let Some(src_x_idx) =
-                            sorted_names.iter().position(|n| n == &msg.src_node)
+                        let Some(src_x_idx) = sorted_names.iter().position(|n| n == &msg.src_node)
                         else {
                             continue;
                         };
@@ -211,11 +196,7 @@ pub fn show_sequence_diagram(
                         if msg.receivers.is_empty() {
                             // No correlated receivers yet: just a dot on sender
                             let radius = if is_current { 4.0 } else { 2.5 };
-                            painter.circle_filled(
-                                Pos2::new(src_x, y),
-                                radius,
-                                COLOR_TX_OK,
-                            );
+                            painter.circle_filled(Pos2::new(src_x, y), radius, COLOR_TX_OK);
                         } else {
                             // Draw a small dot on the sender lifeline
                             painter.circle_filled(
@@ -250,14 +231,12 @@ pub fn show_sequence_diagram(
                                 // Arrowhead
                                 let dir = if dst_x > src_x { 1.0_f32 } else { -1.0 };
                                 let tip = Pos2::new(dst_x, y);
-                                let arrow_len = 6.0;
-                                let arrow_width = 3.0;
-                                let base_x = tip.x - dir * arrow_len;
+                                let base_x = tip.x - dir * SEQ_ARROW_HEAD_LENGTH;
                                 painter.add(egui::Shape::convex_polygon(
                                     vec![
                                         tip,
-                                        Pos2::new(base_x, y - arrow_width),
-                                        Pos2::new(base_x, y + arrow_width),
+                                        Pos2::new(base_x, y - SEQ_ARROW_HEAD_WIDTH),
+                                        Pos2::new(base_x, y + SEQ_ARROW_HEAD_WIDTH),
                                     ],
                                     recv_color,
                                     Stroke::NONE,
@@ -265,8 +244,8 @@ pub fn show_sequence_diagram(
 
                                 // Drop X at destination
                                 if is_drop {
-                                    let half = 4.0;
-                                    let stroke = Stroke::new(2.0, recv_color);
+                                    let half = SEQ_DROP_X_HALF;
+                                    let stroke = Stroke::new(SEQ_DROP_X_STROKE, recv_color);
                                     painter.line_segment(
                                         [
                                             Pos2::new(dst_x - half, y - half),
@@ -284,18 +263,14 @@ pub fn show_sequence_diagram(
                                 }
 
                                 // Tooltip on hover (drop reason or bit-error note)
-                                let hover_rect = Rect::from_center_size(
-                                    Pos2::new(dst_x, y),
-                                    Vec2::splat(12.0),
-                                );
+                                let hover_rect =
+                                    Rect::from_center_size(Pos2::new(dst_x, y), Vec2::splat(SEQ_HOVER_RECT_SIZE));
                                 if ui.rect_contains_pointer(hover_rect) {
                                     let tip_text = match &recv.outcome {
                                         ReceiverOutcome::Dropped(reason) => {
                                             format!("{} dropped: {reason}", recv.node)
                                         }
-                                        ReceiverOutcome::Received
-                                            if recv.has_bit_errors =>
-                                        {
+                                        ReceiverOutcome::Received if recv.has_bit_errors => {
                                             format!("{}: bit errors", recv.node)
                                         }
                                         ReceiverOutcome::Received => {
@@ -308,11 +283,7 @@ pub fn show_sequence_diagram(
                                             egui::Order::Tooltip,
                                             ui.id().with("recv_tip"),
                                         ),
-                                        ui.id().with((
-                                            "recv_tip",
-                                            msg.timestep,
-                                            &recv.node,
-                                        )),
+                                        ui.id().with(("recv_tip", msg.timestep, &recv.node)),
                                         |ui| {
                                             ui.label(tip_text);
                                         },
@@ -326,15 +297,14 @@ pub fn show_sequence_diagram(
                     // RX: dashed vertical segment on the receiver lifeline
                     // ========================================================
                     MessageKind::Received => {
-                        let Some(rx_idx) =
-                            sorted_names.iter().position(|n| n == &msg.src_node)
+                        let Some(rx_idx) = sorted_names.iter().position(|n| n == &msg.src_node)
                         else {
                             continue;
                         };
                         let x = lifeline_x[rx_idx];
-                        let seg_half = (row_height * 0.35).max(4.0);
-                        let dash = 3.0_f32;
-                        let gap = 2.0_f32;
+                        let seg_half = (row_height * SEQ_RX_SEG_HALF_FACTOR).max(4.0);
+                        let dash = SEQ_RX_DASH;
+                        let gap = SEQ_RX_GAP;
                         let thickness = if is_current { 2.5 } else { 1.5 };
 
                         // Draw dashed vertical segment centred on the row
@@ -358,40 +328,27 @@ pub fn show_sequence_diagram(
                     // Drop (standalone): X on the dropping node's lifeline
                     // ========================================================
                     MessageKind::Dropped(reason) => {
-                        let Some(idx) =
-                            sorted_names.iter().position(|n| n == &msg.src_node)
-                        else {
+                        let Some(idx) = sorted_names.iter().position(|n| n == &msg.src_node) else {
                             continue;
                         };
                         let x = lifeline_x[idx];
-                        let half = 4.0;
-                        let stroke =
-                            Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
+                        let half = SEQ_DROP_X_HALF;
+                        let stroke = Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
                         painter.line_segment(
-                            [
-                                Pos2::new(x - half, y - half),
-                                Pos2::new(x + half, y + half),
-                            ],
+                            [Pos2::new(x - half, y - half), Pos2::new(x + half, y + half)],
                             stroke,
                         );
                         painter.line_segment(
-                            [
-                                Pos2::new(x - half, y + half),
-                                Pos2::new(x + half, y - half),
-                            ],
+                            [Pos2::new(x - half, y + half), Pos2::new(x + half, y - half)],
                             stroke,
                         );
 
                         // Tooltip
-                        let hover_rect =
-                            Rect::from_center_size(Pos2::new(x, y), Vec2::splat(12.0));
+                        let hover_rect = Rect::from_center_size(Pos2::new(x, y), Vec2::splat(SEQ_HOVER_RECT_SIZE));
                         if ui.rect_contains_pointer(hover_rect) {
                             egui::containers::popup::show_tooltip_at_pointer(
                                 ui.ctx(),
-                                egui::LayerId::new(
-                                    egui::Order::Tooltip,
-                                    ui.id().with("drop_tip"),
-                                ),
+                                egui::LayerId::new(egui::Order::Tooltip, ui.id().with("drop_tip")),
                                 ui.id().with(("drop_tip", msg.timestep, &msg.src_node)),
                                 |ui| {
                                     ui.label(format!("Dropped: {reason}"));
@@ -403,16 +360,14 @@ pub fn show_sequence_diagram(
 
                 // -- Click detection (whole row) ------------------------------
                 if let Some(record_idx) = msg.record_index {
-                    let src_idx =
-                        sorted_names.iter().position(|n| n == &msg.src_node);
+                    let src_idx = sorted_names.iter().position(|n| n == &msg.src_node);
                     if let Some(idx) = src_idx {
                         let x = lifeline_x[idx];
                         let hit_rect = Rect::from_center_size(
                             Pos2::new(x, y),
                             Vec2::new(lifeline_spacing, row_height),
                         );
-                        if ui.rect_contains_pointer(hit_rect)
-                            && ui.input(|i| i.pointer.any_click())
+                        if ui.rect_contains_pointer(hit_rect) && ui.input(|i| i.pointer.any_click())
                         {
                             action = SequenceAction::JumpToEvent {
                                 record_index: record_idx,

@@ -7,6 +7,8 @@ use config::ast::{
 };
 use egui::Ui;
 
+use crate::constants::COLOR_REMOVE_BUTTON;
+
 /// Inline "add item" row: text input + Add button.
 /// Returns `Some(name)` when the user confirms and the buffer is non-empty.
 pub fn add_item_ui(ui: &mut Ui, label: &str, buf: &mut String) -> Option<String> {
@@ -25,7 +27,7 @@ pub fn add_item_ui(ui: &mut Ui, label: &str, buf: &mut String) -> Option<String>
 /// Small red "X" remove button with hover tooltip. Returns `true` when clicked.
 pub fn remove_button(ui: &mut Ui) -> bool {
     let text = egui::RichText::new("\u{2716}")
-        .color(egui::Color32::from_rgb(200, 60, 60))
+        .color(COLOR_REMOVE_BUTTON)
         .size(12.0);
     ui.add(egui::Button::new(text).small().frame(false))
         .on_hover_text("Remove")
