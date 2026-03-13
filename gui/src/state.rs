@@ -292,6 +292,8 @@ pub struct LiveSimState {
     pub view_mode: ViewMode,
     /// Persistent input state for the breakpoints panel.
     pub bp_input: BreakpointInput,
+    /// Zoom level for the sequence diagram (1.0 = default).
+    pub seq_zoom: f32,
 }
 
 /// State for replay mode.
@@ -340,6 +342,8 @@ pub struct ReplayState {
     pub view_mode: ViewMode,
     /// Persistent input state for the breakpoints panel.
     pub bp_input: BreakpointInput,
+    /// Zoom level for the sequence diagram (1.0 = default).
+    pub seq_zoom: f32,
 }
 
 /// Per-node runtime state for visualization.

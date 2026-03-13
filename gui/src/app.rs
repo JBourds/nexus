@@ -449,10 +449,18 @@ impl NexusApp {
                         &node_names,
                         state.current_timestep,
                         state.event_cursor,
+                        &mut state.seq_zoom,
                     );
-                    if let sequence::SequenceAction::JumpToEvent(idx) = seq_action {
-                        state.event_cursor = Some(idx);
+                    if let sequence::SequenceAction::JumpToEvent {
+                        record_index,
+                        node,
+                    } = seq_action
+                    {
+                        state.event_cursor = Some(record_index);
                         state.event_stepping = true;
+                        state.expanded_nodes.clear();
+                        state.expanded_nodes.insert(node.clone());
+                        state.selected_node = Some(node);
                     }
                 }
                 ViewMode::Grid => {
@@ -563,6 +571,7 @@ impl NexusApp {
                 expanded_messages: HashSet::new(),
                 view_mode: ViewMode::default(),
                 bp_input: BreakpointInput::default(),
+                seq_zoom: 1.0,
             }));
         }
     }
@@ -890,10 +899,18 @@ impl NexusApp {
                         &node_names,
                         state.current_timestep,
                         state.event_cursor,
+                        &mut state.seq_zoom,
                     );
-                    if let sequence::SequenceAction::JumpToEvent(idx) = seq_action {
-                        state.event_cursor = Some(idx);
+                    if let sequence::SequenceAction::JumpToEvent {
+                        record_index,
+                        node,
+                    } = seq_action
+                    {
+                        state.event_cursor = Some(record_index);
                         state.event_stepping = true;
+                        state.expanded_nodes.clear();
+                        state.expanded_nodes.insert(node.clone());
+                        state.selected_node = Some(node);
                     }
                 }
                 ViewMode::Grid => {
@@ -997,6 +1014,7 @@ impl NexusApp {
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
+                    seq_zoom: 1.0,
                 }));
             }
             Err(e) => {
@@ -1043,6 +1061,7 @@ impl NexusApp {
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
                     bp_input: BreakpointInput::default(),
+                    seq_zoom: 1.0,
                 }));
             }
             Err(e) => {
@@ -1157,6 +1176,7 @@ impl NexusApp {
                         expanded_messages: HashSet::new(),
                         view_mode: ViewMode::default(),
                         bp_input: BreakpointInput::default(),
+                        seq_zoom: 1.0,
                     }));
                 }
                 Err(e) => {
