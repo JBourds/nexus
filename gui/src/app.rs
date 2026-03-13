@@ -223,11 +223,11 @@ impl NexusApp {
                 state.arrows_frozen = false;
             }
 
-            for event in state.controller.poll_events() {
+            while let Ok(event) = state.controller.rx.try_recv() {
                 // Check breakpoints and run-until on trace events
+                let mut should_pause = false;
                 if let GuiEvent::Trace(ref record) = event {
                     state.all_records.push(record.clone());
-                    let mut should_pause = false;
                     if breakpoints::check_breakpoints(
                         &state.breakpoints,
                         record.timestep,
@@ -253,11 +253,8 @@ impl NexusApp {
                             state.run_until = None;
                         }
                     }
-                    if should_pause {
-                        state.paused = true;
-                        state.controller.set_paused(true);
-                    }
                 }
+                // Process the event that triggered the breakpoint, then stop
                 process_gui_event(
                     event,
                     &mut state.current_timestep,
@@ -269,6 +266,11 @@ impl NexusApp {
                     &mut state.last_sender,
                     egui_time,
                 );
+                if should_pause {
+                    state.paused = true;
+                    state.controller.set_paused(true);
+                    break;
+                }
             }
         }
 
