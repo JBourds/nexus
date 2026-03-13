@@ -13,12 +13,13 @@ pub enum BreakpointsAction {
 
 /// Show the breakpoints panel/section.
 ///
-/// `node_names` and `channel_names` are sorted lists for the combo boxes.
+/// `run_until` is `None` when in config editor mode (no run-until available).
+/// `node_names` and `channel_names` are sorted lists for the searchable lists.
 /// `input` holds persistent text buffer state across frames.
 pub fn show_breakpoints(
     ui: &mut Ui,
     breakpoints: &mut Vec<Breakpoint>,
-    run_until: &mut Option<BreakpointKind>,
+    run_until: Option<&mut Option<BreakpointKind>>,
     current_timestep: u64,
     node_names: &[String],
     channel_names: &[String],
@@ -27,9 +28,7 @@ pub fn show_breakpoints(
     let mut action = BreakpointsAction::None;
     let mut to_remove = Vec::new();
 
-    ui.heading("Breakpoints");
-    ui.separator();
-
+    // --- Existing breakpoints list ---
     if breakpoints.is_empty() {
         ui.label("No breakpoints set");
     } else {
@@ -45,7 +44,11 @@ pub fn show_breakpoints(
                 };
                 ui.colored_label(color, desc);
 
-                if ui.small_button("\u{2717}").on_hover_text("Remove").clicked() {
+                if ui
+                    .small_button("\u{2717}")
+                    .on_hover_text("Remove")
+                    .clicked()
+                {
                     to_remove.push(i);
                 }
             });
@@ -68,7 +71,11 @@ pub fn show_breakpoints(
             .desired_width(60.0)
             .hint_text(current_timestep.to_string());
         ui.add(te);
-        if ui.button("+").on_hover_text("Add timestep breakpoint").clicked() {
+        if ui
+            .button("+")
+            .on_hover_text("Add timestep breakpoint")
+            .clicked()
+        {
             let ts = input
                 .timestep_buf
                 .trim()
@@ -82,57 +89,68 @@ pub fn show_breakpoints(
         }
     });
 
-    // Node event breakpoint
+    // Node event breakpoint (collapsible + searchable)
     if !node_names.is_empty() {
-        ui.horizontal(|ui| {
-            ui.label("Node:");
-            for name in node_names {
-                if ui.small_button(name).on_hover_text(format!("Break on any event involving {name}")).clicked() {
-                    action = BreakpointsAction::Add(Breakpoint {
-                        kind: BreakpointKind::NodeEvent(name.clone()),
-                        enabled: true,
-                    });
-                }
-            }
-        });
+        egui::CollapsingHeader::new("Node breakpoints")
+            .id_salt("bp_nodes")
+            .show(ui, |ui| {
+                show_searchable_list(
+                    ui,
+                    &mut input.node_search,
+                    node_names,
+                    "Filter nodes...",
+                    "bp_node_search",
+                    |name| {
+                        action = BreakpointsAction::Add(Breakpoint {
+                            kind: BreakpointKind::NodeEvent(name),
+                            enabled: true,
+                        });
+                    },
+                );
+            });
     }
 
-    // Channel activity breakpoint
+    // Channel activity breakpoint (collapsible + searchable)
     if !channel_names.is_empty() {
-        ui.horizontal(|ui| {
-            ui.label("Channel:");
-            for name in channel_names {
-                if ui.small_button(name).on_hover_text(format!("Break on activity on {name}")).clicked() {
-                    action = BreakpointsAction::Add(Breakpoint {
-                        kind: BreakpointKind::ChannelActivity(name.clone()),
-                        enabled: true,
-                    });
-                }
-            }
-        });
+        egui::CollapsingHeader::new("Channel breakpoints")
+            .id_salt("bp_channels")
+            .show(ui, |ui| {
+                show_searchable_list(
+                    ui,
+                    &mut input.channel_search,
+                    channel_names,
+                    "Filter channels...",
+                    "bp_ch_search",
+                    |name| {
+                        action = BreakpointsAction::Add(Breakpoint {
+                            kind: BreakpointKind::ChannelActivity(name),
+                            enabled: true,
+                        });
+                    },
+                );
+            });
     }
 
-    ui.separator();
+    // --- Run-Until section (only in live sim / replay) ---
+    if let Some(run_until) = run_until {
+        ui.separator();
+        ui.label("Run Until");
 
-    // --- Run-Until section ---
-    ui.label("Run Until");
-
-    let has_run_until = run_until.is_some();
-    if has_run_until {
-        let desc = describe_kind(run_until.as_ref().unwrap());
-        let mut clear = false;
-        ui.horizontal(|ui| {
-            ui.colored_label(egui::Color32::from_rgb(255, 200, 80), desc);
-            if ui.small_button("Clear").clicked() {
-                clear = true;
+        let has_run_until = run_until.is_some();
+        if has_run_until {
+            let desc = describe_kind(run_until.as_ref().unwrap());
+            let mut clear = false;
+            ui.horizontal(|ui| {
+                ui.colored_label(egui::Color32::from_rgb(255, 200, 80), desc);
+                if ui.small_button("Clear").clicked() {
+                    clear = true;
+                }
+            });
+            if clear {
+                *run_until = None;
             }
-        });
-        if clear {
-            *run_until = None;
-        }
-    } else {
-        // Quick run-until buttons
-        ui.horizontal(|ui| {
+        } else {
+            // Next event
             if ui
                 .button("Next event")
                 .on_hover_text("Run until the next trace event occurs")
@@ -140,68 +158,118 @@ pub fn show_breakpoints(
             {
                 action = BreakpointsAction::RunUntil(BreakpointKind::NextEvent);
             }
-        });
 
-        // Run until timestep
-        ui.horizontal(|ui| {
-            ui.label("Until t=");
-            let te = egui::TextEdit::singleline(&mut input.timestep_buf)
-                .desired_width(60.0)
-                .hint_text((current_timestep + 10).to_string());
-            ui.add(te);
-            if ui
-                .button("Go")
-                .on_hover_text("Run until this timestep")
-                .clicked()
-            {
-                let ts = input
-                    .timestep_buf
-                    .trim()
-                    .parse::<u64>()
-                    .unwrap_or(current_timestep + 10);
-                action = BreakpointsAction::RunUntil(BreakpointKind::Timestep(ts));
-                input.timestep_buf.clear();
+            // Run until timestep
+            ui.horizontal(|ui| {
+                ui.label("Until t=");
+                let te = egui::TextEdit::singleline(&mut input.timestep_buf)
+                    .desired_width(60.0)
+                    .hint_text((current_timestep + 10).to_string());
+                ui.add(te);
+                if ui
+                    .button("Go")
+                    .on_hover_text("Run until this timestep")
+                    .clicked()
+                {
+                    let ts = input
+                        .timestep_buf
+                        .trim()
+                        .parse::<u64>()
+                        .unwrap_or(current_timestep + 10);
+                    action = BreakpointsAction::RunUntil(BreakpointKind::Timestep(ts));
+                    input.timestep_buf.clear();
+                }
+            });
+
+            // Run until node event (collapsible + searchable)
+            if !node_names.is_empty() {
+                egui::CollapsingHeader::new("Until node event")
+                    .id_salt("ru_nodes")
+                    .show(ui, |ui| {
+                        show_searchable_list(
+                            ui,
+                            &mut input.node_search,
+                            node_names,
+                            "Filter nodes...",
+                            "ru_node_search",
+                            |name| {
+                                action = BreakpointsAction::RunUntil(
+                                    BreakpointKind::NodeEvent(name),
+                                );
+                            },
+                        );
+                    });
             }
-        });
 
-        // Run until node event
-        if !node_names.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label("Until node:");
-                for name in node_names {
-                    if ui
-                        .small_button(name)
-                        .on_hover_text(format!("Run until any event on {name}"))
-                        .clicked()
-                    {
-                        action = BreakpointsAction::RunUntil(BreakpointKind::NodeEvent(
-                            name.clone(),
-                        ));
-                    }
-                }
-            });
-        }
-
-        // Run until channel activity
-        if !channel_names.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label("Until ch:");
-                for name in channel_names {
-                    if ui
-                        .small_button(name)
-                        .on_hover_text(format!("Run until activity on {name}"))
-                        .clicked()
-                    {
-                        action = BreakpointsAction::RunUntil(BreakpointKind::ChannelActivity(
-                            name.clone(),
-                        ));
-                    }
-                }
-            });
+            // Run until channel activity (collapsible + searchable)
+            if !channel_names.is_empty() {
+                egui::CollapsingHeader::new("Until channel activity")
+                    .id_salt("ru_channels")
+                    .show(ui, |ui| {
+                        show_searchable_list(
+                            ui,
+                            &mut input.channel_search,
+                            channel_names,
+                            "Filter channels...",
+                            "ru_ch_search",
+                            |name| {
+                                action = BreakpointsAction::RunUntil(
+                                    BreakpointKind::ChannelActivity(name),
+                                );
+                            },
+                        );
+                    });
+            }
         }
     }
 
     action
+}
+
+/// Render a searchable list of names as clickable buttons.
+fn show_searchable_list(
+    ui: &mut Ui,
+    search_buf: &mut String,
+    names: &[String],
+    hint: &str,
+    id_salt: &str,
+    mut on_click: impl FnMut(String),
+) {
+    ui.horizontal(|ui| {
+        ui.label("Search:");
+        ui.add(
+            egui::TextEdit::singleline(search_buf)
+                .desired_width(100.0)
+                .hint_text(hint)
+                .id_salt(id_salt),
+        );
+    });
+
+    let query = search_buf.trim().to_lowercase();
+    let filtered: Vec<_> = if query.is_empty() {
+        names.to_vec()
+    } else {
+        names
+            .iter()
+            .filter(|n| n.to_lowercase().contains(&query))
+            .cloned()
+            .collect()
+    };
+
+    if filtered.is_empty() {
+        ui.label("(no matches)");
+    } else {
+        egui::ScrollArea::vertical()
+            .max_height(120.0)
+            .id_salt(format!("{id_salt}_scroll"))
+            .show(ui, |ui| {
+                for name in &filtered {
+                    if ui.small_button(name).clicked() {
+                        on_click(name.clone());
+                    }
+                }
+            });
+    }
 }
 
 fn describe_kind(kind: &BreakpointKind) -> String {

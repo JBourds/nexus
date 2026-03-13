@@ -154,6 +154,29 @@ impl NexusApp {
             return;
         };
 
+        // Right panel: breakpoints (pre-simulation)
+        egui::SidePanel::right("config_breakpoints")
+            .default_width(180.0)
+            .resizable(true)
+            .show(ctx, |ui| {
+                let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
+                node_names.sort();
+                let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
+                channel_names.sort();
+                let bp_action = breakpoints::show_breakpoints(
+                    ui,
+                    &mut state.breakpoints,
+                    None,
+                    0,
+                    &node_names,
+                    &channel_names,
+                    &mut state.bp_input,
+                );
+                if let breakpoints::BreakpointsAction::Add(bp) = bp_action {
+                    state.breakpoints.push(bp);
+                }
+            });
+
         // Central panel with grid for node placement
         egui::CentralPanel::default().show(ctx, |ui| {
             // Left: config editor panel
@@ -249,49 +272,62 @@ impl NexusApp {
             }
         }
 
-        // Inspector panel (only rendered when visible -- no panel at all when hidden)
+        // Left panel: inspector + breakpoints (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
                 .default_width(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    let insp_action = inspector::show_inspector(
-                        ui,
-                        &state.sim,
-                        &state.node_states,
-                        &state.selected_node,
-                        &mut state.expanded_nodes,
-                        &state.messages,
-                        state.event_cursor,
-                    );
-                    if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
-                        state.event_cursor = Some(idx);
-                        state.event_stepping = true;
-                    }
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::CollapsingHeader::new("Inspector")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let insp_action = inspector::show_inspector(
+                                    ui,
+                                    &state.sim,
+                                    &state.node_states,
+                                    &state.selected_node,
+                                    &mut state.expanded_nodes,
+                                    &state.messages,
+                                    state.event_cursor,
+                                );
+                                if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
+                                    state.event_cursor = Some(idx);
+                                    state.event_stepping = true;
+                                }
+                            });
 
-                    ui.separator();
-                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
-                    node_names.sort();
-                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
-                    channel_names.sort();
-                    let bp_action = breakpoints::show_breakpoints(
-                        ui,
-                        &mut state.breakpoints,
-                        &mut state.run_until,
-                        state.current_timestep,
-                        &node_names,
-                        &channel_names,
-                        &mut state.bp_input,
-                    );
-                    match bp_action {
-                        breakpoints::BreakpointsAction::Add(bp) => {
-                            state.breakpoints.push(bp);
-                        }
-                        breakpoints::BreakpointsAction::RunUntil(kind) => {
-                            state.run_until = Some(kind);
-                        }
-                        breakpoints::BreakpointsAction::None => {}
-                    }
+                        ui.separator();
+
+                        egui::CollapsingHeader::new("Debugger")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut node_names: Vec<_> =
+                                    state.sim.nodes.keys().cloned().collect();
+                                node_names.sort();
+                                let mut channel_names: Vec<_> =
+                                    state.sim.channels.keys().cloned().collect();
+                                channel_names.sort();
+                                let bp_action = breakpoints::show_breakpoints(
+                                    ui,
+                                    &mut state.breakpoints,
+                                    Some(&mut state.run_until),
+                                    state.current_timestep,
+                                    &node_names,
+                                    &channel_names,
+                                    &mut state.bp_input,
+                                );
+                                match bp_action {
+                                    breakpoints::BreakpointsAction::Add(bp) => {
+                                        state.breakpoints.push(bp);
+                                    }
+                                    breakpoints::BreakpointsAction::RunUntil(kind) => {
+                                        state.run_until = Some(kind);
+                                    }
+                                    breakpoints::BreakpointsAction::None => {}
+                                }
+                            });
+                    });
                 });
         }
 
@@ -610,49 +646,62 @@ impl NexusApp {
             }
         }
 
-        // Inspector panel (only rendered when visible)
+        // Left panel: inspector + debugger (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
                 .default_width(200.0)
                 .resizable(true)
                 .show(ctx, |ui| {
-                    let insp_action = inspector::show_inspector(
-                        ui,
-                        &state.sim,
-                        &state.node_states,
-                        &state.selected_node,
-                        &mut state.expanded_nodes,
-                        &state.messages,
-                        state.event_cursor,
-                    );
-                    if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
-                        state.event_cursor = Some(idx);
-                        state.event_stepping = true;
-                    }
+                    egui::ScrollArea::vertical().show(ui, |ui| {
+                        egui::CollapsingHeader::new("Inspector")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let insp_action = inspector::show_inspector(
+                                    ui,
+                                    &state.sim,
+                                    &state.node_states,
+                                    &state.selected_node,
+                                    &mut state.expanded_nodes,
+                                    &state.messages,
+                                    state.event_cursor,
+                                );
+                                if let inspector::InspectorAction::JumpToEvent(idx) = insp_action {
+                                    state.event_cursor = Some(idx);
+                                    state.event_stepping = true;
+                                }
+                            });
 
-                    ui.separator();
-                    let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
-                    node_names.sort();
-                    let mut channel_names: Vec<_> = state.sim.channels.keys().cloned().collect();
-                    channel_names.sort();
-                    let bp_action = breakpoints::show_breakpoints(
-                        ui,
-                        &mut state.breakpoints,
-                        &mut state.run_until,
-                        state.current_timestep,
-                        &node_names,
-                        &channel_names,
-                        &mut state.bp_input,
-                    );
-                    match bp_action {
-                        breakpoints::BreakpointsAction::Add(bp) => {
-                            state.breakpoints.push(bp);
-                        }
-                        breakpoints::BreakpointsAction::RunUntil(kind) => {
-                            state.run_until = Some(kind);
-                        }
-                        breakpoints::BreakpointsAction::None => {}
-                    }
+                        ui.separator();
+
+                        egui::CollapsingHeader::new("Debugger")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                let mut node_names: Vec<_> =
+                                    state.sim.nodes.keys().cloned().collect();
+                                node_names.sort();
+                                let mut channel_names: Vec<_> =
+                                    state.sim.channels.keys().cloned().collect();
+                                channel_names.sort();
+                                let bp_action = breakpoints::show_breakpoints(
+                                    ui,
+                                    &mut state.breakpoints,
+                                    Some(&mut state.run_until),
+                                    state.current_timestep,
+                                    &node_names,
+                                    &channel_names,
+                                    &mut state.bp_input,
+                                );
+                                match bp_action {
+                                    breakpoints::BreakpointsAction::Add(bp) => {
+                                        state.breakpoints.push(bp);
+                                    }
+                                    breakpoints::BreakpointsAction::RunUntil(kind) => {
+                                        state.run_until = Some(kind);
+                                    }
+                                    breakpoints::BreakpointsAction::None => {}
+                                }
+                            });
+                    });
                 });
         }
 
@@ -882,6 +931,7 @@ impl NexusApp {
                 let node_states = nodes_from_sim(&state.sim);
                 let channel_subscribers = build_channel_subscribers(&state.sim);
                 let num_channels = state.sim.channels.len();
+                let pre_breakpoints = std::mem::take(&mut state.breakpoints);
                 self.mode = AppMode::LiveSimulation(Box::new(LiveSimState {
                     sim: state.sim.clone(),
                     controller,
@@ -904,7 +954,7 @@ impl NexusApp {
                     run_until: None,
                     event_cursor: None,
                     event_stepping: false,
-                    breakpoints: Vec::new(),
+                    breakpoints: pre_breakpoints,
                     expanded_messages: HashSet::new(),
                     all_records: Vec::new(),
                     view_mode: ViewMode::default(),
@@ -1011,6 +1061,8 @@ impl NexusApp {
             add_item_buf: String::new(),
             needs_fit: true,
             modules: crate::state::ModuleState::default(),
+            breakpoints: Vec::new(),
+            bp_input: BreakpointInput::default(),
         }));
     }
 

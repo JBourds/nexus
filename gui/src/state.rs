@@ -204,6 +204,10 @@ pub struct ConfigEditorState {
     pub needs_fit: bool,
     /// Module system state (use list, profiles, browser).
     pub modules: ModuleState,
+    /// Pre-configured breakpoints (carried into simulation/replay).
+    pub breakpoints: Vec<Breakpoint>,
+    /// Input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
 }
 
 impl ConfigEditorState {
@@ -235,6 +239,8 @@ impl ConfigEditorState {
             add_item_buf: String::new(),
             needs_fit: true,
             modules,
+            breakpoints: Vec::new(),
+            bp_input: BreakpointInput::default(),
         })
     }
 }
@@ -450,6 +456,8 @@ pub enum BreakpointKind {
 #[derive(Default)]
 pub struct BreakpointInput {
     pub timestep_buf: String,
+    pub node_search: String,
+    pub channel_search: String,
 }
 
 /// Which main view is shown in the central panel.

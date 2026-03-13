@@ -29,9 +29,6 @@ pub fn show_inspector(
     let mut action = InspectorAction::None;
 
     egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
-        ui.heading("Inspector");
-        ui.separator();
-
         if node_states.is_empty() {
             ui.label("No nodes");
             return;
