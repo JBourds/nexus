@@ -281,6 +281,22 @@ fn describe_kind(kind: &BreakpointKind) -> String {
     }
 }
 
+/// Check if any enabled timestep breakpoint matches (no event required).
+/// Returns true if playback should pause at this timestep.
+pub fn check_timestep_breakpoints(breakpoints: &[Breakpoint], timestep: u64) -> bool {
+    for bp in breakpoints {
+        if !bp.enabled {
+            continue;
+        }
+        if let BreakpointKind::Timestep(ts) = &bp.kind {
+            if timestep == *ts {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Check if any enabled breakpoint matches the given event context.
 /// Returns true if playback should pause.
 pub fn check_breakpoints(

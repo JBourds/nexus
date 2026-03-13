@@ -224,37 +224,64 @@ impl NexusApp {
             }
 
             while let Ok(event) = state.controller.rx.try_recv() {
-                // Check breakpoints and run-until on trace events
                 let mut should_pause = false;
-                if let GuiEvent::Trace(ref record) = event {
-                    state.all_records.push(record.clone());
-                    if breakpoints::check_breakpoints(
-                        &state.breakpoints,
-                        record.timestep,
-                        &record.event,
-                        &state.sim,
-                    ) {
-                        should_pause = true;
-                    }
-                    // Check run-until (one-shot)
-                    if let Some(ref kind) = state.run_until {
-                        let run_bp = Breakpoint {
-                            kind: kind.clone(),
-                            enabled: true,
-                        };
+                match &event {
+                    GuiEvent::Trace(record) => {
+                        state.all_records.push(record.clone());
+                        // Check event-based breakpoints
                         if breakpoints::check_breakpoints(
-                            &[run_bp],
+                            &state.breakpoints,
                             record.timestep,
                             &record.event,
                             &state.sim,
                         ) {
                             should_pause = true;
-                            state.arrows_frozen = true;
-                            state.run_until = None;
+                        }
+                        // Check run-until (one-shot)
+                        if let Some(ref kind) = state.run_until {
+                            let run_bp = Breakpoint {
+                                kind: kind.clone(),
+                                enabled: true,
+                            };
+                            if breakpoints::check_breakpoints(
+                                &[run_bp],
+                                record.timestep,
+                                &record.event,
+                                &state.sim,
+                            ) {
+                                should_pause = true;
+                                state.arrows_frozen = true;
+                                state.run_until = None;
+                            }
                         }
                     }
+                    GuiEvent::TimestepAdvanced(ts) => {
+                        // Check timestep breakpoints in the range
+                        // (current_timestep, reported_ts] since updates are downsampled
+                        let prev = state.current_timestep;
+                        for bp in &state.breakpoints {
+                            if !bp.enabled {
+                                continue;
+                            }
+                            if let BreakpointKind::Timestep(bp_ts) = &bp.kind {
+                                if *bp_ts > prev && *bp_ts <= *ts {
+                                    should_pause = true;
+                                    break;
+                                }
+                            }
+                        }
+                        // Check run-until timestep (one-shot)
+                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until {
+                            if *target > prev && *target <= *ts {
+                                should_pause = true;
+                                state.arrows_frozen = true;
+                                state.run_until = None;
+                            }
+                        }
+                    }
+                    _ => {}
                 }
-                // Process the event that triggered the breakpoint, then stop
+                // Process the event, then stop if breakpoint hit
                 process_gui_event(
                     event,
                     &mut state.current_timestep,
@@ -587,36 +614,50 @@ impl NexusApp {
                 let msg_start = state.messages.len();
                 let mut actual_target = target_ts;
                 for ts in (state.current_timestep + 1)..=target_ts {
-                    // Check breakpoints and run-until against records at this timestep
-                    let mut hit_breakpoint = false;
-                    for record in state.controller.records_at(ts) {
-                        if !state.breakpoints.is_empty()
-                            && breakpoints::check_breakpoints(
-                                &state.breakpoints,
-                                ts,
-                                &record.event,
-                                &state.sim,
-                            )
-                        {
-                            hit_breakpoint = true;
-                            break;
+                    // Check timestep breakpoints (fire even without events at this ts)
+                    let mut hit_breakpoint =
+                        breakpoints::check_timestep_breakpoints(&state.breakpoints, ts);
+
+                    // Check run-until timestep (one-shot, no event needed)
+                    if !hit_breakpoint {
+                        if let Some(BreakpointKind::Timestep(target)) = &state.run_until {
+                            if ts >= *target {
+                                hit_breakpoint = true;
+                                state.arrows_frozen = true;
+                                state.run_until = None;
+                            }
                         }
-                        // Check run-until (one-shot condition)
-                        if let Some(ref kind) = state.run_until {
-                            let run_bp = Breakpoint {
-                                kind: kind.clone(),
-                                enabled: true,
-                            };
+                    }
+
+                    // Check event-based breakpoints against records at this timestep
+                    if !hit_breakpoint {
+                        for record in state.controller.records_at(ts) {
                             if breakpoints::check_breakpoints(
-                                &[run_bp],
+                                &state.breakpoints,
                                 ts,
                                 &record.event,
                                 &state.sim,
                             ) {
                                 hit_breakpoint = true;
-                                state.arrows_frozen = true;
-                                state.run_until = None;
                                 break;
+                            }
+                            // Check run-until event conditions (one-shot)
+                            if let Some(ref kind) = state.run_until {
+                                let run_bp = Breakpoint {
+                                    kind: kind.clone(),
+                                    enabled: true,
+                                };
+                                if breakpoints::check_breakpoints(
+                                    &[run_bp],
+                                    ts,
+                                    &record.event,
+                                    &state.sim,
+                                ) {
+                                    hit_breakpoint = true;
+                                    state.arrows_frozen = true;
+                                    state.run_until = None;
+                                    break;
+                                }
                             }
                         }
                     }
