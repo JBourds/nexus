@@ -152,7 +152,8 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
     let relative_assignments = relative_builder.build(CPU_WEIGHT_MIN, CPU_WEIGHT_MAX);
     cgroup_controller.assign_cpu_weights(&relative_assignments);
     let cpuinfo = get_cpu_info(&affinity_assignments.cpuset);
-    let bandwidth_assignments = Bandwidth::new(&affinity_assignments, &cpuinfo);
+    let bandwidth_assignments =
+        Bandwidth::new(&affinity_assignments, &cpuinfo, sim.params.time_dilation);
     cgroup_controller.assign_cpu_bandwidths(&bandwidth_assignments);
 
     Ok(RunController {

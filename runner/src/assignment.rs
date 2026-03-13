@@ -179,14 +179,14 @@ pub struct Bandwidth {
 }
 
 impl Bandwidth {
-    pub fn new(affinity: &Affinity, cpuinfo: &CpuInfo) -> Self {
+    pub fn new(affinity: &Affinity, cpuinfo: &CpuInfo, time_dilation: f64) -> Self {
         let mut assignments = HashMap::new();
-        Self::refresh_inner(&mut assignments, affinity, cpuinfo);
+        Self::refresh_inner(&mut assignments, affinity, cpuinfo, time_dilation);
         Self { assignments }
     }
 
-    pub fn refresh(&mut self, affinity: &Affinity, cpuinfo: &CpuInfo) {
-        Self::refresh_inner(&mut self.assignments, affinity, cpuinfo);
+    pub fn refresh(&mut self, affinity: &Affinity, cpuinfo: &CpuInfo, time_dilation: f64) {
+        Self::refresh_inner(&mut self.assignments, affinity, cpuinfo, time_dilation);
     }
 
     pub fn assignments(&self) -> &HashMap<ast::NodeHandle, (u64, u64)> {
@@ -197,14 +197,20 @@ impl Bandwidth {
         assignments: &mut HashMap<ast::NodeHandle, (u64, u64)>,
         affinity: &Affinity,
         cpuinfo: &CpuInfo,
+        time_dilation: f64,
     ) {
+        const MIN_DILATION: f64 = 0.01;
+
         for (node, (core, required_cycles)) in affinity.assignments.iter() {
             // NOTE: using `max_frequency` here seems to give a more consistent
             // result than getting the current frequency with `frequency` since
             // we set `cpu.uclamp.min` to max causing the CPU to run at max
             // capacity once it actually runs the task.
             if let Some(current_frequency) = cpuinfo.cores.get(core).map(CoreInfo::max_frequency) {
-                let ratio = *required_cycles as f64 / current_frequency as f64;
+                // Speed multiplier compresses wall-clock time per timestep, so
+                // nodes need proportionally more CPU bandwidth at higher speeds.
+                let ratio = *required_cycles as f64 * time_dilation.max(MIN_DILATION)
+                    / current_frequency as f64;
                 // try to minimize the period as much as possible to ensure
                 // scheduling requests are honored on tighter timeframes
                 let (bandwidth, period) = if ratio >= 1.0 {
