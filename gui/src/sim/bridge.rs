@@ -20,13 +20,20 @@ pub enum GuiEvent {
     TimestepAdvanced(u64),
     SimulationComplete,
     SimulationError(String),
-    /// Captured stdout/stderr from a finished node process.
-    ProcessOutput {
+    /// A single line of stdout/stderr from a running node process.
+    ProcessOutputLine {
         node: String,
         protocol: String,
-        stdout: String,
-        stderr: String,
+        stream: OutputStream,
+        line: String,
     },
+}
+
+/// Which output stream a line came from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
 }
 
 /// Shared, swappable sinks for the simulation tracing layer.

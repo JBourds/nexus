@@ -17,6 +17,8 @@ use trace::format::TraceEvent;
 
 pub struct NexusApp {
     pub mode: AppMode,
+    /// All trace directories from simulations run this session.
+    pub trace_history: Vec<TraceHistoryEntry>,
 }
 
 impl NexusApp {
@@ -24,6 +26,7 @@ impl NexusApp {
         let state = ConfigEditorState::new(p)?;
         Ok(Self {
             mode: AppMode::ConfigEditor(Box::new(state)),
+            trace_history: Vec::new(),
         })
     }
 }
@@ -32,6 +35,7 @@ impl Default for NexusApp {
     fn default() -> Self {
         Self {
             mode: AppMode::Home,
+            trace_history: Vec::new(),
         }
     }
 }
@@ -226,7 +230,8 @@ impl NexusApp {
     }
 
     fn show_live_sim_mode(&mut self, ctx: &Context) {
-        let AppMode::LiveSimulation(state) = &mut self.mode else {
+        let Self { mode, trace_history } = self;
+        let AppMode::LiveSimulation(state) = mode else {
             return;
         };
 
@@ -245,18 +250,38 @@ impl NexusApp {
                     state.build_status = SimBuildStatus::Running;
                     continue;
                 }
-                GuiEvent::ProcessOutput {
+                GuiEvent::ProcessOutputLine {
                     node,
                     protocol,
-                    stdout,
-                    stderr,
+                    stream,
+                    line,
                 } => {
-                    state.process_outputs.push(ProcessOutput {
-                        node: node.clone(),
-                        protocol: protocol.clone(),
-                        stdout: stdout.clone(),
-                        stderr: stderr.clone(),
-                    });
+                    use crate::sim::bridge::OutputStream;
+                    // Find or create the ProcessOutput entry for this node+protocol.
+                    let entry = match state
+                        .process_outputs
+                        .iter()
+                        .position(|p| p.node == *node && p.protocol == *protocol)
+                    {
+                        Some(i) => &mut state.process_outputs[i],
+                        None => {
+                            state.process_outputs.push(ProcessOutput {
+                                node: node.clone(),
+                                protocol: protocol.clone(),
+                                stdout: String::new(),
+                                stderr: String::new(),
+                            });
+                            state.process_outputs.last_mut().unwrap()
+                        }
+                    };
+                    let buf = match stream {
+                        OutputStream::Stdout => &mut entry.stdout,
+                        OutputStream::Stderr => &mut entry.stderr,
+                    };
+                    if !buf.is_empty() {
+                        buf.push('\n');
+                    }
+                    buf.push_str(line);
                     continue;
                 }
                 _ => {}
@@ -357,7 +382,7 @@ impl NexusApp {
             state.arrows_frozen = false;
         }
 
-        // Left panel: inspector + messages (collapsible sections)
+        // Left panel: inspector + messages + output (collapsible sections)
         if state.panels.inspector {
             egui::SidePanel::left("inspector")
                 .default_width(BREAKPOINTS_PANEL_WIDTH)
@@ -406,6 +431,36 @@ impl NexusApp {
                                             state.event_stepping = true;
                                         }
                                         messages::MessagesAction::None => {}
+                                    }
+                                });
+                        }
+
+                        // Output section: click to open floating output window
+                        if !state.process_outputs.is_empty() {
+                            ui.separator();
+                            egui::CollapsingHeader::new("Output")
+                                .default_open(true)
+                                .show(ui, |ui| {
+                                    for output in &state.process_outputs {
+                                        let key =
+                                            format!("{}.{}", output.node, output.protocol);
+                                        let line_count = output.stdout.lines().count()
+                                            + output.stderr.lines().count();
+                                        let label =
+                                            format!("{key} ({line_count} lines)");
+                                        if ui
+                                            .selectable_label(
+                                                state.open_output_windows.contains(&key),
+                                                label,
+                                            )
+                                            .clicked()
+                                        {
+                                            if state.open_output_windows.contains(&key) {
+                                                state.open_output_windows.remove(&key);
+                                            } else {
+                                                state.open_output_windows.insert(key);
+                                            }
+                                        }
                                     }
                                 });
                         }

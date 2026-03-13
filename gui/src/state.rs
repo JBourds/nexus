@@ -303,8 +303,8 @@ pub struct LiveSimState {
     pub build_status: SimBuildStatus,
     /// Captured process outputs (populated when simulation finishes).
     pub process_outputs: Vec<ProcessOutput>,
-    /// Which node's output is currently being viewed (for the output panel).
-    pub viewing_output: Option<String>,
+    /// Set of open output windows, keyed by "node.protocol".
+    pub open_output_windows: HashSet<String>,
 }
 
 /// State for replay mode.
@@ -492,6 +492,14 @@ pub enum SimBuildStatus {
     Building,
     Running,
     Complete,
+}
+
+/// An entry in the session's trace history.
+#[derive(Clone, Debug)]
+pub struct TraceHistoryEntry {
+    pub sim_dir: std::path::PathBuf,
+    pub config_name: String,
+    pub timestamp: String,
 }
 
 /// Captured stdout/stderr from a node's protocol process.
