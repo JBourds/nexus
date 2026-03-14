@@ -354,6 +354,11 @@ impl NexusApp {
                 }
                 _ => {}
             }
+            let rec_idx = if matches!(event, GuiEvent::Trace(_)) {
+                Some(state.all_records.len() - 1)
+            } else {
+                None
+            };
             process_gui_event(
                 event,
                 &mut state.current_timestep,
@@ -364,6 +369,7 @@ impl NexusApp {
                 &state.channel_subscribers,
                 &mut state.last_sender,
                 egui_time,
+                rec_idx,
             );
             if should_pause {
                 state.paused = true;
@@ -672,11 +678,21 @@ impl NexusApp {
                     &mut state.seq_zoom,
                 );
                 if let sequence::SequenceAction::JumpToEvent { record_index, node } = seq_action {
-                    state.event_cursor = Some(record_index);
-                    state.event_stepping = true;
-                    state.expanded_nodes.clear();
-                    state.expanded_nodes.insert(node.clone());
-                    state.selected_node = Some(node);
+                    let already_selected = state.selected_node.as_ref() == Some(&node)
+                        && state.event_cursor == Some(record_index);
+                    if already_selected {
+                        state.event_cursor = None;
+                        state.event_stepping = false;
+                        state.expanded_nodes.remove(&node);
+                        state.selected_node = None;
+                    } else {
+                        state.event_cursor = Some(record_index);
+                        state.event_stepping = true;
+                        state.expanded_nodes.clear();
+                        state.expanded_nodes.insert(node.clone());
+                        state.selected_node = Some(node);
+                        state.panels.inspector = true;
+                    }
                 }
             }
             ViewMode::Grid => {
@@ -1187,11 +1203,21 @@ impl NexusApp {
                     &mut state.seq_zoom,
                 );
                 if let sequence::SequenceAction::JumpToEvent { record_index, node } = seq_action {
-                    state.event_cursor = Some(record_index);
-                    state.event_stepping = true;
-                    state.expanded_nodes.clear();
-                    state.expanded_nodes.insert(node.clone());
-                    state.selected_node = Some(node);
+                    let already_selected = state.selected_node.as_ref() == Some(&node)
+                        && state.event_cursor == Some(record_index);
+                    if already_selected {
+                        state.event_cursor = None;
+                        state.event_stepping = false;
+                        state.expanded_nodes.remove(&node);
+                        state.selected_node = None;
+                    } else {
+                        state.event_cursor = Some(record_index);
+                        state.event_stepping = true;
+                        state.expanded_nodes.clear();
+                        state.expanded_nodes.insert(node.clone());
+                        state.selected_node = Some(node);
+                        state.panels.inspector = true;
+                    }
                 }
             }
             ViewMode::Grid => {
@@ -1575,6 +1601,7 @@ fn process_gui_event(
     channel_subscribers: &[Vec<usize>],
     last_sender: &mut [Option<usize>],
     egui_time: f64,
+    record_index: Option<usize>,
 ) {
     match event {
         GuiEvent::Trace(record) => {
@@ -1598,7 +1625,7 @@ fn process_gui_event(
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
                         receivers: Vec::new(),
-                        record_index: None,
+                        record_index,
                     });
                     // Track last sender for this channel
                     if let Some(slot) = last_sender.get_mut(ch_idx) {
@@ -1645,7 +1672,7 @@ fn process_gui_event(
                         data_preview: format_data_preview(data),
                         data_raw: data.clone(),
                         receivers: Vec::new(),
-                        record_index: None,
+                        record_index,
                     });
                     // Correlate: attach this RX to matching TX entry
                     if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {
@@ -1695,7 +1722,7 @@ fn process_gui_event(
                         data_preview: String::new(),
                         data_raw: Vec::new(),
                         receivers: Vec::new(),
-                        record_index: None,
+                        record_index,
                     });
                     // Correlate: attach this Drop to matching TX entry
                     if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {

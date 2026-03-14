@@ -203,7 +203,7 @@ fn show_node_events(
                             egui::Frame::NONE.inner_margin(2.0)
                         };
 
-                        frame.show(ui, |ui| {
+                        let frame_resp = frame.show(ui, |ui| {
                             ui.set_min_width(ui.available_width());
                             let resp = ui.vertical(|ui| {
                                 ui.horizontal(|ui| {
@@ -258,6 +258,9 @@ fn show_node_events(
                                     action = InspectorAction::JumpToEvent(ri);
                                 }
                         });
+                        if is_current {
+                            frame_resp.response.scroll_to_me(Some(egui::Align::Center));
+                        }
                     }
                 });
         });
