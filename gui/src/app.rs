@@ -733,15 +733,12 @@ impl NexusApp {
         // Per-node-protocol floating output windows
         let mut windows_to_close = Vec::new();
         for key in state.open_output_windows.iter() {
-            let Some((node_name, protocol_name)) = key.split_once('.') else {
-                continue;
-            };
             let output = state
                 .process_outputs
                 .iter()
-                .find(|o| o.node == node_name && o.protocol == protocol_name);
+                .find(|o| format!("{}.{}", o.node, o.protocol) == *key);
             let mut open = true;
-            egui::Window::new(format!("{node_name}.{protocol_name}"))
+            egui::Window::new(key)
                 .id(egui::Id::new(format!("output_window_{key}")))
                 .open(&mut open)
                 .default_width(480.0)
