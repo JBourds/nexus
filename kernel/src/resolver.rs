@@ -33,7 +33,12 @@ impl ResolvedChannels {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ProtocolHandle)>,
         ts_config: &ast::TimestepConfig,
     ) -> Result<Self, KernelError> {
-        let (mut channel_names_str, channels) = unzip(channels);
+        let (channel_names_str, channels) = unzip(channels);
+        // Sort channel names and configs together so indices match the
+        // alphabetical order used in trace file headers.
+        let mut paired: Vec<_> = channel_names_str.into_iter().zip(channels).collect();
+        paired.sort_by(|(a, _), (b, _)| a.cmp(b));
+        let (mut channel_names_str, channels): (Vec<_>, Vec<_>) = paired.into_iter().unzip();
         // Inject control files here so that FUSE mappings get made for them too
         let control_files = CONTROL_FILES.into_iter().map(|(name, _)| name.to_string());
         channel_names_str.extend(control_files);
