@@ -173,6 +173,7 @@ impl NexusApp {
                     &mut state.breakpoints,
                     None,
                     0,
+                    state.sim.params.timestep.count.get(),
                     &node_names,
                     &channel_names,
                     &mut state.bp_input,
@@ -492,6 +493,7 @@ impl NexusApp {
                             &mut state.breakpoints,
                             Some(&mut state.run_until),
                             state.current_timestep,
+                            state.sim.params.timestep.count.get(),
                             &node_names,
                             &channel_names,
                             &mut state.bp_input,
@@ -886,7 +888,7 @@ impl NexusApp {
         }
 
         // Advance timesteps proportional to real time and playback speed
-        if state.playing && state.current_timestep < state.total_timesteps.saturating_sub(1) {
+        if state.playing && state.current_timestep < state.total_timesteps {
             let dt = ctx.input(|i| i.stable_dt) as f64;
             use config::ast::TimeUnit;
             let unit_seconds = match state.sim.params.timestep.unit {
@@ -902,7 +904,7 @@ impl NexusApp {
             let steps = (state.time_accumulator / ts_duration).floor() as u64;
             state.time_accumulator -= steps as f64 * ts_duration;
 
-            let max_ts = state.total_timesteps.saturating_sub(1);
+            let max_ts = state.total_timesteps;
             let target_ts = (state.current_timestep + steps).min(max_ts);
             if target_ts > state.current_timestep {
                 // Gather messages and arrows for each stepped timestep
@@ -1056,6 +1058,7 @@ impl NexusApp {
                             &mut state.breakpoints,
                             Some(&mut state.run_until),
                             state.current_timestep,
+                            state.total_timesteps,
                             &node_names,
                             &channel_names,
                             &mut state.bp_input,
@@ -1155,7 +1158,7 @@ impl NexusApp {
                             state.current_timestep = ts;
                         }
                     }
-                } else if state.current_timestep < state.total_timesteps.saturating_sub(1) {
+                } else if state.current_timestep < state.total_timesteps {
                     state.current_timestep += 1;
                     state.node_states = state
                         .controller

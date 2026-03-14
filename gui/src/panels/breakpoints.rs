@@ -22,6 +22,7 @@ pub fn show_breakpoints(
     breakpoints: &mut Vec<Breakpoint>,
     run_until: Option<&mut Option<BreakpointKind>>,
     current_timestep: u64,
+    total_timesteps: u64,
     node_names: &[String],
     channel_names: &[String],
     input: &mut BreakpointInput,
@@ -81,7 +82,8 @@ pub fn show_breakpoints(
                 .timestep_buf
                 .trim()
                 .parse::<u64>()
-                .unwrap_or(current_timestep);
+                .unwrap_or(current_timestep)
+                .min(total_timesteps);
             action = BreakpointsAction::Add(Breakpoint {
                 kind: BreakpointKind::Timestep(ts),
                 enabled: true,
@@ -159,28 +161,6 @@ pub fn show_breakpoints(
             {
                 action = BreakpointsAction::RunUntil(BreakpointKind::NextEvent);
             }
-
-            // Run until timestep
-            ui.horizontal(|ui| {
-                ui.label("Until t=");
-                let te = egui::TextEdit::singleline(&mut input.timestep_buf)
-                    .desired_width(60.0)
-                    .hint_text((current_timestep + 10).to_string());
-                ui.add(te);
-                if ui
-                    .button("Go")
-                    .on_hover_text("Run until this timestep")
-                    .clicked()
-                {
-                    let ts = input
-                        .timestep_buf
-                        .trim()
-                        .parse::<u64>()
-                        .unwrap_or(current_timestep + 10);
-                    action = BreakpointsAction::RunUntil(BreakpointKind::Timestep(ts));
-                    input.timestep_buf.clear();
-                }
-            });
 
             // Run until node event (collapsible + searchable)
             if !node_names.is_empty() {

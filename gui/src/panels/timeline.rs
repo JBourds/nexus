@@ -65,7 +65,7 @@ pub fn show_timeline(
                     action.step_forward = true;
                 }
                 if ui.button(">|").on_hover_text("Jump to end").clicked() {
-                    action.seek_to = Some(total_timesteps.saturating_sub(1));
+                    action.seek_to = Some(total_timesteps);
                 }
 
                 ui.separator();
