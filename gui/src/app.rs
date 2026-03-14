@@ -615,13 +615,24 @@ impl NexusApp {
                 state.paused = true;
                 state.controller.set_paused(true);
                 if state.event_stepping {
-                    // Step backward by event
-                    if let Some(cursor) = state.event_cursor {
-                        let prev = cursor.saturating_sub(1);
-                        state.event_cursor = Some(prev);
-                        if let Some(record) = state.all_records.get(prev) {
-                            state.current_timestep = record.timestep;
-                        }
+                    // Step backward by event: find the previous message record
+                    let start = state.event_cursor.unwrap_or(state.all_records.len());
+                    let prev = state.all_records[..start]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, r)| {
+                            matches!(
+                                r.event,
+                                TraceEvent::MessageSent { .. }
+                                    | TraceEvent::MessageRecv { .. }
+                                    | TraceEvent::MessageDropped { .. }
+                            )
+                        })
+                        .map(|(i, _)| i);
+                    if let Some(idx) = prev {
+                        state.event_cursor = Some(idx);
+                        state.current_timestep = state.all_records[idx].timestep;
                     }
                 } else {
                     state.current_timestep = state.current_timestep.saturating_sub(1);
@@ -1174,11 +1185,24 @@ impl NexusApp {
             if action.step_backward {
                 state.playing = false;
                 if state.event_stepping {
-                    // Event-level step backward
-                    if let Some(cursor) = state.event_cursor {
-                        let prev = cursor.saturating_sub(1);
-                        state.event_cursor = Some(prev);
-                        if let Some(ts) = state.controller.timestep_for_record(prev) {
+                    // Event-level step backward: find previous message record
+                    let start = state.event_cursor.unwrap_or(state.controller.total_records());
+                    let prev = state.controller.all_records()[..start]
+                        .iter()
+                        .enumerate()
+                        .rev()
+                        .find(|(_, r)| {
+                            matches!(
+                                r.event,
+                                TraceEvent::MessageSent { .. }
+                                    | TraceEvent::MessageRecv { .. }
+                                    | TraceEvent::MessageDropped { .. }
+                            )
+                        })
+                        .map(|(i, _)| i);
+                    if let Some(idx) = prev {
+                        state.event_cursor = Some(idx);
+                        if let Some(ts) = state.controller.timestep_for_record(idx) {
                             seek_to_ts(state, ts, egui_time);
                         }
                     }
