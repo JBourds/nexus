@@ -5,7 +5,7 @@ gateway.py — Collects sensor data and sends ACKs over LoRa.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
+lora = os.path.expanduser("~/nexus/lora/channel")
 
 seq = 0
 while True:

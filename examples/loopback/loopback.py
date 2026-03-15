@@ -7,7 +7,7 @@ Simulate writing to one's self on the same protocol.
 import os
 import time
 
-path = os.path.expanduser("~/nexus/ideal")
+path = os.path.expanduser("~/nexus/ideal/channel")
 counter = 0
 
 if __name__ == "__main__":

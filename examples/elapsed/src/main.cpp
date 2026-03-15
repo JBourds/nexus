@@ -15,9 +15,9 @@
 
 int FDS[NFILES];
 const char* PATHS[NFILES] = {
-    NEXUS_ROOT "/ctl.elapsed.s",
-    NEXUS_ROOT "/ctl.elapsed.ms",
-    NEXUS_ROOT "/ctl.elapsed.us",
+    NEXUS_ROOT "/ctl.elapsed/s",
+    NEXUS_ROOT "/ctl.elapsed/ms",
+    NEXUS_ROOT "/ctl.elapsed/us",
 };
 
 void open_files();

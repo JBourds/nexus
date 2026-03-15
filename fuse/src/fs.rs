@@ -2,7 +2,6 @@ use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
 use crate::file::{NexusFile, default_attr};
 use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage};
-use config::ast::{self};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
@@ -24,47 +23,92 @@ use std::{collections::HashMap, path::PathBuf};
 
 const TTL: Duration = Duration::from_secs(1);
 
-pub const CONTROL_FILES: [(&str, ChannelMode); 19] = [
-    // Time control: read/write current virtual time per node
-    ("ctl.time.us", ChannelMode::ReadWrite),
-    ("ctl.time.ms", ChannelMode::ReadWrite),
-    ("ctl.time.s", ChannelMode::ReadWrite),
-    // Elapsed time since simulation start (read-only)
-    ("ctl.elapsed.us", ChannelMode::ReadOnly),
-    ("ctl.elapsed.ms", ChannelMode::ReadOnly),
-    ("ctl.elapsed.s", ChannelMode::ReadOnly),
-    // Energy (stubs, not yet implemented)
+/// Flat control files that remain at the root level (not in subdirectories).
+pub const CONTROL_FILES: [(&str, ChannelMode); 3] = [
     ("ctl.energy_left", ChannelMode::ReadOnly),
     ("ctl.energy_state", ChannelMode::ReadWrite),
-    // Absolute position and orientation (read/write in node's distance unit / degrees)
-    ("ctl.pos.x", ChannelMode::ReadWrite),
-    ("ctl.pos.y", ChannelMode::ReadWrite),
-    ("ctl.pos.z", ChannelMode::ReadWrite),
-    ("ctl.pos.az", ChannelMode::ReadWrite),
-    ("ctl.pos.el", ChannelMode::ReadWrite),
-    ("ctl.pos.roll", ChannelMode::ReadWrite),
-    // Relative position delta (write-only; adds to current position and clears motion pattern)
-    ("ctl.pos.dx", ChannelMode::WriteOnly),
-    ("ctl.pos.dy", ChannelMode::WriteOnly),
-    ("ctl.pos.dz", ChannelMode::WriteOnly),
-    // Motion pattern (read/write; formats: none | velocity | linear | circle)
-    ("ctl.pos.motion", ChannelMode::ReadWrite),
-    // Power flows (read/write; runtime manipulation of power sources/sinks)
     ("ctl.power_flows", ChannelMode::ReadWrite),
 ];
 
+/// Sub-files under the `ctl.time/` directory.
+pub const TIME_SUBFILES: [(&str, ChannelMode); 4] = [
+    ("s", ChannelMode::ReadWrite),
+    ("ms", ChannelMode::ReadWrite),
+    ("us", ChannelMode::ReadWrite),
+    ("ns", ChannelMode::ReadWrite),
+];
+
+/// Sub-files under the `ctl.elapsed/` directory.
+pub const ELAPSED_SUBFILES: [(&str, ChannelMode); 4] = [
+    ("s", ChannelMode::ReadOnly),
+    ("ms", ChannelMode::ReadOnly),
+    ("us", ChannelMode::ReadOnly),
+    ("ns", ChannelMode::ReadOnly),
+];
+
+/// Sub-files under the `ctl.pos/` directory.
+pub const POS_SUBFILES: [(&str, ChannelMode); 10] = [
+    ("x", ChannelMode::ReadWrite),
+    ("y", ChannelMode::ReadWrite),
+    ("z", ChannelMode::ReadWrite),
+    ("az", ChannelMode::ReadWrite),
+    ("el", ChannelMode::ReadWrite),
+    ("roll", ChannelMode::ReadWrite),
+    ("dx", ChannelMode::WriteOnly),
+    ("dy", ChannelMode::WriteOnly),
+    ("dz", ChannelMode::WriteOnly),
+    ("motion", ChannelMode::ReadWrite),
+];
+
+/// Sub-files under each channel directory (e.g., `lora/`).
+pub const CHANNEL_SUBFILES: [(&str, ChannelMode); 3] = [
+    ("channel", ChannelMode::ReadWrite), // mode overridden per channel
+    ("rssi", ChannelMode::ReadOnly),
+    ("snr", ChannelMode::ReadOnly),
+];
+
+/// Returns all control file paths for the resolver to inject into channel names.
 pub fn control_files() -> Vec<String> {
-    CONTROL_FILES
-        .into_iter()
-        .map(|(name, _)| name.to_string())
-        .collect()
+    let mut files = Vec::new();
+    for (name, _) in CONTROL_FILES.iter() {
+        files.push(name.to_string());
+    }
+    for (name, _) in TIME_SUBFILES.iter() {
+        files.push(format!("ctl.time/{name}"));
+    }
+    for (name, _) in ELAPSED_SUBFILES.iter() {
+        files.push(format!("ctl.elapsed/{name}"));
+    }
+    for (name, _) in POS_SUBFILES.iter() {
+        files.push(format!("ctl.pos/{name}"));
+    }
+    files
+}
+
+#[derive(Debug, Clone)]
+enum FsEntryKind {
+    Directory,
+    RegularFile,
+}
+
+/// A single entry in the virtual filesystem tree.
+#[derive(Debug, Clone)]
+struct FsEntry {
+    /// Display name within its parent directory.
+    name: String,
+    /// Inode of the parent (FUSE_ROOT_ID for top-level entries).
+    parent_inode: u64,
+    /// Whether this is a directory or regular file.
+    kind: FsEntryKind,
+    /// Full path key used for buffer lookups (e.g., "lora/channel", "ctl.time/us").
+    path: String,
 }
 
 #[derive(Debug)]
 pub struct NexusFs {
     root: PathBuf,
     attr: FileAttr,
-    files: Vec<ast::ChannelHandle>,
+    entries: Vec<FsEntry>,
     buffers: HashMap<ChannelId, NexusFile>,
     fs_side: FsChannels,
     kernel_side: Option<KernelChannels>,
@@ -127,18 +171,73 @@ impl NexusFs {
         tgid
     }
 
-    fn get_or_make_inode(&mut self, name: String) -> u64 {
-        if let Some(index) = self.files.iter().position(|file| **file == name) {
+    /// Find or create an entry in the tree. Returns the inode.
+    fn get_or_make_entry(
+        &mut self,
+        name: String,
+        parent_inode: u64,
+        kind: FsEntryKind,
+        path: String,
+    ) -> u64 {
+        if let Some(index) = self
+            .entries
+            .iter()
+            .position(|e| e.name == name && e.parent_inode == parent_inode)
+        {
             index_to_inode(index)
         } else {
-            self.files.push(name);
+            self.entries.push(FsEntry {
+                name,
+                parent_inode,
+                kind,
+                path,
+            });
             self.inode_gen.fetch_add(1, Ordering::Relaxed)
         }
     }
 
+    /// Create a directory entry at `parent_inode` and populate it with
+    /// the given sub-files, creating buffer entries for each PID.
+    fn add_directory_with_subfiles(
+        &mut self,
+        dir_name: &str,
+        dir_path: &str,
+        parent_inode: u64,
+        subfiles: &[(&str, ChannelMode)],
+        pids: &[u32],
+    ) {
+        let dir_inode = self.get_or_make_entry(
+            dir_name.to_string(),
+            parent_inode,
+            FsEntryKind::Directory,
+            dir_path.to_string(),
+        );
+        for &(subfile_name, mode) in subfiles {
+            let file_path = format!("{dir_path}/{subfile_name}");
+            let file_inode = self.get_or_make_entry(
+                subfile_name.to_string(),
+                dir_inode,
+                FsEntryKind::RegularFile,
+                file_path.clone(),
+            );
+            for &pid in pids {
+                self.buffers.insert(
+                    (pid, file_path.clone()),
+                    NexusFile::new(NonZeroUsize::new(1000).unwrap(), mode, file_inode),
+                );
+            }
+        }
+    }
+
     pub fn add_processes(mut self, pids: &[u32]) -> Self {
+        // Flat control files (energy, position, power)
         for (file, mode) in CONTROL_FILES.iter() {
-            let inode = self.get_or_make_inode(file.to_string());
+            let inode = self.get_or_make_entry(
+                file.to_string(),
+                FUSE_ROOT_ID,
+                FsEntryKind::RegularFile,
+                file.to_string(),
+            );
             for &pid in pids {
                 self.buffers.insert(
                     (pid, file.to_string()),
@@ -146,6 +245,28 @@ impl NexusFs {
                 );
             }
         }
+
+        // ctl.time/ directory with sub-files
+        self.add_directory_with_subfiles("ctl.time", "ctl.time", FUSE_ROOT_ID, &TIME_SUBFILES, pids);
+
+        // ctl.elapsed/ directory with sub-files
+        self.add_directory_with_subfiles(
+            "ctl.elapsed",
+            "ctl.elapsed",
+            FUSE_ROOT_ID,
+            &ELAPSED_SUBFILES,
+            pids,
+        );
+
+        // ctl.pos/ directory with sub-files
+        self.add_directory_with_subfiles(
+            "ctl.pos",
+            "ctl.pos",
+            FUSE_ROOT_ID,
+            &POS_SUBFILES,
+            pids,
+        );
+
         self
     }
 
@@ -158,15 +279,56 @@ impl NexusFs {
             max_msg_size,
         } in channels
         {
-            let key = (pid, channel.clone());
-            let inode = self.get_or_make_inode(channel);
+            // Create directory for the channel (e.g., "lora/")
+            let dir_inode = self.get_or_make_entry(
+                channel.clone(),
+                FUSE_ROOT_ID,
+                FsEntryKind::Directory,
+                channel.clone(),
+            );
+
+            // Create "channel" sub-file (data read/write)
+            let data_path = format!("{channel}/channel");
+            let data_inode = self.get_or_make_entry(
+                "channel".to_string(),
+                dir_inode,
+                FsEntryKind::RegularFile,
+                data_path.clone(),
+            );
+            let data_key = (pid, data_path);
             if self
                 .buffers
-                .insert(key.clone(), NexusFile::new(max_msg_size, mode, inode))
+                .insert(data_key.clone(), NexusFile::new(max_msg_size, mode, data_inode))
                 .is_some()
             {
                 return Err(ChannelError::DuplicateChannel);
             }
+
+            // Create "rssi" sub-file (read-only)
+            let rssi_path = format!("{channel}/rssi");
+            let rssi_inode = self.get_or_make_entry(
+                "rssi".to_string(),
+                dir_inode,
+                FsEntryKind::RegularFile,
+                rssi_path.clone(),
+            );
+            self.buffers.insert(
+                (pid, rssi_path),
+                NexusFile::new(NonZeroUsize::new(64).unwrap(), ChannelMode::ReadOnly, rssi_inode),
+            );
+
+            // Create "snr" sub-file (read-only)
+            let snr_path = format!("{channel}/snr");
+            let snr_inode = self.get_or_make_entry(
+                "snr".to_string(),
+                dir_inode,
+                FsEntryKind::RegularFile,
+                snr_path.clone(),
+            );
+            self.buffers.insert(
+                (pid, snr_path),
+                NexusFile::new(NonZeroUsize::new(64).unwrap(), ChannelMode::ReadOnly, snr_inode),
+            );
         }
         Ok(self)
     }
@@ -258,13 +420,6 @@ impl NexusFs {
                 // need to buffer remaining parts of the message
                 file.unread_msg = Some((read_size, msg));
             }
-            // else {
-            //     // TODO: Python requires this because of the read
-            //     // implementation- does this cause issues on other platforms?
-            //
-            //     // serve explicit EOF condition for next read
-            //     file.unread_msg = Some((0, Self::EMPTY));
-            // }
         } else {
             reply.data(&[]);
         }
@@ -279,7 +434,7 @@ impl Default for NexusFs {
         Self {
             root,
             attr: Self::root_attr(),
-            files: Vec::default(),
+            entries: Vec::default(),
             buffers: HashMap::default(),
             fs_side: (fs_tx, fs_rx),
             kernel_side: Some((kernel_tx, kernel_rx)),
@@ -309,7 +464,7 @@ impl Filesystem for NexusFs {
         _flags: Option<u32>,
         reply: ReplyAttr,
     ) {
-        // Just return current attrs — we ignore truncate/chmod/etc.
+        // Just return current attrs -- we ignore truncate/chmod/etc.
         self.getattr(req, ino, _fh, reply);
     }
 
@@ -317,15 +472,37 @@ impl Filesystem for NexusFs {
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         self.apply_pending_remaps();
         let pid = self.resolve_tgid(req.pid());
-        if parent != FUSE_ROOT_ID {
+        let name_str = name.to_string_lossy();
+
+        // Find entry matching (parent, name)
+        let found = self
+            .entries
+            .iter()
+            .enumerate()
+            .find(|(_, e)| e.parent_inode == parent && e.name == name_str.as_ref());
+
+        let Some((index, entry)) = found else {
             reply.error(ENOENT);
             return;
-        }
-        let file = name.to_string_lossy().into_owned();
-        if let Some(file) = self.buffers.get(&(pid, file)) {
-            reply.entry(&TTL, &file.attr, 0);
-        } else {
-            reply.error(ENOENT);
+        };
+
+        let inode = index_to_inode(index);
+        match entry.kind {
+            FsEntryKind::Directory => {
+                reply.entry(
+                    &TTL,
+                    &default_attr(inode, FileType::Directory, 0o755, 0, 0),
+                    0,
+                );
+            }
+            FsEntryKind::RegularFile => {
+                let path = entry.path.clone();
+                if let Some(file) = self.buffers.get(&(pid, path)) {
+                    reply.entry(&TTL, &file.attr, 0);
+                } else {
+                    reply.error(ENOENT);
+                }
+            }
         }
     }
 
@@ -337,14 +514,24 @@ impl Filesystem for NexusFs {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
             _ => {
                 let index = inode_to_index(ino);
-                let Some(name) = self.files.get(index) else {
+                let Some(entry) = self.entries.get(index) else {
                     reply.error(ENOENT);
                     return;
                 };
-                if let Some(file) = self.buffers.get(&(pid, name.clone())) {
-                    reply.attr(&TTL, &file.attr);
-                } else {
-                    reply.error(EACCES);
+                match entry.kind {
+                    FsEntryKind::Directory => {
+                        reply.attr(
+                            &TTL,
+                            &default_attr(ino, FileType::Directory, 0o755, 0, 0),
+                        );
+                    }
+                    FsEntryKind::RegularFile => {
+                        if let Some(file) = self.buffers.get(&(pid, entry.path.clone())) {
+                            reply.attr(&TTL, &file.attr);
+                        } else {
+                            reply.error(EACCES);
+                        }
+                    }
                 }
             }
         }
@@ -355,13 +542,18 @@ impl Filesystem for NexusFs {
         self.apply_pending_remaps();
         let pid = self.resolve_tgid(req.pid());
         let index = inode_to_index(ino);
-        let Some(file) = self.files.get(index) else {
+        let Some(entry) = self.entries.get(index) else {
             reply.error(ENOENT);
             return;
         };
 
-        // Key files by the process and its channel name
-        let key = (pid, file.clone());
+        if matches!(entry.kind, FsEntryKind::Directory) {
+            reply.error(EISDIR);
+            return;
+        }
+
+        // Key files by the process and its path
+        let key = (pid, entry.path.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
             return;
@@ -407,12 +599,17 @@ impl Filesystem for NexusFs {
             return;
         }
         let index = inode_to_index(ino);
-        let Some(filename) = self.files.get(index) else {
+        let Some(entry) = self.entries.get(index) else {
             reply.error(ENOENT);
             return;
         };
 
-        let key = (pid, filename.clone());
+        if matches!(entry.kind, FsEntryKind::Directory) {
+            reply.error(EISDIR);
+            return;
+        }
+
+        let key = (pid, entry.path.clone());
         self.read_message(reply, size as usize, key);
     }
 
@@ -436,12 +633,17 @@ impl Filesystem for NexusFs {
             return;
         }
         let index = inode_to_index(ino);
-        let Some(file) = self.files.get(index) else {
+        let Some(entry) = self.entries.get(index) else {
             reply.error(ENOENT);
             return;
         };
 
-        let key = (pid, file.clone());
+        if matches!(entry.kind, FsEntryKind::Directory) {
+            reply.error(EISDIR);
+            return;
+        }
+
+        let key = (pid, entry.path.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
             return;
@@ -478,25 +680,49 @@ impl Filesystem for NexusFs {
         offset: i64,
         mut reply: ReplyDirectory,
     ) {
+        // Check that the inode is either ROOT or a known directory
         if ino != FUSE_ROOT_ID {
-            reply.error(ENOENT);
-            return;
+            let index = inode_to_index(ino);
+            match self.entries.get(index) {
+                Some(entry) if matches!(entry.kind, FsEntryKind::Directory) => {}
+                _ => {
+                    reply.error(ENOENT);
+                    return;
+                }
+            }
         }
 
         // Build full directory listing (static + dynamic entries)
-        let mut entries: Vec<(u64, FileType, String)> = vec![
-            (FUSE_ROOT_ID, FileType::Directory, ".".to_string()),
-            (FUSE_ROOT_ID, FileType::Directory, "..".to_string()),
+        let mut dir_entries: Vec<(u64, FileType, String)> = vec![
+            (ino, FileType::Directory, ".".to_string()),
+            (
+                if ino == FUSE_ROOT_ID {
+                    FUSE_ROOT_ID
+                } else {
+                    // Find parent inode for ".."
+                    let index = inode_to_index(ino);
+                    self.entries[index].parent_inode
+                },
+                FileType::Directory,
+                "..".to_string(),
+            ),
         ];
 
-        // Dynamically add entries from self.files
-        for (i, name) in self.files.iter().enumerate() {
-            let inode = index_to_inode(i);
-            entries.push((inode, FileType::RegularFile, name.clone()));
+        // Add children of this directory
+        for (i, entry) in self.entries.iter().enumerate() {
+            if entry.parent_inode == ino {
+                let file_type = match entry.kind {
+                    FsEntryKind::Directory => FileType::Directory,
+                    FsEntryKind::RegularFile => FileType::RegularFile,
+                };
+                dir_entries.push((index_to_inode(i), file_type, entry.name.clone()));
+            }
         }
 
         // Serve entries starting from the given offset
-        for (i, (inode, file_type, name)) in entries.into_iter().enumerate().skip(offset as usize) {
+        for (i, (inode, file_type, name)) in
+            dir_entries.into_iter().enumerate().skip(offset as usize)
+        {
             let next_offset = (i + 1) as i64;
             if reply.add(inode, next_offset, file_type, name) {
                 break;
@@ -632,6 +858,62 @@ mod tests {
         // Original buffer still there, no panic
         assert!(fs.buffers.contains_key(&(50, "ch_a".into())));
         assert!(!fs.buffers.contains_key(&(1000, "ch_a".into())));
+    }
+
+    #[test]
+    fn test_add_processes_creates_directories_and_files() {
+        let fs = NexusFs::default().add_processes(&[100]);
+
+        // Should have directory entries for ctl.time and ctl.elapsed
+        assert!(fs
+            .entries
+            .iter()
+            .any(|e| e.name == "ctl.time" && matches!(e.kind, FsEntryKind::Directory)));
+        assert!(fs
+            .entries
+            .iter()
+            .any(|e| e.name == "ctl.elapsed" && matches!(e.kind, FsEntryKind::Directory)));
+
+        // Should have sub-file entries
+        assert!(fs.buffers.contains_key(&(100, "ctl.time/us".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.time/ns".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/s".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/ns".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.pos/x".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.pos/motion".into())));
+
+        // Should have ctl.pos directory
+        assert!(fs
+            .entries
+            .iter()
+            .any(|e| e.name == "ctl.pos" && matches!(e.kind, FsEntryKind::Directory)));
+
+        // Flat control files should still exist
+        assert!(fs.buffers.contains_key(&(100, "ctl.energy_left".into())));
+    }
+
+    #[test]
+    fn test_add_channels_creates_directory_with_subfiles() {
+        let fs = NexusFs::default().add_processes(&[100]);
+        let channels = vec![NexusChannel {
+            pid: 100,
+            node: "node1".to_string(),
+            channel: "lora".to_string(),
+            mode: ChannelMode::ReadWrite,
+            max_msg_size: NonZeroUsize::new(256).unwrap(),
+        }];
+        let fs = fs.add_channels(channels).unwrap();
+
+        // Should have a "lora" directory
+        assert!(fs
+            .entries
+            .iter()
+            .any(|e| e.name == "lora" && matches!(e.kind, FsEntryKind::Directory)));
+
+        // Should have lora/channel, lora/rssi, lora/snr buffer entries
+        assert!(fs.buffers.contains_key(&(100, "lora/channel".into())));
+        assert!(fs.buffers.contains_key(&(100, "lora/rssi".into())));
+        assert!(fs.buffers.contains_key(&(100, "lora/snr".into())));
     }
 
     fn rx_is_empty(rx: &mpsc::Receiver<(u32, u32)>) -> bool {

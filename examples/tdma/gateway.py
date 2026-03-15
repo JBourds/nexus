@@ -7,7 +7,7 @@ Script simulating the gateway node in a TDMA protocol.
 import os
 import time
 
-radio_path = os.path.expanduser("~/nexus/radio")
+radio_path = os.path.expanduser("~/nexus/radio/channel")
 
 SLOT_LENGTH = 1
 GUARD_LENGTH = 0.1

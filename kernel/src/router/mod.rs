@@ -114,6 +114,15 @@ pub(crate) struct RoutingServer {
     sequence: usize,
     /// Monotonic counter for unique message IDs across the simulation.
     next_msg_id: u64,
+    /// Per-handle signal quality from the last RX on each channel endpoint.
+    signal_info: Vec<SignalInfo>,
+}
+
+/// Last-received signal quality for a (destination_node, channel) pair.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct SignalInfo {
+    pub(crate) rssi_dbm: f64,
+    pub(crate) snr_db: f64,
 }
 
 impl RoutingServer {
@@ -153,6 +162,7 @@ impl RoutingServer {
                     timestep_ns,
                     sequence: 0,
                     next_msg_id: 0,
+                    signal_info: vec![SignalInfo::default(); handles_count],
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -244,7 +254,7 @@ impl RoutingServer {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         match ctl {
-            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS | ControlFile::TimeNs => {
                 self.update_time(ni, msg)
             }
             ControlFile::EnergyState => {
@@ -269,7 +279,8 @@ impl RoutingServer {
             ControlFile::EnergyLeft
             | ControlFile::ElapsedUs
             | ControlFile::ElapsedMs
-            | ControlFile::ElapsedS => Err(RouterError::UnknownFile(msg.id.1.clone())),
+            | ControlFile::ElapsedS
+            | ControlFile::ElapsedNs => Err(RouterError::UnknownFile(msg.id.1.clone())),
         }
     }
 
@@ -313,10 +324,17 @@ impl RoutingServer {
     /// Receive a message from the FS and post it to the mailboxes of any
     /// nodes listening on the channel.
     pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let Some(channel_index) = self.get_handle_index(&msg.id) else {
-            return Err(RouterError::UnknownFile(msg.id.1));
+        let path = &msg.id.1;
+        // Strip "/channel" suffix for data channel writes
+        let lookup_key = if let Some(channel_name) = path.strip_suffix("/channel") {
+            (msg.id.0, channel_name.to_string())
+        } else {
+            msg.id.clone()
         };
-        if ControlFile::parse(&msg.id.1).is_some() {
+        let Some(channel_index) = self.get_handle_index(&lookup_key) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        if ControlFile::parse(path).is_some() {
             self.write_control_file(channel_index, msg)
         } else {
             self.write_channel_file(channel_index, msg)
@@ -334,12 +352,13 @@ impl RoutingServer {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         match ctl {
-            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS => {
+            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS | ControlFile::TimeNs => {
                 self.send_time(ni, msg)
             }
-            ControlFile::ElapsedUs | ControlFile::ElapsedMs | ControlFile::ElapsedS => {
-                self.send_elapsed(msg)
-            }
+            ControlFile::ElapsedUs
+            | ControlFile::ElapsedMs
+            | ControlFile::ElapsedS
+            | ControlFile::ElapsedNs => self.send_elapsed(msg),
             ControlFile::EnergyLeft => {
                 let charge_nj = energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
                 let mut msg = msg;
@@ -391,14 +410,48 @@ impl RoutingServer {
     /// to the ID identified in the message, but will send an "Empty" message
     /// if none is found.
     pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let Some(channel_index) = self.get_handle_index(&msg.id) else {
-            return Err(RouterError::UnknownFile(msg.id.1));
+        let path = msg.id.1.clone();
+
+        // Handle signal quality reads (e.g., "lora/rssi", "lora/snr")
+        if let Some(channel_name) = path.strip_suffix("/rssi") {
+            return self.read_signal_file(channel_name, msg, |si| si.rssi_dbm);
+        }
+        if let Some(channel_name) = path.strip_suffix("/snr") {
+            return self.read_signal_file(channel_name, msg, |si| si.snr_db);
+        }
+
+        // Strip "/channel" suffix for data channel reads
+        let lookup_key = if let Some(channel_name) = path.strip_suffix("/channel") {
+            (msg.id.0, channel_name.to_string())
+        } else {
+            msg.id.clone()
         };
-        if ControlFile::parse(&msg.id.1).is_some() {
+        let Some(channel_index) = self.get_handle_index(&lookup_key) else {
+            return Err(RouterError::UnknownFile(path));
+        };
+        if ControlFile::parse(&path).is_some() {
             self.read_control_file(channel_index, msg)
         } else {
             self.read_channel_file(channel_index, msg)
         }
+    }
+
+    /// Read the last-received signal quality value for a channel endpoint.
+    fn read_signal_file(
+        &mut self,
+        channel_name: &str,
+        mut msg: fuse::Message,
+        extractor: impl Fn(&SignalInfo) -> f64,
+    ) -> Result<(), RouterError> {
+        let key = (msg.id.0, channel_name.to_string());
+        let Some(&handle_index) = self.fuse_mapping.get(&key) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        };
+        let value = extractor(&self.signal_info[handle_index]);
+        msg.data = format!("{value:.2}").into_bytes();
+        self.tx
+            .send(fuse::KernelMessage::Exclusive(msg))
+            .map_err(RouterError::FuseSendError)
     }
 
     /// Microseconds per simulation step (derived from cached `timestep_ns`).

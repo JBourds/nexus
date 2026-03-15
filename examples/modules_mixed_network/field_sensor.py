@@ -5,7 +5,7 @@ field_sensor.py — Remote field sensor, sends readings over LoRa.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
+lora = os.path.expanduser("~/nexus/lora/channel")
 
 seq = 0
 while True:

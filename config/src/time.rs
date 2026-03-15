@@ -11,6 +11,7 @@ impl TimestepConfig {
             TimeUnit::Seconds => duration.as_secs(),
             TimeUnit::Milliseconds => duration.as_millis() as u64,
             TimeUnit::Microseconds => duration.as_micros() as u64,
+            TimeUnit::Nanoseconds => duration.as_nanos() as u64,
             _ => unreachable!(),
         };
         start + self.elapsed(n, unit)

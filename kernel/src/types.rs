@@ -311,7 +311,7 @@ impl MotionPattern {
         }
     }
 
-    /// Serialize this pattern to the text format used by `ctl.pos.motion`.
+    /// Serialize this pattern to the text format used by `ctl.pos/motion`.
     pub fn to_spec(&self) -> String {
         match self {
             Self::Static => "none".to_string(),

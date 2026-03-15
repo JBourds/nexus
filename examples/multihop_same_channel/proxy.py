@@ -9,7 +9,7 @@ import re
 import sys
 import time
 
-path = os.path.expanduser("~/nexus/main")
+path = os.path.expanduser("~/nexus/main/channel")
 
 try:
     while True:

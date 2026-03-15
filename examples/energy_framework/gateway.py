@@ -1,8 +1,8 @@
 import os
 import time
 
-uplink = os.path.expanduser("~/nexus/uplink")
-downlink = os.path.expanduser("~/nexus/downlink")
+uplink = os.path.expanduser("~/nexus/uplink/channel")
+downlink = os.path.expanduser("~/nexus/downlink/channel")
 
 seq = 0
 while True:

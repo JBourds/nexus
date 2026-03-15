@@ -1,7 +1,7 @@
 import os
 import time
 
-radio = os.path.expanduser("~/nexus/radio")
+radio = os.path.expanduser("~/nexus/radio/channel")
 
 seq = 0
 while True:

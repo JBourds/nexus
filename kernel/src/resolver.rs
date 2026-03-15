@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use config::ast;
-use fuse::{PID, fs::CONTROL_FILES};
+use fuse::{PID, fs::control_files};
 
 use crate::{
     errors::{ConversionError, KernelError},
@@ -40,8 +40,7 @@ impl ResolvedChannels {
         paired.sort_by(|(a, _), (b, _)| a.cmp(b));
         let (mut channel_names_str, channels): (Vec<_>, Vec<_>) = paired.into_iter().unzip();
         // Inject control files here so that FUSE mappings get made for them too
-        let control_files = CONTROL_FILES.into_iter().map(|(name, _)| name.to_string());
-        channel_names_str.extend(control_files);
+        channel_names_str.extend(control_files());
         let channel_handles: HashMap<_, ChannelHandle> = make_handles(channel_names_str.clone())
             .into_iter()
             .map(|(name, idx)| (name, ChannelIdx(idx)))

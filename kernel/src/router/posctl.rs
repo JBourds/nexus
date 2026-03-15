@@ -1,23 +1,23 @@
 //! posctl.rs
-//! Handlers for `ctl.pos.*` position and motion control files.
+//! Handlers for `ctl.pos/` position and motion control files.
 //!
 //! # File interface
 //!
 //! ## Absolute position (read/write)
-//! - `ctl.pos.x`, `ctl.pos.y`, `ctl.pos.z` — coordinate in the node's
+//! - `ctl.pos/x`, `ctl.pos/y`, `ctl.pos/z` — coordinate in the node's
 //!   configured `DistanceUnit`, formatted as a decimal float string.
-//! - `ctl.pos.az`, `ctl.pos.el`, `ctl.pos.roll` — orientation in degrees.
+//! - `ctl.pos/az`, `ctl.pos/el`, `ctl.pos/roll` — orientation in degrees.
 //!
 //! Writing any of these clears the active motion pattern (sets to `Static`).
 //!
 //! ## Relative offset (write-only)
-//! - `ctl.pos.dx`, `ctl.pos.dy`, `ctl.pos.dz` — add a delta to the
+//! - `ctl.pos/dx`, `ctl.pos/dy`, `ctl.pos/dz` — add a delta to the
 //!   corresponding coordinate in the node's distance unit.  The current
 //!   position (accounting for any active motion pattern) is snapshotted first,
 //!   then the pattern is reset to `Static`.
 //!
 //! ## Motion pattern (read/write)
-//! - `ctl.pos.motion` — read or set an automated motion pattern.
+//! - `ctl.pos/motion` — read or set an automated motion pattern.
 //!
 //!   **Read** returns the current pattern spec string (see below).
 //!
@@ -85,7 +85,7 @@ impl RoutingServer {
         }
     }
 
-    /// Read handler for `ctl.pos.x/y/z/az/el/roll`.
+    /// Read handler for `ctl.pos/x/y/z/az/el/roll`.
     pub fn read_pos(
         &mut self,
         node_index: usize,
@@ -96,7 +96,7 @@ impl RoutingServer {
         let component = msg
             .id
             .1
-            .strip_prefix("ctl.pos.")
+            .strip_prefix("ctl.pos/")
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let val: f64 = match component {
             "x" => node.position.point.x,
@@ -113,7 +113,7 @@ impl RoutingServer {
             .map_err(RouterError::FuseSendError)
     }
 
-    /// Read handler for `ctl.pos.motion`.
+    /// Read handler for `ctl.pos/motion`.
     pub fn read_pos_motion(
         &mut self,
         node_index: usize,
@@ -126,7 +126,7 @@ impl RoutingServer {
             .map_err(RouterError::FuseSendError)
     }
 
-    /// Write handler for `ctl.pos.x/y/z/az/el/roll` (absolute set).
+    /// Write handler for `ctl.pos/x/y/z/az/el/roll` (absolute set).
     /// Resets the motion pattern to `Static`.
     pub fn write_pos(&mut self, node_index: usize, msg: fuse::Message) -> Result<(), RouterError> {
         // Snapshot any in-progress motion before overriding.
@@ -139,7 +139,7 @@ impl RoutingServer {
         let component = msg
             .id
             .1
-            .strip_prefix("ctl.pos.")
+            .strip_prefix("ctl.pos/")
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
         match component {
@@ -158,7 +158,7 @@ impl RoutingServer {
         Ok(())
     }
 
-    /// Write handler for `ctl.pos.dx/dy/dz` (relative offset).
+    /// Write handler for `ctl.pos/dx/dy/dz` (relative offset).
     /// Snapshots the current (motion-applied) position, adds the delta, and
     /// resets the motion pattern to `Static`.
     pub fn write_pos_delta(
@@ -172,11 +172,11 @@ impl RoutingServer {
             .trim()
             .parse()
             .map_err(|_| RouterError::InvalidFloat(msg.data.clone()))?;
-        // Strip "ctl.pos.d" to get the axis character ("x", "y", or "z").
+        // Strip "ctl.pos/d" to get the axis character ("x", "y", or "z").
         let axis = msg
             .id
             .1
-            .strip_prefix("ctl.pos.d")
+            .strip_prefix("ctl.pos/d")
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
         match axis {
@@ -199,7 +199,7 @@ impl RoutingServer {
         Ok(())
     }
 
-    /// Write handler for `ctl.pos.motion`.
+    /// Write handler for `ctl.pos/motion`.
     ///
     /// Accepted formats:
     /// ```text
