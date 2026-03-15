@@ -24,19 +24,9 @@ use std::{collections::HashMap, path::PathBuf};
 const TTL: Duration = Duration::from_secs(1);
 
 /// Flat control files that remain at the root level (not in subdirectories).
-pub const CONTROL_FILES: [(&str, ChannelMode); 13] = [
+pub const CONTROL_FILES: [(&str, ChannelMode); 3] = [
     ("ctl.energy_left", ChannelMode::ReadOnly),
     ("ctl.energy_state", ChannelMode::ReadWrite),
-    ("ctl.pos.x", ChannelMode::ReadWrite),
-    ("ctl.pos.y", ChannelMode::ReadWrite),
-    ("ctl.pos.z", ChannelMode::ReadWrite),
-    ("ctl.pos.az", ChannelMode::ReadWrite),
-    ("ctl.pos.el", ChannelMode::ReadWrite),
-    ("ctl.pos.roll", ChannelMode::ReadWrite),
-    ("ctl.pos.dx", ChannelMode::WriteOnly),
-    ("ctl.pos.dy", ChannelMode::WriteOnly),
-    ("ctl.pos.dz", ChannelMode::WriteOnly),
-    ("ctl.pos.motion", ChannelMode::ReadWrite),
     ("ctl.power_flows", ChannelMode::ReadWrite),
 ];
 
@@ -54,6 +44,20 @@ pub const ELAPSED_SUBFILES: [(&str, ChannelMode); 4] = [
     ("ms", ChannelMode::ReadOnly),
     ("us", ChannelMode::ReadOnly),
     ("ns", ChannelMode::ReadOnly),
+];
+
+/// Sub-files under the `ctl.pos/` directory.
+pub const POS_SUBFILES: [(&str, ChannelMode); 10] = [
+    ("x", ChannelMode::ReadWrite),
+    ("y", ChannelMode::ReadWrite),
+    ("z", ChannelMode::ReadWrite),
+    ("az", ChannelMode::ReadWrite),
+    ("el", ChannelMode::ReadWrite),
+    ("roll", ChannelMode::ReadWrite),
+    ("dx", ChannelMode::WriteOnly),
+    ("dy", ChannelMode::WriteOnly),
+    ("dz", ChannelMode::WriteOnly),
+    ("motion", ChannelMode::ReadWrite),
 ];
 
 /// Sub-files under each channel directory (e.g., `lora/`).
@@ -74,6 +78,9 @@ pub fn control_files() -> Vec<String> {
     }
     for (name, _) in ELAPSED_SUBFILES.iter() {
         files.push(format!("ctl.elapsed/{name}"));
+    }
+    for (name, _) in POS_SUBFILES.iter() {
+        files.push(format!("ctl.pos/{name}"));
     }
     files
 }
@@ -248,6 +255,15 @@ impl NexusFs {
             "ctl.elapsed",
             FUSE_ROOT_ID,
             &ELAPSED_SUBFILES,
+            pids,
+        );
+
+        // ctl.pos/ directory with sub-files
+        self.add_directory_with_subfiles(
+            "ctl.pos",
+            "ctl.pos",
+            FUSE_ROOT_ID,
+            &POS_SUBFILES,
             pids,
         );
 
@@ -863,10 +879,17 @@ mod tests {
         assert!(fs.buffers.contains_key(&(100, "ctl.time/ns".into())));
         assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/s".into())));
         assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/ns".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.pos/x".into())));
+        assert!(fs.buffers.contains_key(&(100, "ctl.pos/motion".into())));
+
+        // Should have ctl.pos directory
+        assert!(fs
+            .entries
+            .iter()
+            .any(|e| e.name == "ctl.pos" && matches!(e.kind, FsEntryKind::Directory)));
 
         // Flat control files should still exist
         assert!(fs.buffers.contains_key(&(100, "ctl.energy_left".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.pos.x".into())));
     }
 
     #[test]

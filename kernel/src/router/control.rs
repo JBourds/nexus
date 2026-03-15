@@ -54,16 +54,16 @@ impl ControlFile {
             "elapsed/ns" => Some(Self::ElapsedNs),
             "energy_left" => Some(Self::EnergyLeft),
             "energy_state" => Some(Self::EnergyState),
-            "pos.x" => Some(Self::PosX),
-            "pos.y" => Some(Self::PosY),
-            "pos.z" => Some(Self::PosZ),
-            "pos.az" => Some(Self::PosAz),
-            "pos.el" => Some(Self::PosEl),
-            "pos.roll" => Some(Self::PosRoll),
-            "pos.dx" => Some(Self::PosDx),
-            "pos.dy" => Some(Self::PosDy),
-            "pos.dz" => Some(Self::PosDz),
-            "pos.motion" => Some(Self::PosMotion),
+            "pos/x" => Some(Self::PosX),
+            "pos/y" => Some(Self::PosY),
+            "pos/z" => Some(Self::PosZ),
+            "pos/az" => Some(Self::PosAz),
+            "pos/el" => Some(Self::PosEl),
+            "pos/roll" => Some(Self::PosRoll),
+            "pos/dx" => Some(Self::PosDx),
+            "pos/dy" => Some(Self::PosDy),
+            "pos/dz" => Some(Self::PosDz),
+            "pos/motion" => Some(Self::PosMotion),
             "power_flows" => Some(Self::PowerFlows),
             _ => None,
         }
@@ -104,20 +104,20 @@ mod tests {
             ControlFile::parse("ctl.energy_state"),
             Some(ControlFile::EnergyState)
         );
-        assert_eq!(ControlFile::parse("ctl.pos.x"), Some(ControlFile::PosX));
-        assert_eq!(ControlFile::parse("ctl.pos.y"), Some(ControlFile::PosY));
-        assert_eq!(ControlFile::parse("ctl.pos.z"), Some(ControlFile::PosZ));
-        assert_eq!(ControlFile::parse("ctl.pos.az"), Some(ControlFile::PosAz));
-        assert_eq!(ControlFile::parse("ctl.pos.el"), Some(ControlFile::PosEl));
+        assert_eq!(ControlFile::parse("ctl.pos/x"), Some(ControlFile::PosX));
+        assert_eq!(ControlFile::parse("ctl.pos/y"), Some(ControlFile::PosY));
+        assert_eq!(ControlFile::parse("ctl.pos/z"), Some(ControlFile::PosZ));
+        assert_eq!(ControlFile::parse("ctl.pos/az"), Some(ControlFile::PosAz));
+        assert_eq!(ControlFile::parse("ctl.pos/el"), Some(ControlFile::PosEl));
         assert_eq!(
-            ControlFile::parse("ctl.pos.roll"),
+            ControlFile::parse("ctl.pos/roll"),
             Some(ControlFile::PosRoll)
         );
-        assert_eq!(ControlFile::parse("ctl.pos.dx"), Some(ControlFile::PosDx));
-        assert_eq!(ControlFile::parse("ctl.pos.dy"), Some(ControlFile::PosDy));
-        assert_eq!(ControlFile::parse("ctl.pos.dz"), Some(ControlFile::PosDz));
+        assert_eq!(ControlFile::parse("ctl.pos/dx"), Some(ControlFile::PosDx));
+        assert_eq!(ControlFile::parse("ctl.pos/dy"), Some(ControlFile::PosDy));
+        assert_eq!(ControlFile::parse("ctl.pos/dz"), Some(ControlFile::PosDz));
         assert_eq!(
-            ControlFile::parse("ctl.pos.motion"),
+            ControlFile::parse("ctl.pos/motion"),
             Some(ControlFile::PosMotion)
         );
         assert_eq!(
