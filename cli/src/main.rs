@@ -31,6 +31,27 @@ fn main() -> Result<()> {
         RunCmd::Replay { .. } => replay(args),
         RunCmd::Logs { .. } => print_logs(args),
         RunCmd::Modules { action } => handle_modules(action),
+        RunCmd::Parse {
+            trace,
+            events,
+            nodes,
+            channels,
+            from,
+            to,
+            output,
+            adapter,
+            header_only,
+        } => trace::parse::run_parse(
+            trace,
+            events.clone(),
+            nodes.clone(),
+            channels.clone(),
+            *from,
+            *to,
+            output.clone(),
+            adapter.clone(),
+            *header_only,
+        ),
         _ => todo!(),
     }
 }

@@ -19,3 +19,5 @@ csv = "1.4.0"
 ctrlc = { version = "3.5.2", features = ["termination"] }
 fuser = { workspace = true }
 trace = { path = "../trace" }
+serde_json = { workspace = true }
+base64 = { workspace = true }
