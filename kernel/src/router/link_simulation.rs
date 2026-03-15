@@ -51,15 +51,15 @@ impl RoutingServer {
     /// - dropped packets
     /// - bit errors
     ///
-    /// Returns `None` if the packet was dropped, or `Some((data, bit_errors))`
-    /// where `bit_errors` is true when at least one bit was flipped.
+    /// Returns `None` if the packet was dropped, or
+    /// `Some((data, bit_errors, rssi_dbm, snr_db))` on success.
     pub(super) fn send_through_channel<'a>(
         channel: &Channel,
         mut buf: Cow<'a, [u8]>,
         distance: f64,
         unit: DistanceUnit,
         rng: &mut StdRng,
-    ) -> Option<(Cow<'a, [u8]>, bool)> {
+    ) -> Option<(Cow<'a, [u8]>, bool, f64, f64)> {
         let Link {
             medium,
             packet_loss,
@@ -79,6 +79,7 @@ impl RoutingServer {
         }
 
         let rssi = bit_error.rssi(tx_dbm, distance, unit, medium);
+        let snr = rssi - medium.noise_floor_dbm();
         let ber = bit_error.probability(rssi);
         let mut had_bit_errors = false;
         if ber != 0.0 {
@@ -87,6 +88,6 @@ impl RoutingServer {
             let (_, flipped) = flip_bits(buf.to_mut(), flips);
             had_bit_errors = flipped > 0;
         }
-        Some((buf, had_bit_errors))
+        Some((buf, had_bit_errors, rssi, snr))
     }
 }
