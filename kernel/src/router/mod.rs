@@ -112,6 +112,8 @@ pub(crate) struct RoutingServer {
     timestep_ns: u64,
     /// Sequence counter for message ordering within a timestep.
     sequence: usize,
+    /// Monotonic counter for unique message IDs across the simulation.
+    next_msg_id: u64,
 }
 
 impl RoutingServer {
@@ -150,6 +152,7 @@ impl RoutingServer {
                     remap_tx,
                     timestep_ns,
                     sequence: 0,
+                    next_msg_id: 0,
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -270,6 +273,12 @@ impl RoutingServer {
         }
     }
 
+    pub fn alloc_msg_id(&mut self) -> u64 {
+        let id = self.next_msg_id;
+        self.next_msg_id += 1;
+        id
+    }
+
     pub fn write_channel_file(
         &mut self,
         index: usize,
@@ -288,11 +297,13 @@ impl RoutingServer {
                 format_u8_buf(&msg.data)
             );
         }
-        event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, data = msg.data.as_slice());
+        let msg_id = self.next_msg_id;
+        self.next_msg_id += 1;
+        event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, msg_id, data = msg.data.as_slice());
 
         // Queue the message first; only drain TX energy on success so that
         // a failed queue does not silently consume charge (BUG-9).
-        self.queue_message(src_node, channel_handle, msg.data)?;
+        self.queue_message(src_node, channel_handle, msg.data, msg_id)?;
 
         energy::EnergyManager::drain_tx(&mut self.channels.nodes, src_node.0, &channel_handle);
 
@@ -452,6 +463,7 @@ impl RoutingServer {
                     timestep = self.timestep,
                     channel = channel_handle.0,
                     node = frame.msg.src.0,
+                    msg_id = frame.msg.msg_id,
                     reason = "buffer_full"
                 );
             }

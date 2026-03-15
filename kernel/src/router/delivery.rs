@@ -17,6 +17,8 @@ pub(crate) struct QueuedMessage {
     pub(super) expiration: Option<NonZeroU64>,
     /// Whether the data was corrupted by bit errors during link simulation.
     pub(super) bit_errors: bool,
+    /// Unique identifier for correlating TX/RX events in the trace.
+    pub(super) msg_id: u64,
 }
 
 impl RoutingServer {
@@ -34,6 +36,7 @@ impl RoutingServer {
         src_node: NodeHandle,
         channel_handle: ChannelHandle,
         msg: Vec<u8>,
+        msg_id: u64,
     ) -> Result<(), RouterError> {
         let sz: u64 = msg.len().try_into().expect("usize fits u64");
         let channel = &self.channels.channels[channel_handle.0];
@@ -92,6 +95,7 @@ impl RoutingServer {
                     buf,
                     expiration,
                     bit_errors: msg_bit_errors,
+                    msg_id,
                 },
             };
 
@@ -153,9 +157,10 @@ impl RoutingServer {
                             msg.expiration,
                         );
                     }
+                    let mid = msg.msg_id;
                     event!(
                         target: "rx", Level::INFO, timestep, channel = channel_handle.0,
-                        node = node_handle.0, tx = false, bit_errors, data = buf.as_ref()
+                        node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = buf.as_ref()
                     );
                     let msg = fuse::Message {
                         id: (pid, node_name.to_string()),
@@ -204,9 +209,10 @@ impl RoutingServer {
                 );
                 // Collisions always corrupt the signal.
                 let bit_errors = any_bit_errors || mailbox.len() > 1;
+                let mid = mailbox.front().map(|m| m.msg_id).unwrap_or(0);
                 event!(
                     target: "rx", Level::INFO, timestep, channel = channel_handle.0,
-                    node = node_handle.0, tx = false, bit_errors, data = buf.as_slice()
+                    node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = buf.as_slice()
                 );
                 let msg = fuse::Message {
                     id: (pid, node_name.to_string()),
@@ -235,6 +241,7 @@ impl RoutingServer {
                     timestep = self.timestep,
                     channel = channel_handle.0,
                     node = node_handle.0,
+                    msg_id = msg.msg_id,
                     reason = "ttl_expired"
                 );
                 return Ok(false);
@@ -251,13 +258,14 @@ impl RoutingServer {
                 );
             }
             let bit_errors = msg.bit_errors;
+            let mid = msg.msg_id;
             let msg = fuse::Message {
                 id: (pid, self.channels.node_names[node_handle.0].to_string()),
                 data: msg.buf.to_vec(),
             };
             event!(
                 target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle.0,
-                node = node_handle.0, tx = false, bit_errors, data = msg.data.as_slice()
+                node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = msg.data.as_slice()
             );
 
             self.tx

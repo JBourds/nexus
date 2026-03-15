@@ -392,6 +392,8 @@ pub struct MessageEntry {
     pub receivers: Vec<ReceiverInfo>,
     /// Index of this entry's corresponding record in the flat record array (for event cursor sync).
     pub record_index: Option<usize>,
+    /// Unique message ID for correlating TX with RX/Drop across timesteps.
+    pub msg_id: Option<u64>,
 }
 
 /// Information about a receiver of a TX message.

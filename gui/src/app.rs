@@ -185,10 +185,8 @@ impl NexusApp {
                 // Pre-simulation run-until options
                 ui.separator();
                 ui.label("On Simulation Start:");
-                let is_next_event = matches!(
-                    state.initial_run_until,
-                    Some(BreakpointKind::NextEvent)
-                );
+                let is_next_event =
+                    matches!(state.initial_run_until, Some(BreakpointKind::NextEvent));
                 if ui
                     .selectable_label(is_next_event, "Break on first event")
                     .on_hover_text("Pause the simulation at the very first trace event")
@@ -231,7 +229,10 @@ impl NexusApp {
     }
 
     fn show_live_sim_mode(&mut self, ctx: &Context) {
-        let Self { mode, trace_history } = self;
+        let Self {
+            mode,
+            trace_history,
+        } = self;
         let AppMode::LiveSimulation(state) = mode else {
             return;
         };
@@ -339,14 +340,16 @@ impl NexusApp {
                             continue;
                         }
                         if let BreakpointKind::Timestep(bp_ts) = &bp.kind
-                            && *bp_ts > prev && *bp_ts <= *ts
+                            && *bp_ts > prev
+                            && *bp_ts <= *ts
                         {
                             should_pause = true;
                             break;
                         }
                     }
                     if let Some(BreakpointKind::Timestep(target)) = &state.run_until
-                        && *target > prev && *target <= *ts
+                        && *target > prev
+                        && *target <= *ts
                     {
                         should_pause = true;
                         state.arrows_frozen = true;
@@ -449,12 +452,10 @@ impl NexusApp {
                                 .default_open(true)
                                 .show(ui, |ui| {
                                     for output in &state.process_outputs {
-                                        let key =
-                                            format!("{}.{}", output.node, output.protocol);
+                                        let key = format!("{}.{}", output.node, output.protocol);
                                         let line_count = output.stdout.lines().count()
                                             + output.stderr.lines().count();
-                                        let label =
-                                            format!("{key} ({line_count} lines)");
+                                        let label = format!("{key} ({line_count} lines)");
                                         if ui
                                             .selectable_label(
                                                 state.open_output_windows.contains(&key),
@@ -482,8 +483,7 @@ impl NexusApp {
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        let mut node_names: Vec<_> =
-                            state.sim.nodes.keys().cloned().collect();
+                        let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
                         node_names.sort();
                         let mut channel_names: Vec<_> =
                             state.sim.channels.keys().cloned().collect();
@@ -523,8 +523,7 @@ impl NexusApp {
                             ui.collapsing("Traces", |ui| {
                                 for entry in trace_history.iter().rev() {
                                     ui.horizontal(|ui| {
-                                        let dir_str =
-                                            entry.sim_dir.display().to_string();
+                                        let dir_str = entry.sim_dir.display().to_string();
                                         ui.label(format!(
                                             "[{}] {}",
                                             entry.timestamp, entry.config_name
@@ -606,8 +605,7 @@ impl NexusApp {
                     state.controller.set_paused(false);
                 } else {
                     // Timestep-level: set breakpoint for next timestep and resume
-                    state.run_until =
-                        Some(BreakpointKind::Timestep(state.current_timestep + 1));
+                    state.run_until = Some(BreakpointKind::Timestep(state.current_timestep + 1));
                     state.paused = false;
                     state.controller.set_paused(false);
                 }
@@ -811,8 +809,6 @@ impl NexusApp {
             state.open_output_windows.remove(&key);
         }
 
-
-
         // Keep requesting repaints during live sim, during active animations,
         // and one extra frame after completion for remaining buffered events.
         if !finished || state.controller.has_pending_events() || !state.active_arrows.is_empty() {
@@ -874,7 +870,10 @@ impl NexusApp {
     }
 
     fn show_replay_mode(&mut self, ctx: &Context) {
-        let Self { mode, trace_history } = self;
+        let Self {
+            mode,
+            trace_history,
+        } = self;
         let AppMode::Replay(state) = mode else {
             return;
         };
@@ -923,11 +922,12 @@ impl NexusApp {
                     // Check run-until timestep (one-shot, no event needed)
                     if !hit_breakpoint
                         && let Some(BreakpointKind::Timestep(target)) = &state.run_until
-                            && ts >= *target {
-                                hit_breakpoint = true;
-                                state.arrows_frozen = true;
-                                state.run_until = None;
-                            }
+                        && ts >= *target
+                    {
+                        hit_breakpoint = true;
+                        state.arrows_frozen = true;
+                        state.run_until = None;
+                    }
 
                     // Check event-based breakpoints against records at this timestep
                     if !hit_breakpoint {
@@ -1052,8 +1052,7 @@ impl NexusApp {
                 .resizable(true)
                 .show(ctx, |ui| {
                     egui::ScrollArea::vertical().show(ui, |ui| {
-                        let mut node_names: Vec<_> =
-                            state.sim.nodes.keys().cloned().collect();
+                        let mut node_names: Vec<_> = state.sim.nodes.keys().cloned().collect();
                         node_names.sort();
                         let mut channel_names: Vec<_> =
                             state.sim.channels.keys().cloned().collect();
@@ -1084,8 +1083,7 @@ impl NexusApp {
                             ui.collapsing("Traces", |ui| {
                                 for entry in trace_history.iter().rev() {
                                     ui.horizontal(|ui| {
-                                        let dir_str =
-                                            entry.sim_dir.display().to_string();
+                                        let dir_str = entry.sim_dir.display().to_string();
                                         ui.label(format!(
                                             "[{}] {}",
                                             entry.timestamp, entry.config_name
@@ -1194,7 +1192,9 @@ impl NexusApp {
                 state.playing = false;
                 if state.event_stepping {
                     // Event-level step backward: find previous message record
-                    let start = state.event_cursor.unwrap_or(state.controller.total_records());
+                    let start = state
+                        .event_cursor
+                        .unwrap_or(state.controller.total_records());
                     let prev = state.controller.all_records()[..start]
                         .iter()
                         .enumerate()
@@ -1648,6 +1648,7 @@ fn process_gui_event(
                     src_node,
                     channel,
                     data,
+                    msg_id,
                 } => {
                     let src_idx = *src_node as usize;
                     let ch_idx = *channel as usize;
@@ -1663,6 +1664,7 @@ fn process_gui_event(
                         data_raw: data.clone(),
                         receivers: Vec::new(),
                         record_index,
+                        msg_id: Some(*msg_id),
                     });
                     // Track last sender for this channel
                     if let Some(slot) = last_sender.get_mut(ch_idx) {
@@ -1688,6 +1690,7 @@ fn process_gui_event(
                     channel,
                     data,
                     bit_errors,
+                    msg_id,
                 } => {
                     let dst_idx = *dst_node as usize;
                     let ch_idx = *channel as usize;
@@ -1699,7 +1702,7 @@ fn process_gui_event(
                         .and_then(|s| s.as_ref())
                         .map(|&idx| node_name_by_index(sim, idx));
                     let dst_name_clone = dst_name.clone();
-                    let ch_name_clone = ch_name.clone();
+
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
                         kind: MessageKind::Received,
@@ -1710,13 +1713,14 @@ fn process_gui_event(
                         data_raw: data.clone(),
                         receivers: Vec::new(),
                         record_index,
+                        msg_id: Some(*msg_id),
                     });
-                    // Correlate: attach this RX to matching TX entry
-                    if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {
-                        m.kind == MessageKind::Sent
-                            && m.timestep == record.timestep
-                            && m.channel == ch_name_clone
-                    }) {
+                    // Correlate: attach this RX to matching TX entry by msg_id
+                    if let Some(tx_entry) = message_list
+                        .iter_mut()
+                        .rev()
+                        .find(|m| m.kind == MessageKind::Sent && m.msg_id == Some(*msg_id))
+                    {
                         tx_entry.receivers.push(ReceiverInfo {
                             node: dst_name_clone,
                             outcome: ReceiverOutcome::Received,
@@ -1738,6 +1742,7 @@ fn process_gui_event(
                     src_node,
                     channel,
                     reason,
+                    msg_id,
                 } => {
                     let src_idx = *src_node as usize;
                     let ch_idx = *channel as usize;
@@ -1748,7 +1753,7 @@ fn process_gui_event(
                         .and_then(|s| s.as_ref())
                         .map(|&idx| node_name_by_index(sim, idx));
                     let src_name_clone = src_name.clone();
-                    let ch_name_clone = ch_name.clone();
+
                     let reason_str = format!("{reason:?}");
                     message_list.push(MessageEntry {
                         timestep: record.timestep,
@@ -1760,13 +1765,14 @@ fn process_gui_event(
                         data_raw: Vec::new(),
                         receivers: Vec::new(),
                         record_index,
+                        msg_id: Some(*msg_id),
                     });
-                    // Correlate: attach this Drop to matching TX entry
-                    if let Some(tx_entry) = message_list.iter_mut().rev().find(|m| {
-                        m.kind == MessageKind::Sent
-                            && m.timestep == record.timestep
-                            && m.channel == ch_name_clone
-                    }) {
+                    // Correlate: attach this Drop to matching TX entry by msg_id
+                    if let Some(tx_entry) = message_list
+                        .iter_mut()
+                        .rev()
+                        .find(|m| m.kind == MessageKind::Sent && m.msg_id == Some(*msg_id))
+                    {
                         tx_entry.receivers.push(ReceiverInfo {
                             node: src_name_clone,
                             outcome: ReceiverOutcome::Dropped(reason_str),
@@ -1961,71 +1967,106 @@ fn correlate_all_tx_receivers(
     sim: &config::ast::Simulation,
     messages: &mut [MessageEntry],
 ) {
-    // First pass: build a map of (timestep, channel) -> sender name from TX entries
-    let mut tx_senders: Vec<(u64, String, String)> = Vec::new(); // (ts, channel, sender)
-    for msg in messages.iter() {
-        if msg.kind == MessageKind::Sent {
-            tx_senders.push((msg.timestep, msg.channel.clone(), msg.src_node.clone()));
+    // Build a map of msg_id -> index of the TX MessageEntry.
+    let tx_by_id: HashMap<u64, usize> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| m.kind == MessageKind::Sent)
+        .filter_map(|(i, m)| m.msg_id.map(|id| (id, i)))
+        .collect();
+
+    // Scan all records for RX/Drop events and attach them to the matching TX.
+    // Also populate dst_node (sender) on RX/Drop entries.
+    // We need indices so we can mutate TX entries; collect RX/Drop info first.
+    struct RxInfo {
+        tx_idx: usize,
+        receiver: ReceiverInfo,
+    }
+    struct SenderFill {
+        msg_idx: usize,
+        sender: String,
+    }
+    let mut rx_infos: Vec<RxInfo> = Vec::new();
+    let mut sender_fills: Vec<SenderFill> = Vec::new();
+
+    for (i, msg) in messages.iter().enumerate() {
+        let mid = match msg.msg_id {
+            Some(id) => id,
+            None => continue,
+        };
+        match &msg.kind {
+            MessageKind::Received => {
+                if let Some(&tx_idx) = tx_by_id.get(&mid) {
+                    rx_infos.push(RxInfo {
+                        tx_idx,
+                        receiver: ReceiverInfo {
+                            node: msg.src_node.clone(),
+                            outcome: ReceiverOutcome::Received,
+                            has_bit_errors: false,
+                        },
+                    });
+                    if msg.dst_node.is_none() {
+                        sender_fills.push(SenderFill {
+                            msg_idx: i,
+                            sender: messages[tx_idx].src_node.clone(),
+                        });
+                    }
+                }
+            }
+            MessageKind::Dropped(_) => {
+                if let Some(&tx_idx) = tx_by_id.get(&mid) {
+                    let reason = match &msg.kind {
+                        MessageKind::Dropped(r) => r.clone(),
+                        _ => String::new(),
+                    };
+                    rx_infos.push(RxInfo {
+                        tx_idx,
+                        receiver: ReceiverInfo {
+                            node: msg.src_node.clone(),
+                            outcome: ReceiverOutcome::Dropped(reason),
+                            has_bit_errors: false,
+                        },
+                    });
+                    if msg.dst_node.is_none() {
+                        sender_fills.push(SenderFill {
+                            msg_idx: i,
+                            sender: messages[tx_idx].src_node.clone(),
+                        });
+                    }
+                }
+            }
+            _ => {}
         }
     }
 
-    for msg in messages.iter_mut() {
-        match &msg.kind {
-            MessageKind::Sent => {
-                // Populate receivers on TX entries
-                let ts = msg.timestep;
-                let ch = &msg.channel;
-                let mut receivers = Vec::new();
-                for record in controller.records_at(ts) {
-                    match &record.event {
-                        TraceEvent::MessageRecv {
-                            dst_node,
-                            channel,
-                            bit_errors,
-                            ..
-                        } => {
-                            let ch_name = channel_name_by_index(sim, *channel as usize);
-                            if &ch_name == ch {
-                                let node_name = node_name_by_index(sim, *dst_node as usize);
-                                receivers.push(ReceiverInfo {
-                                    node: node_name,
-                                    outcome: ReceiverOutcome::Received,
-                                    has_bit_errors: *bit_errors,
-                                });
-                            }
-                        }
-                        TraceEvent::MessageDropped {
-                            src_node,
-                            channel,
-                            reason,
-                        } => {
-                            let ch_name = channel_name_by_index(sim, *channel as usize);
-                            if &ch_name == ch {
-                                let drop_node = node_name_by_index(sim, *src_node as usize);
-                                receivers.push(ReceiverInfo {
-                                    node: drop_node,
-                                    outcome: ReceiverOutcome::Dropped(format!("{reason:?}")),
-                                    has_bit_errors: false,
-                                });
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-                msg.receivers = receivers;
-            }
-            MessageKind::Received | MessageKind::Dropped(_) => {
-                // Populate dst_node (sender) on RX/Drop entries from matching TX
-                if msg.dst_node.is_none() {
-                    for (ts, ch, sender) in &tx_senders {
-                        if *ts == msg.timestep && ch == &msg.channel {
-                            msg.dst_node = Some(sender.clone());
-                            break;
-                        }
-                    }
+    // Check bit_errors from trace records for received messages
+    for record in controller.all_records() {
+        if let TraceEvent::MessageRecv {
+            dst_node,
+            bit_errors,
+            msg_id,
+            ..
+        } = &record.event
+            && *bit_errors
+            && let Some(&tx_idx) = tx_by_id.get(msg_id)
+        {
+            let node_name = node_name_by_index(sim, *dst_node as usize);
+            // Update matching rx_info
+            for info in &mut rx_infos {
+                if info.tx_idx == tx_idx && info.receiver.node == node_name {
+                    info.receiver.has_bit_errors = true;
                 }
             }
         }
+    }
+
+    // Apply receiver info to TX entries
+    for info in rx_infos {
+        messages[info.tx_idx].receivers.push(info.receiver);
+    }
+    // Fill in sender names on RX/Drop entries
+    for fill in sender_fills {
+        messages[fill.msg_idx].dst_node = Some(fill.sender);
     }
 }
 
@@ -2111,6 +2152,7 @@ fn trace_record_to_message(
             src_node,
             channel,
             data,
+            msg_id,
         } => Some(MessageEntry {
             timestep: record.timestep,
             kind: MessageKind::Sent,
@@ -2121,11 +2163,13 @@ fn trace_record_to_message(
             data_raw: data.clone(),
             receivers: Vec::new(),
             record_index,
+            msg_id: Some(*msg_id),
         }),
         TraceEvent::MessageRecv {
             dst_node,
             channel,
             data,
+            msg_id,
             ..
         } => Some(MessageEntry {
             timestep: record.timestep,
@@ -2137,11 +2181,13 @@ fn trace_record_to_message(
             data_raw: data.clone(),
             receivers: Vec::new(),
             record_index,
+            msg_id: Some(*msg_id),
         }),
         TraceEvent::MessageDropped {
             src_node,
             channel,
             reason,
+            msg_id,
         } => Some(MessageEntry {
             timestep: record.timestep,
             kind: MessageKind::Dropped(format!("{reason:?}")),
@@ -2151,6 +2197,7 @@ fn trace_record_to_message(
             data_preview: String::new(),
             data_raw: Vec::new(),
             receivers: Vec::new(),
+            msg_id: Some(*msg_id),
             record_index,
         }),
         _ => None,
@@ -2228,7 +2275,10 @@ fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
         }
         if record.timestep < ts {
             // Just track last_sender for earlier timesteps
-            if let TraceEvent::MessageSent { src_node, channel, .. } = &record.event {
+            if let TraceEvent::MessageSent {
+                src_node, channel, ..
+            } = &record.event
+            {
                 if let Some(slot) = state.last_sender.get_mut(*channel as usize) {
                     *slot = Some(*src_node as usize);
                 }
@@ -2237,7 +2287,9 @@ fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
         }
         // At current timestep: create arrows
         match &record.event {
-            TraceEvent::MessageSent { src_node, channel, .. } => {
+            TraceEvent::MessageSent {
+                src_node, channel, ..
+            } => {
                 let src_idx = *src_node as usize;
                 let ch_idx = *channel as usize;
                 if let Some(slot) = state.last_sender.get_mut(ch_idx) {
@@ -2257,7 +2309,9 @@ fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
                     }
                 }
             }
-            TraceEvent::MessageRecv { dst_node, channel, .. } => {
+            TraceEvent::MessageRecv {
+                dst_node, channel, ..
+            } => {
                 let dst_idx = *dst_node as usize;
                 let ch_idx = *channel as usize;
                 if let Some(Some(src_idx)) = state.last_sender.get(ch_idx) {
@@ -2270,7 +2324,9 @@ fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
                     });
                 }
             }
-            TraceEvent::MessageDropped { src_node, channel, .. } => {
+            TraceEvent::MessageDropped {
+                src_node, channel, ..
+            } => {
                 let src_idx = *src_node as usize;
                 let ch_idx = *channel as usize;
                 if let Some(subs) = state.channel_subscribers.get(ch_idx) {
@@ -2341,6 +2397,7 @@ fn correlate_live_tx_receivers(
                             src_node,
                             channel,
                             reason,
+                            ..
                         } => {
                             let ch_name = channel_name_by_index(sim, *channel as usize);
                             if &ch_name == ch {

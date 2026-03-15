@@ -94,6 +94,7 @@ struct BridgeVisitor {
     reason: Option<String>,
     motion_spec: Option<String>,
     charge_nj: u64,
+    msg_id: u64,
     x: f64,
     y: f64,
     z: f64,
@@ -108,6 +109,7 @@ impl Visit for BridgeVisitor {
             "channel" => self.channel = value as u32,
             "node" => self.node = value as u32,
             "charge_nj" => self.charge_nj = value,
+            "msg_id" => self.msg_id = value,
             _ => {}
         }
     }
@@ -164,6 +166,7 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                     src_node: visitor.node,
                     channel: visitor.channel,
                     reason,
+                    msg_id: visitor.msg_id,
                 },
             };
             self.emit(record);
@@ -235,6 +238,7 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                 src_node: visitor.node,
                 channel: visitor.channel,
                 data: visitor.data,
+                msg_id: visitor.msg_id,
             }
         } else {
             TraceEvent::MessageRecv {
@@ -242,6 +246,7 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                 channel: visitor.channel,
                 data: visitor.data,
                 bit_errors: visitor.bit_errors,
+                msg_id: visitor.msg_id,
             }
         };
 

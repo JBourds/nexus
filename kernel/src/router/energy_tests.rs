@@ -108,6 +108,7 @@ mod tests {
                 tc.length.get() * tc.unit.to_ns_factor()
             },
             sequence: 0,
+            next_msg_id: 0,
         };
         (router, rx)
     }
@@ -460,7 +461,7 @@ mod tests {
 
         // Queue a message from node 0 to node 1 via channel 0
         router
-            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB])
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB], 0)
             .unwrap();
 
         // Step to deliver the queued message (it becomes active at a future timestep)
@@ -523,6 +524,7 @@ mod tests {
                 tc.length.get() * tc.unit.to_ns_factor()
             },
             sequence: 0,
+            next_msg_id: 0,
         };
 
         // Write "active" to ctl.energy_state
@@ -592,6 +594,7 @@ mod tests {
                 tc.length.get() * tc.unit.to_ns_factor()
             },
             sequence: 0,
+            next_msg_id: 0,
         };
 
         // Write unknown state
@@ -875,7 +878,7 @@ mod tests {
 
         // Queue a message and deliver it
         router
-            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB])
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xAB], 0)
             .unwrap();
         router.step().unwrap();
 
@@ -1024,7 +1027,7 @@ mod tests {
 
         // Queue and deliver a message — should work with new PID in handle
         router
-            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xCD])
+            .queue_message(NodeIdx(0), ChannelIdx(0), vec![0xCD], 0)
             .unwrap();
         router.step().unwrap();
 
@@ -1168,6 +1171,7 @@ mod tests {
                 tc.length.get() * tc.unit.to_ns_factor()
             },
             sequence: 0,
+            next_msg_id: 0,
         };
 
         // Write a source and a sink via control file (nj/ts passthrough)
@@ -1267,6 +1271,7 @@ mod tests {
                 tc.length.get() * tc.unit.to_ns_factor()
             },
             sequence: 0,
+            next_msg_id: 0,
         };
 
         // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep
