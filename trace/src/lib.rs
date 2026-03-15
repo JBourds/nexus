@@ -1,3 +1,4 @@
+pub mod display;
 pub mod format;
 pub mod layer;
 pub mod reader;

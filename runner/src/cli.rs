@@ -80,6 +80,43 @@ pub enum RunCmd {
         #[command(subcommand)]
         action: ModulesCmd,
     },
+    /// Parse and inspect a .nxs trace file
+    Parse {
+        /// Path to the .nxs trace file
+        trace: PathBuf,
+
+        /// Filter by event types (comma-separated: tx,rx,drop,position,energy,motion)
+        #[arg(long, value_delimiter = ',')]
+        events: Option<Vec<EventFilter>>,
+
+        /// Filter by node names (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        nodes: Option<Vec<String>>,
+
+        /// Filter by channel names (comma-separated)
+        #[arg(long, value_delimiter = ',')]
+        channels: Option<Vec<String>>,
+
+        /// Start timestep (inclusive)
+        #[arg(long)]
+        from: Option<u64>,
+
+        /// End timestep (inclusive)
+        #[arg(long)]
+        to: Option<u64>,
+
+        /// Output format
+        #[arg(long, default_value = "text")]
+        output: ParseOutput,
+
+        /// External adapter command for payload decoding
+        #[arg(long)]
+        adapter: Option<String>,
+
+        /// Only print the trace header summary
+        #[arg(long)]
+        header_only: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone, PartialEq)]
@@ -110,6 +147,25 @@ impl Display for RunCmd {
             RunCmd::Logs { .. } => write!(f, "logs"),
             RunCmd::Fuzz => write!(f, "fuzz"),
             RunCmd::Modules { .. } => write!(f, "modules"),
+            RunCmd::Parse { .. } => write!(f, "parse"),
         }
     }
+}
+
+#[derive(ValueEnum, Debug, Clone, PartialEq)]
+pub enum EventFilter {
+    Tx,
+    Rx,
+    Drop,
+    Position,
+    Energy,
+    Motion,
+}
+
+#[derive(ValueEnum, Debug, Clone, Default, PartialEq)]
+pub enum ParseOutput {
+    #[default]
+    Text,
+    Json,
+    JsonLines,
 }
