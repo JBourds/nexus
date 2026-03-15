@@ -39,12 +39,13 @@ pub fn format_record(header: &TraceHeader, record: &TraceRecord) -> String {
             src_node,
             channel,
             data,
+            msg_id,
         } => {
             let node = node_name(header, *src_node);
             let ch = channel_name(header, *channel);
             let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
             format!(
-                "[t={ts:0>w$}] TX   {node} -> {ch}   ({len} bytes) {hex}",
+                "[t={ts:0>w$}] TX   {node} -> {ch}   ({len} bytes) msg={msg_id} {hex}",
                 len = data.len()
             )
         }
@@ -52,12 +53,15 @@ pub fn format_record(header: &TraceHeader, record: &TraceRecord) -> String {
             dst_node,
             channel,
             data,
+            bit_errors,
+            msg_id,
         } => {
             let node = node_name(header, *dst_node);
             let ch = channel_name(header, *channel);
             let hex: String = data.iter().map(|b| format!("{b:02x}")).collect();
+            let err_flag = if *bit_errors { " [bit_errors]" } else { "" };
             format!(
-                "[t={ts:0>w$}] RX   {node} <- {ch}   ({len} bytes) {hex}",
+                "[t={ts:0>w$}] RX   {node} <- {ch}   ({len} bytes) msg={msg_id}{err_flag} {hex}",
                 len = data.len()
             )
         }
@@ -65,6 +69,7 @@ pub fn format_record(header: &TraceHeader, record: &TraceRecord) -> String {
             src_node,
             channel,
             reason,
+            msg_id,
         } => {
             let node = node_name(header, *src_node);
             let ch = channel_name(header, *channel);
@@ -74,7 +79,7 @@ pub fn format_record(header: &TraceHeader, record: &TraceRecord) -> String {
                 DropReason::TtlExpired => "TtlExpired",
                 DropReason::BufferFull => "BufferFull",
             };
-            format!("[t={ts:0>w$}] DROP {node} -> {ch}   reason={reason_str}")
+            format!("[t={ts:0>w$}] DROP {node} -> {ch}   msg={msg_id} reason={reason_str}")
         }
         TraceEvent::PositionUpdate { node, x, y, z } => {
             let name = node_name(header, *node);
@@ -99,6 +104,7 @@ pub fn record_to_json(header: &TraceHeader, record: &TraceRecord) -> Value {
             src_node,
             channel,
             data,
+            msg_id,
         } => json!({
             "timestep": ts,
             "event": "MessageSent",
@@ -106,11 +112,14 @@ pub fn record_to_json(header: &TraceHeader, record: &TraceRecord) -> Value {
             "channel": channel_name(header, *channel),
             "data_hex": data.iter().map(|b| format!("{b:02x}")).collect::<String>(),
             "data_len": data.len(),
+            "msg_id": msg_id,
         }),
         TraceEvent::MessageRecv {
             dst_node,
             channel,
             data,
+            bit_errors,
+            msg_id,
         } => json!({
             "timestep": ts,
             "event": "MessageRecv",
@@ -118,17 +127,21 @@ pub fn record_to_json(header: &TraceHeader, record: &TraceRecord) -> Value {
             "channel": channel_name(header, *channel),
             "data_hex": data.iter().map(|b| format!("{b:02x}")).collect::<String>(),
             "data_len": data.len(),
+            "bit_errors": bit_errors,
+            "msg_id": msg_id,
         }),
         TraceEvent::MessageDropped {
             src_node,
             channel,
             reason,
+            msg_id,
         } => json!({
             "timestep": ts,
             "event": "MessageDropped",
             "node": node_name(header, *src_node),
             "channel": channel_name(header, *channel),
             "reason": format!("{reason:?}"),
+            "msg_id": msg_id,
         }),
         TraceEvent::PositionUpdate { node, x, y, z } => json!({
             "timestep": ts,
@@ -233,6 +246,7 @@ mod tests {
                 src_node: 0,
                 channel: 0,
                 data: vec![0x48, 0x65, 0x6c],
+                msg_id: 1,
             },
         };
         let out = format_record(&h, &rec);
@@ -252,6 +266,8 @@ mod tests {
                 dst_node: 1,
                 channel: 0,
                 data: vec![0xab],
+                bit_errors: false,
+                msg_id: 2,
             },
         };
         let out = format_record(&h, &rec);
@@ -269,6 +285,7 @@ mod tests {
                 src_node: 2,
                 channel: 0,
                 reason: DropReason::BelowSensitivity,
+                msg_id: 3,
             },
         };
         let out = format_record(&h, &rec);
@@ -336,6 +353,7 @@ mod tests {
                 src_node: 0,
                 channel: 1,
                 data: vec![0xff],
+                msg_id: 10,
             },
         };
         let val = record_to_json(&h, &rec);
@@ -356,6 +374,7 @@ mod tests {
                 src_node: 1,
                 channel: 0,
                 reason: DropReason::BufferFull,
+                msg_id: 11,
             },
         };
         let val = record_to_json(&h, &rec);

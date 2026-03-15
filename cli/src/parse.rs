@@ -29,10 +29,29 @@ impl ResolvedFilter {
         let node_indices = if let Some(ref names) = nodes {
             let mut indices = Vec::with_capacity(names.len());
             for name in names {
-                let pos = header.node_names.iter().position(|n| n == name);
-                match pos {
-                    Some(i) => indices.push(i as u32),
-                    None => bail!("unknown node name: {name:?}"),
+                // Exact match first, then try prefix match (e.g. "sensor" matches "sensor.0", "sensor.1")
+                let exact = header.node_names.iter().position(|n| n == name);
+                if let Some(i) = exact {
+                    indices.push(i as u32);
+                } else {
+                    // Match nodes whose base name (everything before the last '.')
+                    // equals the filter name. This handles deployment expansion
+                    // where "sensor" becomes "sensor.0", "sensor.1", and also
+                    // "my.node" becomes "my.node.0", "my.node.1".
+                    let prefix_matches: Vec<u32> = header
+                        .node_names
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, n)| {
+                            n.rsplit_once('.')
+                                .is_some_and(|(base, _suffix)| base == name)
+                        })
+                        .map(|(i, _)| i as u32)
+                        .collect();
+                    if prefix_matches.is_empty() {
+                        bail!("unknown node name: {name:?}");
+                    }
+                    indices.extend(prefix_matches);
                 }
             }
             Some(indices)
@@ -322,6 +341,7 @@ mod tests {
                 src_node: 0,
                 channel: 0,
                 data: vec![1],
+                msg_id: 1,
             },
         };
         assert!(filter.matches(&rec));
@@ -338,6 +358,7 @@ mod tests {
                 src_node: 0,
                 channel: 0,
                 data: vec![],
+                msg_id: 1,
             },
         };
         let rx = TraceRecord {
@@ -346,6 +367,8 @@ mod tests {
                 dst_node: 1,
                 channel: 0,
                 data: vec![],
+                bit_errors: false,
+                msg_id: 1,
             },
         };
         assert!(!filter.matches(&tx));
@@ -465,6 +488,7 @@ mod tests {
                 src_node: 0,
                 channel: 0,
                 data: vec![],
+                msg_id: 1,
             },
         };
         assert!(filter.matches(&rec));
@@ -500,8 +524,138 @@ mod tests {
                 src_node: 0,
                 channel: 0,
                 reason: DropReason::PacketLoss,
+                msg_id: 1,
             },
         };
         assert!(filter.matches(&drop_rec));
+    }
+
+    #[test]
+    fn test_filter_node_prefix_match() {
+        // Simulates expanded node names like "sensor.0", "sensor.1"
+        let h = TraceHeader {
+            node_names: vec!["sensor.0".into(), "sensor.1".into(), "gateway.0".into()],
+            channel_names: vec!["lora0".into()],
+            timestep_count: 100,
+            node_max_nj: vec![None, None, None],
+        };
+        // "sensor" should match both sensor.0 (idx 0) and sensor.1 (idx 1)
+        let filter = ResolvedFilter::new(
+            &h,
+            None,
+            Some(vec!["sensor".into()]),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let sensor0 = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 0,
+                energy_nj: 100,
+            },
+        };
+        let sensor1 = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 1,
+                energy_nj: 100,
+            },
+        };
+        let gateway = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 2,
+                energy_nj: 100,
+            },
+        };
+        assert!(filter.matches(&sensor0));
+        assert!(filter.matches(&sensor1));
+        assert!(!filter.matches(&gateway));
+    }
+
+    #[test]
+    fn test_filter_node_exact_over_prefix() {
+        // If "alice" exists as an exact name, don't also match "alice.0"
+        let h = TraceHeader {
+            node_names: vec!["alice".into(), "alice.0".into()],
+            channel_names: vec![],
+            timestep_count: 100,
+            node_max_nj: vec![None, None],
+        };
+        let filter = ResolvedFilter::new(
+            &h,
+            None,
+            Some(vec!["alice".into()]),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let alice_exact = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 0,
+                energy_nj: 100,
+            },
+        };
+        let alice_dot0 = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 1,
+                energy_nj: 100,
+            },
+        };
+        assert!(filter.matches(&alice_exact));
+        assert!(!filter.matches(&alice_dot0));
+    }
+
+    #[test]
+    fn test_filter_node_dotted_base_name() {
+        // A node named "my.node" in config becomes "my.node.0", "my.node.1"
+        // "--nodes my.node" should match both by splitting on the last '.'
+        let h = TraceHeader {
+            node_names: vec!["my.node.0".into(), "my.node.1".into(), "other.0".into()],
+            channel_names: vec![],
+            timestep_count: 100,
+            node_max_nj: vec![None, None, None],
+        };
+        let filter = ResolvedFilter::new(
+            &h,
+            None,
+            Some(vec!["my.node".into()]),
+            None,
+            None,
+            None,
+        )
+        .unwrap();
+
+        let node0 = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 0,
+                energy_nj: 100,
+            },
+        };
+        let node1 = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 1,
+                energy_nj: 100,
+            },
+        };
+        let other = TraceRecord {
+            timestep: 1,
+            event: TraceEvent::EnergyUpdate {
+                node: 2,
+                energy_nj: 100,
+            },
+        };
+        assert!(filter.matches(&node0));
+        assert!(filter.matches(&node1));
+        assert!(!filter.matches(&other));
     }
 }

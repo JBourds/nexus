@@ -20,6 +20,7 @@ fn all_event_records() -> Vec<TraceRecord> {
                 src_node: 0,
                 channel: 0,
                 data: vec![0x48, 0x65, 0x6c, 0x6c, 0x6f],
+                msg_id: 1,
             },
         },
         TraceRecord {
@@ -28,6 +29,8 @@ fn all_event_records() -> Vec<TraceRecord> {
                 dst_node: 1,
                 channel: 0,
                 data: vec![0x48, 0x65, 0x6c, 0x6c, 0x6f],
+                bit_errors: false,
+                msg_id: 1,
             },
         },
         TraceRecord {
@@ -36,6 +39,7 @@ fn all_event_records() -> Vec<TraceRecord> {
                 src_node: 2,
                 channel: 0,
                 reason: DropReason::BelowSensitivity,
+                msg_id: 2,
             },
         },
         TraceRecord {
