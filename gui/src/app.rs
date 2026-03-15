@@ -829,6 +829,11 @@ impl NexusApp {
             return;
         };
         let trace_path = state.sim_dir.join("trace.nxs");
+        let live_speed = f64::from_bits(
+            state
+                .time_dilation
+                .load(std::sync::atomic::Ordering::Relaxed),
+        ) as f32;
         if let Ok(controller) = crate::sim::replay::ReplayController::open(&trace_path) {
             let sim = state.sim.clone();
             let initial_states = nodes_from_sim(&sim);
@@ -843,7 +848,7 @@ impl NexusApp {
                 current_timestep: 0,
                 total_timesteps,
                 playing: false,
-                playback_speed: PLAYBACK_SPEED_DEFAULT,
+                playback_speed: live_speed,
                 messages: Vec::new(),
                 node_states: initial_states.clone(),
                 initial_states,
@@ -1361,6 +1366,9 @@ impl NexusApp {
             return;
         };
         let sim = state.sim.clone();
+        let prev_speed_bits = state
+            .time_dilation
+            .load(std::sync::atomic::Ordering::Relaxed);
 
         // Stop the old simulation and drop its controller so the FUSE mount
         // is fully unmounted before the new simulation tries to mount.
@@ -1369,6 +1377,8 @@ impl NexusApp {
 
         match crate::sim::launch::launch_simulation(sim.clone(), None) {
             Ok((controller, sim_dir, td)) => {
+                // Restore the user's speed from before the rerun.
+                td.store(prev_speed_bits, std::sync::atomic::Ordering::Relaxed);
                 let node_states = nodes_from_sim(&sim);
                 let channel_subscribers = build_channel_subscribers(&sim);
                 let num_channels = sim.channels.len();
