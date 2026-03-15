@@ -2,11 +2,11 @@ use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
 use std::process::{Command, Stdio};
 
+use super::display;
+use super::format::{TraceEvent, TraceHeader, TraceRecord};
+use super::reader::TraceReader;
 use anyhow::{Result, bail};
 use runner::cli::{EventFilter, ParseOutput};
-use trace::display;
-use trace::format::{TraceEvent, TraceHeader, TraceRecord};
-use trace::reader::TraceReader;
 
 /// Resolved filter that maps user-provided names to indices for fast matching.
 pub struct ResolvedFilter {
@@ -320,7 +320,7 @@ fn maybe_decode_adapter(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use trace::format::{DropReason, TraceEvent, TraceHeader, TraceRecord};
+    use crate::format::{DropReason, TraceEvent, TraceHeader, TraceRecord};
 
     fn test_header() -> TraceHeader {
         TraceHeader {
@@ -378,15 +378,8 @@ mod tests {
     #[test]
     fn test_filter_node_name() {
         let h = test_header();
-        let filter = ResolvedFilter::new(
-            &h,
-            None,
-            Some(vec!["bob".into()]),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, None, Some(vec!["bob".into()]), None, None, None).unwrap();
         let alice_rec = TraceRecord {
             timestep: 1,
             event: TraceEvent::EnergyUpdate {
@@ -408,28 +401,15 @@ mod tests {
     #[test]
     fn test_filter_unknown_node_errors() {
         let h = test_header();
-        let result = ResolvedFilter::new(
-            &h,
-            None,
-            Some(vec!["unknown".into()]),
-            None,
-            None,
-            None,
-        );
+        let result = ResolvedFilter::new(&h, None, Some(vec!["unknown".into()]), None, None, None);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_filter_unknown_channel_errors() {
         let h = test_header();
-        let result = ResolvedFilter::new(
-            &h,
-            None,
-            None,
-            Some(vec!["nonexistent".into()]),
-            None,
-            None,
-        );
+        let result =
+            ResolvedFilter::new(&h, None, None, Some(vec!["nonexistent".into()]), None, None);
         assert!(result.is_err());
     }
 
@@ -472,15 +452,8 @@ mod tests {
     #[test]
     fn test_filter_channel() {
         let h = test_header();
-        let filter = ResolvedFilter::new(
-            &h,
-            None,
-            None,
-            Some(vec!["lora0".into()]),
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, None, None, Some(vec!["lora0".into()]), None, None).unwrap();
         // Message with matching channel passes
         let rec = TraceRecord {
             timestep: 1,
@@ -509,15 +482,8 @@ mod tests {
     #[test]
     fn test_filter_drop_event() {
         let h = test_header();
-        let filter = ResolvedFilter::new(
-            &h,
-            Some(vec![EventFilter::Drop]),
-            None,
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, Some(vec![EventFilter::Drop]), None, None, None, None).unwrap();
         let drop_rec = TraceRecord {
             timestep: 1,
             event: TraceEvent::MessageDropped {
@@ -540,15 +506,8 @@ mod tests {
             node_max_nj: vec![None, None, None],
         };
         // "sensor" should match both sensor.0 (idx 0) and sensor.1 (idx 1)
-        let filter = ResolvedFilter::new(
-            &h,
-            None,
-            Some(vec!["sensor".into()]),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, None, Some(vec!["sensor".into()]), None, None, None).unwrap();
 
         let sensor0 = TraceRecord {
             timestep: 1,
@@ -585,15 +544,8 @@ mod tests {
             timestep_count: 100,
             node_max_nj: vec![None, None],
         };
-        let filter = ResolvedFilter::new(
-            &h,
-            None,
-            Some(vec!["alice".into()]),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, None, Some(vec!["alice".into()]), None, None, None).unwrap();
 
         let alice_exact = TraceRecord {
             timestep: 1,
@@ -623,15 +575,8 @@ mod tests {
             timestep_count: 100,
             node_max_nj: vec![None, None, None],
         };
-        let filter = ResolvedFilter::new(
-            &h,
-            None,
-            Some(vec!["my.node".into()]),
-            None,
-            None,
-            None,
-        )
-        .unwrap();
+        let filter =
+            ResolvedFilter::new(&h, None, Some(vec!["my.node".into()]), None, None, None).unwrap();
 
         let node0 = TraceRecord {
             timestep: 1,

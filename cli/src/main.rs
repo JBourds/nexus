@@ -21,7 +21,6 @@ use std::path::PathBuf;
 use crate::output::to_csv;
 
 mod output;
-mod parse;
 
 const CONFIG: &str = "nexus.toml";
 
@@ -42,7 +41,7 @@ fn main() -> Result<()> {
             output,
             adapter,
             header_only,
-        } => parse::run_parse(
+        } => trace::parse::run_parse(
             trace,
             events.clone(),
             nodes.clone(),
