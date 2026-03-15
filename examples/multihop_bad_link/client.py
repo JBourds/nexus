@@ -8,8 +8,8 @@ import os
 import sys
 import time
 
-proxy_path = os.path.expanduser("~/nexus/client_proxy")
-display_path = os.path.expanduser("~/nexus/display")
+proxy_path = os.path.expanduser("~/nexus/client_proxy/channel")
+display_path = os.path.expanduser("~/nexus/display/channel")
 
 counter = 0
 try:

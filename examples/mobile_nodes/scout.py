@@ -1,8 +1,8 @@
 import os
 import time
 
-radio = os.path.expanduser("~/nexus/radio")
-motion = os.path.expanduser("~/nexus/ctl.pos.motion")
+radio = os.path.expanduser("~/nexus/radio/channel")
+motion = os.path.expanduser("~/nexus/ctl.pos/motion")
 
 # Move linearly to (20, 10, 0) over 50 seconds (50_000_000 µs)
 with open(motion, "r+") as f:

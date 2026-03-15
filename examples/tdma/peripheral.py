@@ -8,7 +8,7 @@ import os
 import sys
 import time
 
-radio_path = os.path.expanduser("~/nexus/radio")
+radio_path = os.path.expanduser("~/nexus/radio/channel")
 client_id = int(sys.argv[1])
 
 SLOT_LENGTH = 1

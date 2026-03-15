@@ -5,8 +5,8 @@ server.py — Central server receiving data from UART and Wi-Fi.
 import os
 import time
 
-uart = os.path.expanduser("~/nexus/uart")
-wifi = os.path.expanduser("~/nexus/wifi")
+uart = os.path.expanduser("~/nexus/uart/channel")
+wifi = os.path.expanduser("~/nexus/wifi/channel")
 
 while True:
     with open(uart, "r") as f:

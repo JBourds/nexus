@@ -9,7 +9,7 @@ Reads the energy control file to log remaining charge.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
+lora = os.path.expanduser("~/nexus/lora/channel")
 ctl_state = os.path.expanduser("~/nexus/ctl.energy_state")
 ctl_energy = os.path.expanduser("~/nexus/ctl.energy_left")
 

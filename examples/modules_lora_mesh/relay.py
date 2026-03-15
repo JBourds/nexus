@@ -5,7 +5,7 @@ relay.py — Forwards any received LoRa message with a relay tag.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
+lora = os.path.expanduser("~/nexus/lora/channel")
 
 while True:
     with open(lora, "r+") as f:

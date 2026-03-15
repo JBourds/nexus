@@ -5,7 +5,7 @@ sensor.py — Periodically sends temperature readings over LoRa.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
+lora = os.path.expanduser("~/nexus/lora/channel")
 
 seq = 0
 while True:

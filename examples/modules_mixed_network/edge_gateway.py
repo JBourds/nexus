@@ -8,8 +8,8 @@ over the wired UART link to the server.
 import os
 import time
 
-lora = os.path.expanduser("~/nexus/lora")
-uart = os.path.expanduser("~/nexus/uart")
+lora = os.path.expanduser("~/nexus/lora/channel")
+uart = os.path.expanduser("~/nexus/uart/channel")
 
 while True:
     with open(lora, "r") as f:

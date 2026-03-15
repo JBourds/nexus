@@ -14,7 +14,7 @@ CXXFLAGS := -Wall \
             -Wmissing-declarations \
             -Wpedantic \
             -D SIMULATE \
-			-D NEXUS_LORA=\"$$HOME/nexus/lora\" \
+			-D NEXUS_LORA=\"$$HOME/nexus/lora/channel\" \
             $(addprefix -I, $(INC))
 
 SOURCES := $(foreach dir,$(SRC),$(wildcard $(dir)/*.cpp))

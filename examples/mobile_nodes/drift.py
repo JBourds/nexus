@@ -1,8 +1,8 @@
 import os
 import time
 
-radio = os.path.expanduser("~/nexus/radio")
-motion = os.path.expanduser("~/nexus/ctl.pos.motion")
+radio = os.path.expanduser("~/nexus/radio/channel")
+motion = os.path.expanduser("~/nexus/ctl.pos/motion")
 
 # Drift at constant velocity: 0.3 km/s in x, -0.2 km/s in y
 # velocity units are distance_unit per microsecond, so:

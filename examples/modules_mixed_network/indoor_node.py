@@ -5,7 +5,7 @@ indoor_node.py — Indoor Wi-Fi sensor, sends readings to the server.
 import os
 import time
 
-wifi = os.path.expanduser("~/nexus/wifi")
+wifi = os.path.expanduser("~/nexus/wifi/channel")
 
 seq = 0
 while True:
