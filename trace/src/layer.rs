@@ -34,7 +34,10 @@ impl TraceLayer {
     /// Create a new trace layer and a [`TraceHandle`] that must be held alive
     /// until the simulation ends. Dropping the handle flushes all buffered
     /// records to disk.
-    pub fn new(path: impl AsRef<Path>, header: &TraceHeader) -> std::io::Result<(Self, TraceHandle)> {
+    pub fn new(
+        path: impl AsRef<Path>,
+        header: &TraceHeader,
+    ) -> std::io::Result<(Self, TraceHandle)> {
         let writer = Arc::new(Mutex::new(TraceWriter::create(path, header)?));
         Ok((
             Self {
@@ -51,7 +54,9 @@ struct TraceVisitor {
     channel: u32,
     node: u32,
     is_tx: bool,
+    bit_errors: bool,
     data: Vec<u8>,
+    msg_id: u64,
 }
 
 impl Visit for TraceVisitor {
@@ -62,13 +67,16 @@ impl Visit for TraceVisitor {
             "timestep" => self.timestep = value,
             "channel" => self.channel = value as u32,
             "node" => self.node = value as u32,
+            "msg_id" => self.msg_id = value,
             _ => {}
         }
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        if field.name() == "tx" {
-            self.is_tx = value;
+        match field.name() {
+            "tx" => self.is_tx = value,
+            "bit_errors" => self.bit_errors = value,
+            _ => {}
         }
     }
 
@@ -100,12 +108,15 @@ impl<S: Subscriber> Layer<S> for TraceLayer {
                         src_node: visitor.node,
                         channel: visitor.channel,
                         data: visitor.data,
+                        msg_id: visitor.msg_id,
                     }
                 } else {
                     TraceEvent::MessageRecv {
                         dst_node: visitor.node,
                         channel: visitor.channel,
                         data: visitor.data,
+                        bit_errors: visitor.bit_errors,
+                        msg_id: visitor.msg_id,
                     }
                 };
                 TraceRecord {
@@ -162,6 +173,7 @@ struct DropVisitor {
     node: u32,
     channel: u32,
     reason: String,
+    msg_id: u64,
 }
 
 impl Visit for DropVisitor {
@@ -172,6 +184,7 @@ impl Visit for DropVisitor {
             "timestep" => self.timestep = value,
             "channel" => self.channel = value as u32,
             "node" => self.node = value as u32,
+            "msg_id" => self.msg_id = value,
             _ => {}
         }
     }
@@ -196,6 +209,7 @@ impl DropVisitor {
             src_node: self.node,
             channel: self.channel,
             reason,
+            msg_id: self.msg_id,
         }
     }
 }

@@ -50,13 +50,16 @@ impl RoutingServer {
     /// Perform link simulation for:
     /// - dropped packets
     /// - bit errors
+    ///
+    /// Returns `None` if the packet was dropped, or `Some((data, bit_errors))`
+    /// where `bit_errors` is true when at least one bit was flipped.
     pub(super) fn send_through_channel<'a>(
         channel: &Channel,
         mut buf: Cow<'a, [u8]>,
         distance: f64,
         unit: DistanceUnit,
         rng: &mut StdRng,
-    ) -> Option<Cow<'a, [u8]>> {
+    ) -> Option<(Cow<'a, [u8]>, bool)> {
         let Link {
             medium,
             packet_loss,
@@ -77,11 +80,13 @@ impl RoutingServer {
 
         let rssi = bit_error.rssi(tx_dbm, distance, unit, medium);
         let ber = bit_error.probability(rssi);
+        let mut had_bit_errors = false;
         if ber != 0.0 {
             let flips = (0..buf.len() * usize::try_from(u8::BITS).unwrap())
                 .map(|_| bit_error.sample_unchecked(ber, rng));
-            let _ = flip_bits(buf.to_mut(), flips);
+            let (_, flipped) = flip_bits(buf.to_mut(), flips);
+            had_bit_errors = flipped > 0;
         }
-        Some(buf)
+        Some((buf, had_bit_errors))
     }
 }

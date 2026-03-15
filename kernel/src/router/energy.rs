@@ -127,10 +127,7 @@ impl EnergyManager {
 
     /// Read the current charge in nanojoules for a node (0 if no battery).
     pub fn charge_nj(nodes: &[Node], node_idx: usize) -> u64 {
-        nodes[node_idx]
-            .energy
-            .as_ref()
-            .map_or(0, |e| e.charge_nj)
+        nodes[node_idx].energy.as_ref().map_or(0, |e| e.charge_nj)
     }
 
     /// Read the current power state name for a node.

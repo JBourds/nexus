@@ -204,6 +204,12 @@ pub struct ConfigEditorState {
     pub needs_fit: bool,
     /// Module system state (use list, profiles, browser).
     pub modules: ModuleState,
+    /// Pre-configured breakpoints (carried into simulation/replay).
+    pub breakpoints: Vec<Breakpoint>,
+    /// Input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
+    /// Initial run-until condition to apply when the simulation starts.
+    pub initial_run_until: Option<BreakpointKind>,
 }
 
 impl ConfigEditorState {
@@ -235,6 +241,9 @@ impl ConfigEditorState {
             add_item_buf: String::new(),
             needs_fit: true,
             modules,
+            breakpoints: Vec::new(),
+            bp_input: BreakpointInput::default(),
+            initial_run_until: None,
         })
     }
 }
@@ -268,6 +277,34 @@ pub struct LiveSimState {
     pub last_sender: Vec<Option<usize>>,
     /// Shared time dilation value (f64 bits in AtomicU64) for live kernel adjustment.
     pub time_dilation: Arc<AtomicU64>,
+    /// When true, arrow animations are frozen (not expired) due to a run-until trigger.
+    pub arrows_frozen: bool,
+    /// One-shot run-until condition. Cleared after triggering.
+    pub run_until: Option<BreakpointKind>,
+    /// Event-level stepping: index into accumulated events. None = timestep mode.
+    pub event_cursor: Option<usize>,
+    /// Whether event-stepping mode is active.
+    pub event_stepping: bool,
+    /// Breakpoints that pause when matched.
+    pub breakpoints: Vec<Breakpoint>,
+    /// Set of expanded TX message indices for receiver expansion.
+    pub expanded_messages: HashSet<usize>,
+    /// All trace records accumulated during live simulation (for event stepping).
+    pub all_records: Vec<trace::format::TraceRecord>,
+    /// View mode: Grid or Sequence diagram.
+    pub view_mode: ViewMode,
+    /// Persistent input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
+    /// Zoom level for the sequence diagram (1.0 = default).
+    pub seq_zoom: f32,
+    /// When true, re-arm `run_until: NextEvent` after each trigger.
+    pub persistent_next_event: bool,
+    /// Build/run lifecycle status.
+    pub build_status: SimBuildStatus,
+    /// Captured process outputs (populated when simulation finishes).
+    pub process_outputs: Vec<ProcessOutput>,
+    /// Set of open output windows, keyed by "node.protocol".
+    pub open_output_windows: HashSet<String>,
 }
 
 /// State for replay mode.
@@ -300,6 +337,24 @@ pub struct ReplayState {
     pub last_sender: Vec<Option<usize>>,
     /// Fractional timestep accumulator for real-time replay.
     pub time_accumulator: f64,
+    /// When true, arrow animations are frozen (not expired) due to a run-until trigger.
+    pub arrows_frozen: bool,
+    /// One-shot run-until condition. Cleared after triggering.
+    pub run_until: Option<BreakpointKind>,
+    /// Event-level stepping: index into the flat record array. None = timestep mode.
+    pub event_cursor: Option<usize>,
+    /// Whether event-stepping mode is active (vs timestep mode).
+    pub event_stepping: bool,
+    /// Breakpoints that pause playback when matched.
+    pub breakpoints: Vec<Breakpoint>,
+    /// Set of expanded TX message indices (for receiver expansion in messages panel).
+    pub expanded_messages: HashSet<usize>,
+    /// View mode: Grid or Sequence diagram.
+    pub view_mode: ViewMode,
+    /// Persistent input state for the breakpoints panel.
+    pub bp_input: BreakpointInput,
+    /// Zoom level for the sequence diagram (1.0 = default).
+    pub seq_zoom: f32,
 }
 
 /// Per-node runtime state for visualization.
@@ -333,12 +388,35 @@ pub struct MessageEntry {
     pub data_preview: String,
     /// Raw message bytes for clipboard copy.
     pub data_raw: Vec<u8>,
+    /// For TX messages: correlated receivers (populated by correlate_tx_receivers).
+    pub receivers: Vec<ReceiverInfo>,
+    /// Index of this entry's corresponding record in the flat record array (for event cursor sync).
+    pub record_index: Option<usize>,
+    /// Unique message ID for correlating TX with RX/Drop across timesteps.
+    pub msg_id: Option<u64>,
+}
+
+/// Information about a receiver of a TX message.
+#[derive(Clone, Debug)]
+pub struct ReceiverInfo {
+    pub node: String,
+    pub outcome: ReceiverOutcome,
+    /// True when the received data differs from the transmitted data (bit flips).
+    pub has_bit_errors: bool,
+}
+
+/// Whether a node received or dropped a message.
+#[derive(Clone, Debug)]
+pub enum ReceiverOutcome {
+    Received,
+    Dropped(String),
 }
 
 /// Which panels are visible (for collapsible panes).
 pub struct PanelVisibility {
     pub inspector: bool,
     pub messages: bool,
+    pub debugger: bool,
 }
 
 impl Default for PanelVisibility {
@@ -346,6 +424,7 @@ impl Default for PanelVisibility {
         Self {
             inspector: true,
             messages: true,
+            debugger: true,
         }
     }
 }
@@ -372,4 +451,66 @@ pub enum ArrowKind {
     Sent,
     Received,
     Dropped,
+}
+
+/// A breakpoint that pauses playback when its condition is met.
+#[derive(Clone, Debug)]
+pub struct Breakpoint {
+    pub kind: BreakpointKind,
+    pub enabled: bool,
+}
+
+/// What triggers a breakpoint.
+#[derive(Clone, Debug, PartialEq)]
+pub enum BreakpointKind {
+    /// Stop at the very next event (any event).
+    NextEvent,
+    /// Stop at a specific timestep.
+    Timestep(u64),
+    /// Stop on any event involving this node.
+    NodeEvent(String),
+    /// Stop on any TX/RX on this channel.
+    ChannelActivity(String),
+}
+
+/// Persistent UI state for the breakpoints panel input fields.
+#[derive(Default)]
+pub struct BreakpointInput {
+    pub timestep_buf: String,
+    pub node_search: String,
+    pub channel_search: String,
+}
+
+/// Which main view is shown in the central panel.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum ViewMode {
+    #[default]
+    Grid,
+    Sequence,
+}
+
+/// Build/run lifecycle status for a live simulation.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub enum SimBuildStatus {
+    #[default]
+    Building,
+    Running,
+    Complete,
+}
+
+/// An entry in the session's trace history.
+#[derive(Clone, Debug)]
+pub struct TraceHistoryEntry {
+    pub sim_dir: std::path::PathBuf,
+    pub config_name: String,
+    pub timestamp: String,
+}
+
+/// Captured stdout/stderr from a node's protocol process.
+#[derive(Clone, Debug)]
+pub struct ProcessOutput {
+    pub node: String,
+    pub protocol: String,
+    pub stdout: String,
+    pub stderr: String,
 }

@@ -138,11 +138,12 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
         for (protocol_name, protocol) in &node.protocols {
-            let protocol_handle = cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
+            let protocol_handle =
+                cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
             let pid = protocol_handle.pid().ok_or_else(|| {
-                ProtocolError::UnableToRun(io::Error::other(
-                    format!("process not started for {node_name}/{protocol_name}"),
-                ))
+                ProtocolError::UnableToRun(io::Error::other(format!(
+                    "process not started for {node_name}/{protocol_name}"
+                )))
             })?;
             affinity_builder.add_protocol(node_name, pid);
             handles.push(protocol_handle);
@@ -152,7 +153,8 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
     let relative_assignments = relative_builder.build(CPU_WEIGHT_MIN, CPU_WEIGHT_MAX);
     cgroup_controller.assign_cpu_weights(&relative_assignments);
     let cpuinfo = get_cpu_info(&affinity_assignments.cpuset);
-    let bandwidth_assignments = Bandwidth::new(&affinity_assignments, &cpuinfo);
+    let bandwidth_assignments =
+        Bandwidth::new(&affinity_assignments, &cpuinfo, sim.params.time_dilation);
     cgroup_controller.assign_cpu_bandwidths(&bandwidth_assignments);
 
     Ok(RunController {

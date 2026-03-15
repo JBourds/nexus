@@ -8,6 +8,7 @@ pub mod widgets;
 use config::ast;
 use egui::Ui;
 
+use crate::constants::CONFIG_PANEL_WIDTH;
 use crate::state::ConfigEditorState;
 
 /// Show the full configuration editor UI.
@@ -22,7 +23,7 @@ pub fn show_config_editor(ui: &mut Ui, state: &mut ConfigEditorState) {
     modules::show_module_browser(ui.ctx(), &mut state.modules, config_dir.as_deref());
 
     egui::SidePanel::left("config_sections")
-        .default_width(300.0)
+        .default_width(CONFIG_PANEL_WIDTH)
         .show_inside(ui, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 ui.heading("Configuration");

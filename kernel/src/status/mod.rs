@@ -78,7 +78,6 @@ impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
 
 pub struct StatusServer {
     /// Scalar value to try and speed up or slow down requested cycles with.
-    #[allow(dead_code)]
     time_dilation: Arc<AtomicU64>,
     /// Controller for different aspects of the running simulation.
     runc: RunController,
@@ -93,9 +92,13 @@ pub struct StatusServer {
 impl StatusServer {
     fn update_resources(&mut self) {
         self.cpuinfo.refresh();
+        let speed = f64::from_bits(
+            self.time_dilation
+                .load(std::sync::atomic::Ordering::Relaxed),
+        );
         self.runc
             .bandwidth
-            .refresh(&self.runc.affinity, &self.cpuinfo);
+            .refresh(&self.runc.affinity, &self.cpuinfo, speed);
         self.runc
             .cgroups
             .assign_cpu_bandwidths(&self.runc.bandwidth);

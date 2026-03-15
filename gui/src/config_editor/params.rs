@@ -3,6 +3,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use config::ast::Params;
 use egui::Ui;
 
+use crate::constants::{PLAYBACK_SPEED_MAX, PLAYBACK_SPEED_MIN};
+
 use super::widgets::{TIME_UNIT_PAIRS, enum_combo};
 
 pub fn show_params(ui: &mut Ui, params: &mut Params) {
@@ -71,7 +73,7 @@ pub fn show_params(ui: &mut Ui, params: &mut Params) {
         ui.add(
             egui::DragValue::new(&mut params.time_dilation)
                 .speed(0.01)
-                .range(0.001..=1000.0),
+                .range(PLAYBACK_SPEED_MIN..=PLAYBACK_SPEED_MAX),
         );
     });
 

@@ -24,7 +24,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use config::ast::{self, TimestepConfig};
+use config::ast::{self, TimeUnit, TimestepConfig};
 use runner::{ProtocolHandle, RunController, cli::RunCmd};
 use tracing::{instrument, warn};
 use types::*;
@@ -165,11 +165,26 @@ impl KernelBuilder {
 }
 
 impl Kernel {
+    /// Emit timestep updates at a capped rate (~10 FPS for most configurations).
+    /// For a 1 us timestep, 10000 steps = 10 ms wall-clock, giving ~100 FPS of updates
+    /// which the GUI can batch. For ms/s timesteps, every step is fine.
+    fn update_interval(unit: TimeUnit) -> u64 {
+        match unit {
+            ast::TimeUnit::Nanoseconds => 10_000_000,
+            ast::TimeUnit::Microseconds => 10_000,
+            ast::TimeUnit::Milliseconds => 10,
+            ast::TimeUnit::Seconds | ast::TimeUnit::Minutes | ast::TimeUnit::Hours => 1,
+        }
+    }
+
     #[instrument(skip_all)]
     #[allow(unused_variables)]
     pub fn run(self, cmd: RunCmd) -> Result<Vec<ProtocolHandle>, KernelError> {
         const RESOURCE_UPDATE_INTERVAL: u64 = 100;
-        let delta = self.time_delta();
+        const MIN_DILATION: f64 = 0.01;
+        const FLAG_PAUSE_LEN: u64 = 10;
+
+        let base_delta = self.time_delta();
         let Self {
             root,
             rng,
@@ -188,24 +203,32 @@ impl Kernel {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
             RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
         }?;
-        let mut status_server = StatusServer::serve(time_dilation, runc)?;
+        let mut status_server = StatusServer::serve(time_dilation.clone(), runc)?;
         queue_event(
             &mut event_queue,
             RESOURCE_UPDATE_INTERVAL,
             Event::UpdateResources,
         );
 
+        let ts_update_interval = Self::update_interval(timestep.unit);
+        let mut prev_speed = f64::from_bits(time_dilation.load(Ordering::Relaxed));
         'outer: for timestep in 0..self.timestep.count.into() {
             if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                 break;
+            }
+            if timestep % ts_update_interval == 0 {
+                tracing::event!(target: "timestep", tracing::Level::TRACE, timestep = timestep);
             }
             // Spin-wait while paused, checking abort each iteration.
             while pause.as_ref().is_some_and(|p| p.load(Ordering::Relaxed)) {
                 if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                     break 'outer;
                 }
-                std::thread::sleep(Duration::from_millis(10));
+                std::thread::sleep(Duration::from_millis(FLAG_PAUSE_LEN));
             }
+
+            let speed = f64::from_bits(time_dilation.load(Ordering::Relaxed));
+            let delta = base_delta.div_f64(speed.max(MIN_DILATION));
             let start = SystemTime::now();
             while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
                 if let Some(events) = dequeue(&mut event_queue, timestep) {
@@ -221,7 +244,11 @@ impl Kernel {
                             }
                         }
                     }
+                } else if speed != prev_speed {
+                    status_server.update_resources()?;
+                    prev_speed = speed;
                 }
+
                 // send all commands
                 match status_server.check_health()? {
                     status::messages::StatusMessage::Ok => {}

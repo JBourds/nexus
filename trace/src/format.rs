@@ -2,7 +2,7 @@ use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 
 pub const MAGIC: [u8; 4] = *b"NXTR";
-pub const VERSION: u16 = 2;
+pub const VERSION: u16 = 4;
 
 #[derive(Encode, Decode, Serialize, Deserialize, Debug, Clone)]
 pub struct TraceHeader {
@@ -27,16 +27,21 @@ pub enum TraceEvent {
         src_node: u32,
         channel: u32,
         data: Vec<u8>,
+        msg_id: u64,
     },
     MessageRecv {
         dst_node: u32,
         channel: u32,
         data: Vec<u8>,
+        /// True when the received data was corrupted by bit errors.
+        bit_errors: bool,
+        msg_id: u64,
     },
     MessageDropped {
         src_node: u32,
         channel: u32,
         reason: DropReason,
+        msg_id: u64,
     },
     PositionUpdate {
         node: u32,

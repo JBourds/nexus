@@ -1,5 +1,7 @@
+use std::collections::HashMap;
+
 use config::ast::DistanceUnit;
-use egui::{Pos2, Rect, Sense, Ui};
+use egui::{Color32, Pos2, Rect, Sense, Ui};
 
 use crate::render;
 use crate::render::grid::GridView;
@@ -7,6 +9,8 @@ use crate::state::{ArrowAnimation, NodeState};
 
 /// Draw the central canvas with grid and nodes.
 /// Returns (clicked_node, hovered_node).
+///
+/// `node_highlights` maps node name -> ring color (e.g. green for received, red for dropped).
 pub fn show_grid_panel(
     ui: &mut Ui,
     grid: &mut GridView,
@@ -14,6 +18,7 @@ pub fn show_grid_panel(
     selected_node: &Option<String>,
     arrows: &[ArrowAnimation],
     distance_unit: DistanceUnit,
+    node_highlights: &HashMap<String, Color32>,
 ) -> (Option<String>, Option<String>) {
     let unit_label = distance_unit_abbrev(distance_unit);
     let available = ui.available_size();
@@ -48,6 +53,10 @@ pub fn show_grid_panel(
     for node in nodes {
         let is_selected = selected_node.as_ref().is_some_and(|s| s == &node.name);
         render::node::draw_node(ui, canvas_rect, grid, node, is_selected);
+        // Draw receiver highlight ring if applicable
+        if let Some(&color) = node_highlights.get(&node.name) {
+            render::node::draw_node_highlight(ui, canvas_rect, grid, node, color);
+        }
     }
 
     // Draw active message arrows

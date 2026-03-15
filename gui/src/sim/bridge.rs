@@ -12,10 +12,28 @@ use trace::writer::TraceWriter;
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub enum GuiEvent {
+    /// Protocol binaries are being compiled.
+    BuildStarted,
+    /// Protocol binaries compiled successfully.
+    BuildComplete,
     Trace(TraceRecord),
     TimestepAdvanced(u64),
     SimulationComplete,
     SimulationError(String),
+    /// A single line of stdout/stderr from a running node process.
+    ProcessOutputLine {
+        node: String,
+        protocol: String,
+        stream: OutputStream,
+        line: String,
+    },
+}
+
+/// Which output stream a line came from.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum OutputStream {
+    Stdout,
+    Stderr,
 }
 
 /// Shared, swappable sinks for the simulation tracing layer.
@@ -71,10 +89,12 @@ struct BridgeVisitor {
     channel: u32,
     node: u32,
     is_tx: bool,
+    bit_errors: bool,
     data: Vec<u8>,
     reason: Option<String>,
     motion_spec: Option<String>,
     charge_nj: u64,
+    msg_id: u64,
     x: f64,
     y: f64,
     z: f64,
@@ -89,6 +109,7 @@ impl Visit for BridgeVisitor {
             "channel" => self.channel = value as u32,
             "node" => self.node = value as u32,
             "charge_nj" => self.charge_nj = value,
+            "msg_id" => self.msg_id = value,
             _ => {}
         }
     }
@@ -103,8 +124,10 @@ impl Visit for BridgeVisitor {
     }
 
     fn record_bool(&mut self, field: &tracing::field::Field, value: bool) {
-        if field.name() == "tx" {
-            self.is_tx = value;
+        match field.name() {
+            "tx" => self.is_tx = value,
+            "bit_errors" => self.bit_errors = value,
+            _ => {}
         }
     }
 
@@ -143,6 +166,7 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                     src_node: visitor.node,
                     channel: visitor.channel,
                     reason,
+                    msg_id: visitor.msg_id,
                 },
             };
             self.emit(record);
@@ -193,6 +217,15 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
             return;
         }
 
+        if target == "timestep" {
+            let mut visitor = BridgeVisitor::default();
+            event.record(&mut visitor);
+            if let Some(tx) = self.sinks.gui_tx.lock().unwrap().as_ref() {
+                let _ = tx.send(GuiEvent::TimestepAdvanced(visitor.timestep));
+            }
+            return;
+        }
+
         if !matches!(target, "tx" | "rx") {
             return;
         }
@@ -205,12 +238,15 @@ impl<S: Subscriber> Layer<S> for ReloadableSimLayer {
                 src_node: visitor.node,
                 channel: visitor.channel,
                 data: visitor.data,
+                msg_id: visitor.msg_id,
             }
         } else {
             TraceEvent::MessageRecv {
                 dst_node: visitor.node,
                 channel: visitor.channel,
                 data: visitor.data,
+                bit_errors: visitor.bit_errors,
+                msg_id: visitor.msg_id,
             }
         };
 

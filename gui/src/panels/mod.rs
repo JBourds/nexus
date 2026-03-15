@@ -1,5 +1,7 @@
+pub mod breakpoints;
 pub mod grid;
 pub mod inspector;
 pub mod messages;
+pub mod sequence;
 pub mod timeline;
 pub mod toolbar;

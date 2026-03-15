@@ -3,7 +3,15 @@ use std::collections::HashSet;
 use config::ast;
 use egui::Ui;
 
-use crate::state::NodeState;
+use crate::constants::*;
+use crate::state::{MessageEntry, MessageKind, NodeState};
+
+/// Action from the inspector panel.
+pub enum InspectorAction {
+    None,
+    /// Jump the event cursor to a specific record index.
+    JumpToEvent(usize),
+}
 
 /// Show the inspector panel with all nodes as collapsible sections.
 ///
@@ -16,55 +24,65 @@ pub fn show_inspector(
     node_states: &[NodeState],
     selected_node: &Option<String>,
     expanded_nodes: &mut HashSet<String>,
-) {
-    egui::Frame::NONE.inner_margin(6.0).show(ui, |ui| {
-        ui.heading("Inspector");
-        ui.separator();
+    messages: &[MessageEntry],
+    current_event: Option<usize>,
+) -> InspectorAction {
+    let mut action = InspectorAction::None;
 
-        if node_states.is_empty() {
-            ui.label("No nodes");
-            return;
-        }
-
-        egui::ScrollArea::vertical().show(ui, |ui| {
-            let mut sorted_names: Vec<_> = node_states.iter().map(|n| &n.name).collect();
-            sorted_names.sort();
-
-            for name in sorted_names {
-                let is_expanded = expanded_nodes.contains(name);
-                let is_selected = selected_node.as_ref().is_some_and(|s| s == name);
-
-                // Node header row with toggle arrow + name
-                let header_resp = ui.horizontal(|ui| {
-                    let arrow = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
-                    let toggle = ui.small_button(arrow);
-                    let label = if is_selected {
-                        ui.strong(name)
-                    } else {
-                        ui.label(name)
-                    };
-                    toggle.clicked() || label.clicked()
-                });
-
-                if header_resp.inner {
-                    if is_expanded {
-                        expanded_nodes.remove(name);
-                    } else {
-                        expanded_nodes.insert(name.clone());
-                    }
-                }
-
-                // Show body if expanded
-                if is_expanded {
-                    ui.indent(name, |ui| {
-                        show_node_details(ui, sim, node_states, name);
-                    });
-                }
-
-                ui.add_space(2.0);
+    egui::Frame::NONE
+        .inner_margin(PANEL_FRAME_MARGIN)
+        .show(ui, |ui| {
+            if node_states.is_empty() {
+                ui.label("No nodes");
+                return;
             }
-        });
-    }); // Frame
+
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                let mut sorted_names: Vec<_> = node_states.iter().map(|n| &n.name).collect();
+                sorted_names.sort();
+
+                for name in sorted_names {
+                    let is_expanded = expanded_nodes.contains(name);
+                    let is_selected = selected_node.as_ref().is_some_and(|s| s == name);
+
+                    // Node header row with toggle arrow + name
+                    let header_resp = ui.horizontal(|ui| {
+                        let arrow = if is_expanded { "\u{25bc}" } else { "\u{25b6}" };
+                        let toggle = ui.small_button(arrow);
+                        let label = if is_selected {
+                            ui.strong(name)
+                        } else {
+                            ui.label(name)
+                        };
+                        toggle.clicked() || label.clicked()
+                    });
+
+                    if header_resp.inner {
+                        if is_expanded {
+                            expanded_nodes.remove(name);
+                        } else {
+                            expanded_nodes.insert(name.clone());
+                        }
+                    }
+
+                    // Show body if expanded
+                    if is_expanded {
+                        ui.indent(name, |ui| {
+                            show_node_details(ui, sim, node_states, name);
+                            ui.separator();
+                            let node_action = show_node_events(ui, name, messages, current_event);
+                            if let InspectorAction::JumpToEvent(_) = &node_action {
+                                action = node_action;
+                            }
+                        });
+                    }
+
+                    ui.add_space(2.0);
+                }
+            });
+        }); // Frame
+
+    action
 }
 
 fn show_node_details(ui: &mut Ui, sim: &ast::Simulation, node_states: &[NodeState], name: &str) {
@@ -96,7 +114,7 @@ fn show_node_details(ui: &mut Ui, sim: &ast::Simulation, node_states: &[NodeStat
             if rt.motion_spec == "none" {
                 ui.label("Static");
             } else {
-                ui.colored_label(egui::Color32::from_rgb(180, 180, 255), &rt.motion_spec);
+                ui.colored_label(COLOR_MOTION_SPEC, &rt.motion_spec);
             }
         });
     }
@@ -129,4 +147,123 @@ fn show_node_details(ui: &mut Ui, sim: &ast::Simulation, node_states: &[NodeStat
             });
         }
     }
+}
+
+/// Show the per-node event log: filtered list of this node's TX/RX/Drop events,
+/// with prev/next buttons to jump the event cursor.
+fn show_node_events(
+    ui: &mut Ui,
+    node_name: &str,
+    messages: &[MessageEntry],
+    current_event: Option<usize>,
+) -> InspectorAction {
+    let mut action = InspectorAction::None;
+
+    // Filter messages for this node
+    let node_msgs: Vec<(usize, &MessageEntry)> = messages
+        .iter()
+        .enumerate()
+        .filter(|(_, m)| {
+            m.src_node == node_name || m.dst_node.as_ref().is_some_and(|d| d == node_name)
+        })
+        .collect();
+
+    let events_id = ui.id().with(("node_events", node_name));
+    egui::CollapsingHeader::new(format!("Events ({})", node_msgs.len()))
+        .id_salt(events_id)
+        .default_open(true)
+        .show(ui, |ui| {
+            if node_msgs.is_empty() {
+                ui.label("No events for this node");
+                return;
+            }
+
+            // Scrollable event list
+            egui::ScrollArea::vertical()
+                .max_height(INSPECTOR_EVENTS_SCROLL_HEIGHT)
+                .id_salt(ui.id().with(("node_events_scroll", node_name)))
+                .show(ui, |ui| {
+                    for (_, msg) in &node_msgs {
+                        let is_current = current_event.is_some()
+                            && msg.record_index.is_some()
+                            && msg.record_index == current_event;
+
+                        let (icon, color) = match &msg.kind {
+                            MessageKind::Sent => ("TX", COLOR_TX_OK),
+                            MessageKind::Received => ("RX", COLOR_RX),
+                            MessageKind::Dropped(_) => ("XX", COLOR_DROP),
+                        };
+
+                        let frame = if is_current {
+                            egui::Frame::NONE
+                                .fill(COLOR_EVENT_HIGHLIGHT)
+                                .inner_margin(2.0)
+                                .corner_radius(2.0)
+                        } else {
+                            egui::Frame::NONE.inner_margin(2.0)
+                        };
+
+                        let frame_resp = frame.show(ui, |ui| {
+                            ui.set_min_width(ui.available_width());
+                            let resp = ui.vertical(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.colored_label(color, format!("[{icon}]"));
+                                    ui.label(
+                                        egui::RichText::new(format!("t={}", msg.timestep)).small(),
+                                    );
+                                    ui.label(
+                                        egui::RichText::new(&msg.channel)
+                                            .small()
+                                            .color(COLOR_LABEL_DIM),
+                                    );
+                                });
+                                // Show sender/receiver info on the second line
+                                match &msg.kind {
+                                    MessageKind::Sent => {
+                                        // For TX: show data preview if available
+                                        if !msg.data_preview.is_empty() {
+                                            ui.label(
+                                                egui::RichText::new(&msg.data_preview)
+                                                    .small()
+                                                    .color(COLOR_LABEL_DIMMER),
+                                            );
+                                        }
+                                    }
+                                    MessageKind::Received => {
+                                        if let Some(sender) = &msg.dst_node {
+                                            ui.label(
+                                                egui::RichText::new(format!("from: {sender}"))
+                                                    .small()
+                                                    .color(COLOR_RX),
+                                            );
+                                        }
+                                    }
+                                    MessageKind::Dropped(reason) => {
+                                        let mut parts = Vec::new();
+                                        if let Some(sender) = &msg.dst_node {
+                                            parts.push(format!("from: {sender}"));
+                                        }
+                                        parts.push(reason.clone());
+                                        ui.label(
+                                            egui::RichText::new(parts.join(" - "))
+                                                .small()
+                                                .color(COLOR_DROP),
+                                        );
+                                    }
+                                }
+                            });
+                            // Click to jump to this event
+                            if resp.response.clicked()
+                                && let Some(ri) = msg.record_index {
+                                    action = InspectorAction::JumpToEvent(ri);
+                                }
+                        });
+                        if is_current {
+                            frame_resp.response.scroll_to_me(Some(egui::Align::Center));
+                        }
+                    }
+                });
+        });
+
+    action
 }

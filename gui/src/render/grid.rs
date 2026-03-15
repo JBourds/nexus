@@ -1,5 +1,7 @@
 use egui::{Color32, Pos2, Rect, Response, Stroke, Ui, Vec2};
 
+use crate::constants::*;
+
 /// Manages world-space <-> space transformation with pan and zoom.
 #[derive(Clone, Debug)]
 pub struct GridView {
@@ -34,7 +36,7 @@ impl GridView {
         }
         let world_w = (max_x - min_x).max(1.0);
         let world_h = (max_y - min_y).max(1.0);
-        let padding = 1.2; // 20% margin
+        let padding = GRID_FIT_PADDING;
         self.zoom = ((canvas_size.x as f64 / (world_w * padding))
             .min(canvas_size.y as f64 / (world_h * padding))) as f32;
         let cx = (min_x + max_x) / 2.0;
@@ -78,7 +80,7 @@ impl GridView {
             // Pinch-to-zoom on touchpad
             let pinch = response.ctx.input(|i| i.zoom_delta());
             if pinch != 1.0 {
-                self.zoom = (self.zoom * pinch).clamp(0.01, 1000.0);
+                self.zoom = (self.zoom * pinch).clamp(GRID_ZOOM_MIN, GRID_ZOOM_MAX);
             }
 
             let ctrl_held = response
@@ -88,8 +90,8 @@ impl GridView {
 
             if ctrl_held && scroll.y != 0.0 {
                 // Ctrl+MouseWheel = zoom
-                let factor = 1.0 + scroll.y * 0.002;
-                self.zoom = (self.zoom * factor).clamp(0.01, 1000.0);
+                let factor = 1.0 + scroll.y * GRID_SCROLL_ZOOM_FACTOR;
+                self.zoom = (self.zoom * factor).clamp(GRID_ZOOM_MIN, GRID_ZOOM_MAX);
             } else if scroll.x != 0.0 || scroll.y != 0.0 {
                 // Plain scroll / two-finger swipe = pan
                 self.offset += scroll;
@@ -113,27 +115,34 @@ impl GridView {
         let y_start = (bottom_right.y / base_spacing).floor() as i64;
         let y_end = (top_left.y / base_spacing).ceil() as i64;
 
-        let grid_color = Color32::from_gray(60);
-        let axis_color = Color32::from_gray(120);
-        let text_color = Color32::from_gray(160);
-        let label_color = Color32::from_gray(200);
+        let grid_color = COLOR_GRID_LINE;
+        let axis_color = COLOR_GRID_AXIS;
+        let text_color = COLOR_GRID_TEXT;
+        let label_color = COLOR_GRID_LABEL;
 
         for ix in x_start..=x_end {
             let wx = ix as f32 * base_spacing;
             let top = self.world_to_screen(Pos2::new(wx, top_left.y), canvas_rect);
             let bottom = self.world_to_screen(Pos2::new(wx, bottom_right.y), canvas_rect);
             let color = if ix == 0 { axis_color } else { grid_color };
-            let width = if ix == 0 { 2.0 } else { 1.0 };
+            let width = if ix == 0 {
+                GRID_AXIS_WIDTH
+            } else {
+                GRID_LINE_WIDTH
+            };
             painter.line_segment([top, bottom], Stroke::new(width, color));
 
             // Label
             if ix != 0 {
                 let label_pos = self.world_to_screen(Pos2::new(wx, 0.0), canvas_rect);
                 painter.text(
-                    Pos2::new(label_pos.x + 2.0, label_pos.y + 2.0),
+                    Pos2::new(
+                        label_pos.x + GRID_LABEL_OFFSET,
+                        label_pos.y + GRID_LABEL_OFFSET,
+                    ),
                     egui::Align2::LEFT_TOP,
                     format_grid_label(wx),
-                    egui::FontId::proportional(10.0),
+                    egui::FontId::proportional(GRID_LABEL_FONT_SIZE),
                     text_color,
                 );
             }
@@ -144,16 +153,23 @@ impl GridView {
             let left = self.world_to_screen(Pos2::new(top_left.x, wy), canvas_rect);
             let right = self.world_to_screen(Pos2::new(bottom_right.x, wy), canvas_rect);
             let color = if iy == 0 { axis_color } else { grid_color };
-            let width = if iy == 0 { 2.0 } else { 1.0 };
+            let width = if iy == 0 {
+                GRID_AXIS_WIDTH
+            } else {
+                GRID_LINE_WIDTH
+            };
             painter.line_segment([left, right], Stroke::new(width, color));
 
             if iy != 0 {
                 let label_pos = self.world_to_screen(Pos2::new(0.0, wy), canvas_rect);
                 painter.text(
-                    Pos2::new(label_pos.x + 2.0, label_pos.y - 2.0),
+                    Pos2::new(
+                        label_pos.x + GRID_LABEL_OFFSET,
+                        label_pos.y - GRID_LABEL_OFFSET,
+                    ),
                     egui::Align2::LEFT_BOTTOM,
                     format_grid_label(wy),
-                    egui::FontId::proportional(10.0),
+                    egui::FontId::proportional(GRID_LABEL_FONT_SIZE),
                     text_color,
                 );
             }
@@ -161,8 +177,8 @@ impl GridView {
 
         // Axis labels in the bottom-right corner
         if !unit_label.is_empty() {
-            let margin = 8.0;
-            let font = egui::FontId::proportional(12.0);
+            let margin = GRID_AXIS_LABEL_MARGIN;
+            let font = egui::FontId::proportional(GRID_AXIS_LABEL_FONT_SIZE);
             // X-axis label
             painter.text(
                 Pos2::new(canvas_rect.right() - margin, canvas_rect.bottom() - margin),
@@ -294,26 +310,28 @@ impl GridView {
             let is_this_dragging = dragging == Some(edge);
 
             // Start drag on press (not just down) to avoid re-triggering
-            if pointer_pressed && dragging.is_none()
-                && let Some(p) = pointer_pos {
-                    if thumb_rect.expand(4.0).contains(p) {
-                        dragging = Some(edge);
-                    } else if near_edge && track_rect.contains(p) {
-                        // Click on track: jump thumb center to click position
-                        if is_horizontal {
-                            let click_frac = (p.x - canvas_rect.left()) / canvas_rect.width();
-                            let center_frac = (frac_start + frac_end) / 2.0;
-                            let world_dx = (click_frac - center_frac) * content_w;
-                            self.offset.x -= world_dx * self.zoom;
-                        } else {
-                            let click_frac = (p.y - canvas_rect.top()) / canvas_rect.height();
-                            let center_frac = (frac_start + frac_end) / 2.0;
-                            let world_dy = (click_frac - center_frac) * content_h;
-                            self.offset.y -= world_dy * self.zoom;
-                        }
-                        dragging = Some(edge);
+            if pointer_pressed
+                && dragging.is_none()
+                && let Some(p) = pointer_pos
+            {
+                if thumb_rect.expand(4.0).contains(p) {
+                    dragging = Some(edge);
+                } else if near_edge && track_rect.contains(p) {
+                    // Click on track: jump thumb center to click position
+                    if is_horizontal {
+                        let click_frac = (p.x - canvas_rect.left()) / canvas_rect.width();
+                        let center_frac = (frac_start + frac_end) / 2.0;
+                        let world_dx = (click_frac - center_frac) * content_w;
+                        self.offset.x -= world_dx * self.zoom;
+                    } else {
+                        let click_frac = (p.y - canvas_rect.top()) / canvas_rect.height();
+                        let center_frac = (frac_start + frac_end) / 2.0;
+                        let world_dy = (click_frac - center_frac) * content_h;
+                        self.offset.y -= world_dy * self.zoom;
                     }
+                    dragging = Some(edge);
                 }
+            }
 
             // Apply drag delta
             if is_this_dragging {
@@ -433,7 +451,7 @@ impl ScrollbarEdge {
 }
 
 fn compute_grid_spacing(zoom: f32) -> f32 {
-    let target_pixels = 80.0;
+    let target_pixels = GRID_TARGET_PIXEL_SPACING;
     let raw = target_pixels / zoom;
     let magnitude = 10.0_f32.powf(raw.log10().floor());
     let residual = raw / magnitude;

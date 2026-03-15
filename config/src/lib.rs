@@ -105,19 +105,20 @@ pub fn extract_module_info(
         if let Some(toml::Value::Table(nodes)) = val.get("nodes") {
             for (name, node_val) in nodes {
                 if let toml::Value::Table(node_tbl) = node_val
-                    && let Some(profile_val) = node_tbl.get("profile") {
-                        let profiles = match profile_val {
-                            toml::Value::String(s) => vec![s.clone()],
-                            toml::Value::Array(arr) => arr
-                                .iter()
-                                .filter_map(|v| v.as_str().map(String::from))
-                                .collect(),
-                            _ => Vec::new(),
-                        };
-                        if !profiles.is_empty() {
-                            node_profiles.insert(name.clone(), profiles);
-                        }
+                    && let Some(profile_val) = node_tbl.get("profile")
+                {
+                    let profiles = match profile_val {
+                        toml::Value::String(s) => vec![s.clone()],
+                        toml::Value::Array(arr) => arr
+                            .iter()
+                            .filter_map(|v| v.as_str().map(String::from))
+                            .collect(),
+                        _ => Vec::new(),
+                    };
+                    if !profiles.is_empty() {
+                        node_profiles.insert(name.clone(), profiles);
                     }
+                }
             }
         }
     }

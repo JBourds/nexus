@@ -27,8 +27,13 @@ pub(crate) trait ValidateUnit: Sized {
             return Ok(v);
         }
         let lower = val.0.to_ascii_lowercase();
-        Self::from_lowercase(&lower)
-            .ok_or_else(|| anyhow::anyhow!("Expected a valid {} but found \"{}\"", Self::unit_kind(), val.0))
+        Self::from_lowercase(&lower).ok_or_else(|| {
+            anyhow::anyhow!(
+                "Expected a valid {} but found \"{}\"",
+                Self::unit_kind(),
+                val.0
+            )
+        })
     }
 }
 
@@ -42,7 +47,9 @@ impl ValidateUnit for ClockUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "clock unit" }
+    fn unit_kind() -> &'static str {
+        "clock unit"
+    }
 }
 
 impl DataUnit {
@@ -55,7 +62,10 @@ impl DataUnit {
             "gigabytes" | "gigabyte" | "gb" => Ok(Self::Gigabyte),
             // Case-sensitive single-char: "B" = bytes
             _ if val.0 == "B" => Ok(Self::Byte),
-            _ => bail!("Expected a valid byte-aligned data unit but found \"{}\"", val.0),
+            _ => bail!(
+                "Expected a valid byte-aligned data unit but found \"{}\"",
+                val.0
+            ),
         }
     }
 }
@@ -89,7 +99,9 @@ impl ValidateUnit for DataUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "data unit" }
+    fn unit_kind() -> &'static str {
+        "data unit"
+    }
 }
 
 impl ValidateUnit for EnergyUnit {
@@ -107,7 +119,9 @@ impl ValidateUnit for EnergyUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "energy unit" }
+    fn unit_kind() -> &'static str {
+        "energy unit"
+    }
 }
 
 impl ValidateUnit for PowerUnit {
@@ -136,7 +150,9 @@ impl ValidateUnit for PowerUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "power unit" }
+    fn unit_kind() -> &'static str {
+        "power unit"
+    }
 }
 
 impl ValidateUnit for TimeUnit {
@@ -151,7 +167,9 @@ impl ValidateUnit for TimeUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "time unit" }
+    fn unit_kind() -> &'static str {
+        "time unit"
+    }
 }
 
 impl ValidateUnit for DistanceUnit {
@@ -164,7 +182,9 @@ impl ValidateUnit for DistanceUnit {
             _ => None,
         }
     }
-    fn unit_kind() -> &'static str { "distance unit" }
+    fn unit_kind() -> &'static str {
+        "distance unit"
+    }
 }
 
 /// Validate an optional field, returning the default on `None`.
@@ -198,18 +218,36 @@ mod tests {
     // ClockUnit
     #[test]
     fn clock_lowercase() {
-        assert!(matches!(ClockUnit::validate(u("hertz")).unwrap(), ClockUnit::Hertz));
-        assert!(matches!(ClockUnit::validate(u("kilohertz")).unwrap(), ClockUnit::Kilohertz));
+        assert!(matches!(
+            ClockUnit::validate(u("hertz")).unwrap(),
+            ClockUnit::Hertz
+        ));
+        assert!(matches!(
+            ClockUnit::validate(u("kilohertz")).unwrap(),
+            ClockUnit::Kilohertz
+        ));
     }
     #[test]
     fn clock_abbrev() {
-        assert!(matches!(ClockUnit::validate(u("Hz")).unwrap(), ClockUnit::Hertz));
-        assert!(matches!(ClockUnit::validate(u("GHz")).unwrap(), ClockUnit::Gigahertz));
+        assert!(matches!(
+            ClockUnit::validate(u("Hz")).unwrap(),
+            ClockUnit::Hertz
+        ));
+        assert!(matches!(
+            ClockUnit::validate(u("GHz")).unwrap(),
+            ClockUnit::Gigahertz
+        ));
     }
     #[test]
     fn clock_mixed_case() {
-        assert!(matches!(ClockUnit::validate(u("HERTZ")).unwrap(), ClockUnit::Hertz));
-        assert!(matches!(ClockUnit::validate(u("Megahertz")).unwrap(), ClockUnit::Megahertz));
+        assert!(matches!(
+            ClockUnit::validate(u("HERTZ")).unwrap(),
+            ClockUnit::Hertz
+        ));
+        assert!(matches!(
+            ClockUnit::validate(u("Megahertz")).unwrap(),
+            ClockUnit::Megahertz
+        ));
     }
     #[test]
     fn clock_unknown() {
@@ -219,23 +257,53 @@ mod tests {
     // DataUnit
     #[test]
     fn data_full_names() {
-        assert!(matches!(DataUnit::validate(u("bits")).unwrap(), DataUnit::Bit));
-        assert!(matches!(DataUnit::validate(u("bytes")).unwrap(), DataUnit::Byte));
-        assert!(matches!(DataUnit::validate(u("kilobits")).unwrap(), DataUnit::Kilobit));
-        assert!(matches!(DataUnit::validate(u("megabytes")).unwrap(), DataUnit::Megabyte));
+        assert!(matches!(
+            DataUnit::validate(u("bits")).unwrap(),
+            DataUnit::Bit
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("bytes")).unwrap(),
+            DataUnit::Byte
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("kilobits")).unwrap(),
+            DataUnit::Kilobit
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("megabytes")).unwrap(),
+            DataUnit::Megabyte
+        ));
     }
     #[test]
     fn data_case_sensitive_abbrev() {
         assert!(matches!(DataUnit::validate(u("b")).unwrap(), DataUnit::Bit));
-        assert!(matches!(DataUnit::validate(u("B")).unwrap(), DataUnit::Byte));
-        assert!(matches!(DataUnit::validate(u("kb")).unwrap(), DataUnit::Kilobit));
-        assert!(matches!(DataUnit::validate(u("kB")).unwrap(), DataUnit::Kilobyte));
-        assert!(matches!(DataUnit::validate(u("MB")).unwrap(), DataUnit::Megabyte));
+        assert!(matches!(
+            DataUnit::validate(u("B")).unwrap(),
+            DataUnit::Byte
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("kb")).unwrap(),
+            DataUnit::Kilobit
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("kB")).unwrap(),
+            DataUnit::Kilobyte
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("MB")).unwrap(),
+            DataUnit::Megabyte
+        ));
     }
     #[test]
     fn data_mixed_case() {
-        assert!(matches!(DataUnit::validate(u("BITS")).unwrap(), DataUnit::Bit));
-        assert!(matches!(DataUnit::validate(u("Megabyte")).unwrap(), DataUnit::Megabyte));
+        assert!(matches!(
+            DataUnit::validate(u("BITS")).unwrap(),
+            DataUnit::Bit
+        ));
+        assert!(matches!(
+            DataUnit::validate(u("Megabyte")).unwrap(),
+            DataUnit::Megabyte
+        ));
     }
     #[test]
     fn data_unknown() {
@@ -245,49 +313,94 @@ mod tests {
     // TimeUnit
     #[test]
     fn time_full_names() {
-        assert!(matches!(TimeUnit::validate(u("seconds")).unwrap(), TimeUnit::Seconds));
-        assert!(matches!(TimeUnit::validate(u("microseconds")).unwrap(), TimeUnit::Microseconds));
+        assert!(matches!(
+            TimeUnit::validate(u("seconds")).unwrap(),
+            TimeUnit::Seconds
+        ));
+        assert!(matches!(
+            TimeUnit::validate(u("microseconds")).unwrap(),
+            TimeUnit::Microseconds
+        ));
     }
     #[test]
     fn time_abbrevs() {
-        assert!(matches!(TimeUnit::validate(u("ms")).unwrap(), TimeUnit::Milliseconds));
-        assert!(matches!(TimeUnit::validate(u("ns")).unwrap(), TimeUnit::Nanoseconds));
+        assert!(matches!(
+            TimeUnit::validate(u("ms")).unwrap(),
+            TimeUnit::Milliseconds
+        ));
+        assert!(matches!(
+            TimeUnit::validate(u("ns")).unwrap(),
+            TimeUnit::Nanoseconds
+        ));
     }
     #[test]
     fn time_case_insensitive() {
-        assert!(matches!(TimeUnit::validate(u("HOURS")).unwrap(), TimeUnit::Hours));
+        assert!(matches!(
+            TimeUnit::validate(u("HOURS")).unwrap(),
+            TimeUnit::Hours
+        ));
     }
 
     // DistanceUnit
     #[test]
     fn distance_names() {
-        assert!(matches!(DistanceUnit::validate(u("meters")).unwrap(), DistanceUnit::Meters));
+        assert!(matches!(
+            DistanceUnit::validate(u("meters")).unwrap(),
+            DistanceUnit::Meters
+        ));
     }
     #[test]
     fn distance_abbrevs() {
-        assert!(matches!(DistanceUnit::validate(u("km")).unwrap(), DistanceUnit::Kilometers));
-        assert!(matches!(DistanceUnit::validate(u("mm")).unwrap(), DistanceUnit::Millimeters));
+        assert!(matches!(
+            DistanceUnit::validate(u("km")).unwrap(),
+            DistanceUnit::Kilometers
+        ));
+        assert!(matches!(
+            DistanceUnit::validate(u("mm")).unwrap(),
+            DistanceUnit::Millimeters
+        ));
     }
     #[test]
     fn distance_case_insensitive() {
-        assert!(matches!(DistanceUnit::validate(u("METERS")).unwrap(), DistanceUnit::Meters));
+        assert!(matches!(
+            DistanceUnit::validate(u("METERS")).unwrap(),
+            DistanceUnit::Meters
+        ));
     }
 
     // EnergyUnit
     #[test]
     fn energy_joules() {
-        assert!(matches!(EnergyUnit::validate(u("nanojoule")).unwrap(), EnergyUnit::NanoJoule));
-        assert!(matches!(EnergyUnit::validate(u("millijoules")).unwrap(), EnergyUnit::MilliJoule));
-        assert!(matches!(EnergyUnit::validate(u("joule")).unwrap(), EnergyUnit::Joule));
+        assert!(matches!(
+            EnergyUnit::validate(u("nanojoule")).unwrap(),
+            EnergyUnit::NanoJoule
+        ));
+        assert!(matches!(
+            EnergyUnit::validate(u("millijoules")).unwrap(),
+            EnergyUnit::MilliJoule
+        ));
+        assert!(matches!(
+            EnergyUnit::validate(u("joule")).unwrap(),
+            EnergyUnit::Joule
+        ));
     }
     #[test]
     fn energy_watt_hours() {
-        assert!(matches!(EnergyUnit::validate(u("watthour")).unwrap(), EnergyUnit::WattHour));
-        assert!(matches!(EnergyUnit::validate(u("kwh")).unwrap(), EnergyUnit::KiloWattHour));
+        assert!(matches!(
+            EnergyUnit::validate(u("watthour")).unwrap(),
+            EnergyUnit::WattHour
+        ));
+        assert!(matches!(
+            EnergyUnit::validate(u("kwh")).unwrap(),
+            EnergyUnit::KiloWattHour
+        ));
     }
     #[test]
     fn energy_case_insensitive() {
-        assert!(matches!(EnergyUnit::validate(u("NANOJOULE")).unwrap(), EnergyUnit::NanoJoule));
+        assert!(matches!(
+            EnergyUnit::validate(u("NANOJOULE")).unwrap(),
+            EnergyUnit::NanoJoule
+        ));
     }
     #[test]
     fn energy_unknown() {
@@ -297,23 +410,47 @@ mod tests {
     // PowerUnit
     #[test]
     fn power_si_abbrev() {
-        assert!(matches!(PowerUnit::validate(u("mW")).unwrap(), PowerUnit::MilliWatt));
-        assert!(matches!(PowerUnit::validate(u("MW")).unwrap(), PowerUnit::MegaWatt));
-        assert!(matches!(PowerUnit::validate(u("W")).unwrap(), PowerUnit::Watt));
+        assert!(matches!(
+            PowerUnit::validate(u("mW")).unwrap(),
+            PowerUnit::MilliWatt
+        ));
+        assert!(matches!(
+            PowerUnit::validate(u("MW")).unwrap(),
+            PowerUnit::MegaWatt
+        ));
+        assert!(matches!(
+            PowerUnit::validate(u("W")).unwrap(),
+            PowerUnit::Watt
+        ));
     }
     #[test]
     fn power_full_names() {
-        assert!(matches!(PowerUnit::validate(u("milliwatt")).unwrap(), PowerUnit::MilliWatt));
-        assert!(matches!(PowerUnit::validate(u("megawatts")).unwrap(), PowerUnit::MegaWatt));
+        assert!(matches!(
+            PowerUnit::validate(u("milliwatt")).unwrap(),
+            PowerUnit::MilliWatt
+        ));
+        assert!(matches!(
+            PowerUnit::validate(u("megawatts")).unwrap(),
+            PowerUnit::MegaWatt
+        ));
     }
     #[test]
     fn power_case_insensitive() {
-        assert!(matches!(PowerUnit::validate(u("MILLIWATT")).unwrap(), PowerUnit::MilliWatt));
-        assert!(matches!(PowerUnit::validate(u("Watt")).unwrap(), PowerUnit::Watt));
+        assert!(matches!(
+            PowerUnit::validate(u("MILLIWATT")).unwrap(),
+            PowerUnit::MilliWatt
+        ));
+        assert!(matches!(
+            PowerUnit::validate(u("Watt")).unwrap(),
+            PowerUnit::Watt
+        ));
     }
     #[test]
     fn power_lowercase_mw_is_milliwatt() {
-        assert!(matches!(PowerUnit::validate(u("mw")).unwrap(), PowerUnit::MilliWatt));
+        assert!(matches!(
+            PowerUnit::validate(u("mw")).unwrap(),
+            PowerUnit::MilliWatt
+        ));
     }
     #[test]
     fn power_unknown() {

@@ -1,7 +1,9 @@
 use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
+use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -20,7 +22,7 @@ use runner::cli::RunCmd;
 use trace::format::TraceHeader;
 use trace::writer::TraceWriter;
 
-use crate::sim::bridge::{GuiEvent, ReloadableSimLayer, SimSinks};
+use crate::sim::bridge::{GuiEvent, OutputStream, ReloadableSimLayer, SimSinks};
 use crate::sim::controller::SimController;
 
 /// Global sinks handle, initialised once on first simulation launch.
@@ -36,13 +38,13 @@ fn ensure_global_subscriber() -> SimSinks {
         let sim_filter = filter::filter_fn(|metadata| {
             matches!(
                 metadata.target(),
-                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion" | "timestep"
             )
         });
         let fmt_filter = filter::filter_fn(|metadata| {
             !matches!(
                 metadata.target(),
-                "tx" | "rx" | "drop" | "battery" | "movement" | "motion"
+                "tx" | "rx" | "drop" | "battery" | "movement" | "motion" | "timestep"
             )
         });
 
@@ -147,7 +149,13 @@ fn run_simulation(
             names.sort();
             names
                 .iter()
-                .map(|n| sim.nodes[n].energy.charge.as_ref().map(|c| c.unit.to_nj(c.max)))
+                .map(|n| {
+                    sim.nodes[n]
+                        .energy
+                        .charge
+                        .as_ref()
+                        .map(|c| c.unit.to_nj(c.max))
+                })
                 .collect()
         },
     };
@@ -156,22 +164,35 @@ fn run_simulation(
         TraceWriter::create(&trace_path, &header).context("failed to create trace writer")?;
 
     // Install sinks for this simulation run.
-    sinks.install(gui_tx, writer);
+    sinks.install(gui_tx.clone(), writer);
 
-    run_inner(sim, fs_root, abort, pause, time_dilation)
+    run_inner(sim, root, fs_root, gui_tx, abort, pause, time_dilation)
 }
 
 fn run_inner(
     sim: ast::Simulation,
+    sim_dir: PathBuf,
     fs_root: Option<PathBuf>,
+    gui_tx: Sender<GuiEvent>,
     abort: Arc<AtomicBool>,
     pause: Arc<AtomicBool>,
     time_dilation: Arc<AtomicU64>,
 ) -> Result<()> {
     let _ = ctrlc::set_handler(|| {});
 
+    let _ = gui_tx.send(GuiEvent::BuildStarted);
     runner::build(&sim)?;
-    let runc = runner::run(&sim)?;
+    let _ = gui_tx.send(GuiEvent::BuildComplete);
+    let mut runc = runner::run(&sim)?;
+
+    // Freeze all processes so they don't try to access FUSE files before
+    // the filesystem is mounted.
+    runc.cgroups.freeze_nodes();
+
+    // Take stdout/stderr from child processes before the kernel consumes the
+    // handles. Spawn per-stream reader threads that send lines to the GUI and
+    // write them to per-node files in the simulation output directory.
+    let reader_threads = spawn_output_readers(&mut runc.handles, &sim_dir, &gui_tx);
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
     let (remap_tx, remap_rx) = std::sync::mpsc::channel();
@@ -188,24 +209,99 @@ fn run_inner(
         .mount()
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
-    let kernel = KernelBuilder::new(
-        sim,
-        runc,
-        file_handles,
-        rx,
-        tx,
-        remap_tx,
-    )
-    .abort_flag(abort)
-    .pause_flag(pause)
-    .time_dilation(time_dilation)
-    .build()?;
-    let _protocol_handles = kernel.run(RunCmd::Simulate {
+    // FUSE is mounted; unfreeze processes so they can access their files.
+    runc.cgroups.unfreeze_nodes();
+
+    let kernel = KernelBuilder::new(sim, runc, file_handles, rx, tx, remap_tx)
+        .abort_flag(abort)
+        .pause_flag(pause)
+        .time_dilation(time_dilation)
+        .build()?;
+    let protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;
 
+    // Kill processes first so their pipes close, unblocking reader threads.
+    for handle in protocol_handles {
+        let _ = handle.finish();
+    }
+
+    // Now join reader threads (they will see EOF and exit).
+    for thread in reader_threads {
+        let _ = thread.join();
+    }
+
     drop(sess);
     Ok(())
+}
+
+/// Take stdout/stderr from each child process and spawn reader threads that
+/// send lines to the GUI and write them to per-node files in `sim_dir`.
+fn spawn_output_readers(
+    handles: &mut [ProtocolHandle],
+    sim_dir: &Path,
+    gui_tx: &Sender<GuiEvent>,
+) -> Vec<JoinHandle<()>> {
+    let mut threads = Vec::new();
+
+    for handle in handles.iter_mut() {
+        let process = match handle.process.as_mut() {
+            Some(p) => p,
+            None => continue,
+        };
+        let node = handle.node.clone();
+        let protocol = handle.protocol.clone();
+
+        // Stdout reader
+        if let Some(stdout) = process.stdout.take() {
+            let tx = gui_tx.clone();
+            let node = node.clone();
+            let protocol = protocol.clone();
+            let path = sim_dir.join(format!("{node}.stdout.txt"));
+            threads.push(std::thread::spawn(move || {
+                read_stream(stdout, &path, &tx, &node, &protocol, OutputStream::Stdout);
+            }));
+        }
+
+        // Stderr reader
+        if let Some(stderr) = process.stderr.take() {
+            let tx = gui_tx.clone();
+            let node = node.clone();
+            let protocol = protocol.clone();
+            let path = sim_dir.join(format!("{node}.stderr.txt"));
+            threads.push(std::thread::spawn(move || {
+                read_stream(stderr, &path, &tx, &node, &protocol, OutputStream::Stderr);
+            }));
+        }
+    }
+
+    threads
+}
+
+/// Read lines from a stream, writing each to a file and sending to the GUI.
+fn read_stream<R: std::io::Read>(
+    stream: R,
+    file_path: &Path,
+    gui_tx: &Sender<GuiEvent>,
+    node: &str,
+    protocol: &str,
+    output_stream: OutputStream,
+) {
+    let reader = BufReader::new(stream);
+    let mut file = std::fs::File::create(file_path).ok();
+
+    for line in reader.lines() {
+        let Ok(line) = line else { break };
+        if let Some(ref mut f) = file {
+            let _ = writeln!(f, "{line}");
+        }
+        let _ = gui_tx.send(GuiEvent::ProcessOutputLine {
+            node: node.to_string(),
+            protocol: protocol.to_string(),
+            stream: output_stream,
+            line,
+        });
+    }
 }
 
 fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {

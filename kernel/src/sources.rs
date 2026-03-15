@@ -121,8 +121,9 @@ impl Source {
         if next_log.as_ref().is_none_or(|rec| rec.timestep <= ts) {
             // Queue the previously peeked record if it's due.
             if let Some(rec) = next_log.take() {
+                let mid = router.alloc_msg_id();
                 router
-                    .queue_message(NodeIdx(rec.node), ChannelIdx(rec.channel), rec.data)
+                    .queue_message(NodeIdx(rec.node), ChannelIdx(rec.channel), rec.data, mid)
                     .map_err(SourceError::RouterError)?;
             }
 
@@ -147,9 +148,10 @@ impl Source {
                         data,
                         ..
                     })) => {
-                        if let Err(e) =
-                            router.queue_message(NodeIdx(node), ChannelIdx(channel), data)
-                        {
+                        if let Err(e) = {
+                            let mid = router.alloc_msg_id();
+                            router.queue_message(NodeIdx(node), ChannelIdx(channel), data, mid)
+                        } {
                             break Err(SourceError::RouterError(e));
                         }
                     }
@@ -183,13 +185,16 @@ impl Source {
                     src_node,
                     channel,
                     data,
+                    ..
                 } = rec.event
             {
+                let mid = router.alloc_msg_id();
                 router
                     .queue_message(
                         NodeIdx(src_node as usize),
                         ChannelIdx(channel as usize),
                         data,
+                        mid,
                     )
                     .map_err(SourceError::RouterError)?;
             }
@@ -209,13 +214,16 @@ impl Source {
                             src_node,
                             channel,
                             data,
+                            ..
                         } = rec.event
                         {
+                            let mid = router.alloc_msg_id();
                             router
                                 .queue_message(
                                     NodeIdx(src_node as usize),
                                     ChannelIdx(channel as usize),
                                     data,
+                                    mid,
                                 )
                                 .map_err(SourceError::RouterError)?;
                         }
