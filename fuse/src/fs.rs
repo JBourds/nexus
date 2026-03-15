@@ -73,6 +73,9 @@ pub struct NexusFs {
     /// Per-instance inode counter (must not be static; the GUI reuses
     /// the process across simulation runs).
     inode_gen: AtomicU64,
+    /// Cache mapping thread IDs to their thread group ID (process ID).
+    /// Allows pthreads to access the same FUSE files as the main thread.
+    tgid_cache: HashMap<u32, u32>,
 }
 
 impl NexusFs {
@@ -109,6 +112,19 @@ impl NexusFs {
 
     pub fn root(&self) -> &PathBuf {
         &self.root
+    }
+
+    /// Resolve a thread ID to its thread group ID (TGID / process ID).
+    /// The TGID is what `Child::id()` returns for the main thread and is
+    /// the key used in `self.buffers`. Pthreads have distinct TIDs but
+    /// share their parent's TGID, so this lets them access the same files.
+    fn resolve_tgid(&mut self, tid: u32) -> u32 {
+        if let Some(&tgid) = self.tgid_cache.get(&tid) {
+            return tgid;
+        }
+        let tgid = read_tgid(tid).unwrap_or(tid);
+        self.tgid_cache.insert(tid, tgid);
+        tgid
     }
 
     fn get_or_make_inode(&mut self, name: String) -> u64 {
@@ -269,6 +285,7 @@ impl Default for NexusFs {
             kernel_side: Some((kernel_tx, kernel_rx)),
             remap_rx: mpsc::channel().1,
             inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
+            tgid_cache: HashMap::new(),
         }
     }
 }
@@ -299,12 +316,13 @@ impl Filesystem for NexusFs {
     #[instrument(skip_all)]
     fn lookup(&mut self, req: &Request, parent: u64, name: &OsStr, reply: ReplyEntry) {
         self.apply_pending_remaps();
+        let pid = self.resolve_tgid(req.pid());
         if parent != FUSE_ROOT_ID {
             reply.error(ENOENT);
             return;
         }
         let file = name.to_string_lossy().into_owned();
-        if let Some(file) = self.buffers.get(&(req.pid(), file)) {
+        if let Some(file) = self.buffers.get(&(pid, file)) {
             reply.entry(&TTL, &file.attr, 0);
         } else {
             reply.error(ENOENT);
@@ -314,6 +332,7 @@ impl Filesystem for NexusFs {
     #[instrument(skip_all)]
     fn getattr(&mut self, req: &Request, ino: u64, _fh: Option<u64>, reply: ReplyAttr) {
         self.apply_pending_remaps();
+        let pid = self.resolve_tgid(req.pid());
         match ino {
             FUSE_ROOT_ID => reply.attr(&TTL, &self.attr),
             _ => {
@@ -322,7 +341,7 @@ impl Filesystem for NexusFs {
                     reply.error(ENOENT);
                     return;
                 };
-                if let Some(file) = self.buffers.get(&(req.pid(), name.clone())) {
+                if let Some(file) = self.buffers.get(&(pid, name.clone())) {
                     reply.attr(&TTL, &file.attr);
                 } else {
                     reply.error(EACCES);
@@ -334,6 +353,7 @@ impl Filesystem for NexusFs {
     #[instrument(skip_all)]
     fn open(&mut self, req: &Request<'_>, ino: u64, flags: i32, reply: ReplyOpen) {
         self.apply_pending_remaps();
+        let pid = self.resolve_tgid(req.pid());
         let index = inode_to_index(ino);
         let Some(file) = self.files.get(index) else {
             reply.error(ENOENT);
@@ -341,7 +361,7 @@ impl Filesystem for NexusFs {
         };
 
         // Key files by the process and its channel name
-        let key = (req.pid(), file.clone());
+        let key = (pid, file.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
             return;
@@ -381,6 +401,7 @@ impl Filesystem for NexusFs {
         reply: ReplyData,
     ) {
         self.apply_pending_remaps();
+        let pid = self.resolve_tgid(req.pid());
         if ino == FUSE_ROOT_ID {
             reply.error(EISDIR);
             return;
@@ -391,7 +412,7 @@ impl Filesystem for NexusFs {
             return;
         };
 
-        let key = (req.pid(), filename.clone());
+        let key = (pid, filename.clone());
         self.read_message(reply, size as usize, key);
     }
 
@@ -409,6 +430,7 @@ impl Filesystem for NexusFs {
         reply: ReplyWrite,
     ) {
         self.apply_pending_remaps();
+        let pid = self.resolve_tgid(req.pid());
         if ino == FUSE_ROOT_ID {
             reply.error(EISDIR);
             return;
@@ -419,7 +441,7 @@ impl Filesystem for NexusFs {
             return;
         };
 
-        let key = (req.pid(), file.clone());
+        let key = (pid, file.clone());
         let Some(file) = self.buffers.get(&key) else {
             reply.error(EACCES);
             return;
@@ -492,6 +514,17 @@ fn expand_home(path: &PathBuf) -> PathBuf {
         return home_dir.join(stripped);
     }
     PathBuf::from(path)
+}
+
+/// Read the thread group ID for a given thread ID from /proc.
+fn read_tgid(tid: u32) -> Option<u32> {
+    let status = std::fs::read_to_string(format!("/proc/{tid}/status")).ok()?;
+    for line in status.lines() {
+        if let Some(val) = line.strip_prefix("Tgid:") {
+            return val.trim().parse().ok();
+        }
+    }
+    None
 }
 
 fn inode_to_index(inode: u64) -> usize {
