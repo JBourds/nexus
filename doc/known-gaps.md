@@ -4,19 +4,19 @@ This document tracks implementation gaps, architectural weaknesses, and
 planned features. It is intended to guide future development work and to
 help contributors understand where the project stands relative to its goals.
 
-Items are ordered roughly by development priority (see also the full
-implementation plan in the project memory).
+Items are ordered roughly by development priority.
 
 ---
 
 ## 1. Energy Framework
 
-**Status: Implemented** (branch: `charge`). See
-[energy-framework.md](energy-framework.md) for full documentation.
+**Status: Implemented.** See [energy-framework.md](energy-framework.md).
 
-Per-node battery tracking with named power states, ambient generation,
-per-channel TX/RX costs, death via cgroup freezer, and configurable restart
-threshold. All accounting in integer nanojoules. 23 kernel tests.
+Per-node battery tracking with named power states, power sources/sinks
+(constant and piecewise-linear), per-channel TX/RX costs, death via cgroup
+freezer, kill-and-respawn restart, and configurable restart threshold. All
+accounting in integer nanojoules. 37 kernel tests + 4 FUSE buffer migration
+tests.
 
 ### Remaining gaps
 
@@ -30,42 +30,73 @@ threshold. All accounting in integer nanojoules. 23 kernel tests.
 
 ## 2. Mobile Nodes
 
-**Priority: High** — Required for position-dependent link quality demos.
+**Status: Implemented.** See [position-control.md](position-control.md).
 
-### What exists
+Full position control with 10 control files under `ctl.pos/` (x, y, z, az,
+el, roll, dx, dy, dz, motion). Four motion patterns (Static, Velocity, Linear,
+Circle). Dynamic RSSI computation from live positions at message queue and
+delivery time. Position and motion events logged to `.nxs` trace files.
+33 kernel tests for motion patterns and position control.
 
-- `ast::Position` stores 3D coordinates + orientation, set at config parse time.
-- `kernel::types::Node` holds `position: ast::Position` but never updates it.
-- `fuse::CONTROL_FILES` includes `ctl.position` as ReadWrite, but no handler
-  is wired up — writes are silently ignored.
-- Routing table (`kernel/router/table.rs`) pre-computes all node-pair RSSI
-  values at startup; this computation becomes stale as nodes move.
+### Remaining gaps
 
-### What is missing
-
-- FUSE write handler for `ctl.position`: parse the position format, emit a
-  `FsMessage::SetPosition` message to the routing server.
-- Routing server: maintain a `positions: Vec<Position>` array, update it on
-  `SetPosition` events, and compute RSSI on-the-fly at message enqueue time
-  rather than from the pre-computed table.
-- FUSE read handler for `ctl.position`: return current position from the
-  routing server via a query message.
-
-### Key design challenges
-
-- **Routing table redesign**: The current table pre-computes the full RSSI
-  matrix. With mobile nodes, this must be split into: (a) a static
-  publisher/subscriber graph (unchanged), and (b) per-message RSSI computed
-  dynamically from current positions.
-- **Coordinate system consistency**: Positions are 3D + orientation. Simpler
-  protocols may only use 2D. A 2D shorthand deserves consideration.
-- **Concurrent writes**: If multiple protocols on the same node write
-  `ctl.position` concurrently, last-write wins is simplest; document this
-  constraint.
+- **2D shorthand** — no convenience for 2D-only simulations; Z must always
+  be specified (defaults to 0).
+- **Terrain/obstacles** — position affects only free-space distance; no
+  support for line-of-sight obstructions.
 
 ---
 
-## 3. Memory Limits Not Enforced
+## 3. Trace Format
+
+**Status: Implemented.** See [trace-format.md](trace-format.md).
+
+The `.nxs` binary trace format includes a header (node names, channel names,
+timestep count, max energy per node) and six event types (MessageSent,
+MessageRecv, MessageDropped, PositionUpdate, EnergyUpdate, MotionUpdate).
+The `nexus parse` command supports filtering by event type, node, channel,
+and timestep range, with text/JSON/JSON Lines output and external adapter
+support.
+
+### Remaining gaps
+
+- **No version header** — the format has no magic bytes or version field,
+  making forward/backward compatibility fragile.
+- **No index file** — seeking by timestamp requires a full scan; an `.idx`
+  file with byte offsets per timestep boundary would enable O(1) GUI scrubbing.
+
+---
+
+## 4. Module System
+
+**Status: Implemented.** See [modules.md](modules.md).
+
+24 standard library modules covering batteries, boards, energy harvesters,
+LoRa, Wi-Fi, and wired connections. `use` directive for imports, node profiles
+for reusable hardware templates, multi-profile layering with merge semantics.
+Three CLI subcommands (`modules list`, `modules show`, `modules verify`).
+
+---
+
+## 5. GUI
+
+**Status: Implemented.** See [gui.md](gui.md).
+
+Native desktop application (egui/eframe) with four modes: Home, Config Editor,
+Live Simulation, and Replay. Config editor with form-based TOML editing and
+module browser. Live simulation with real-time event streaming, grid
+visualization, and speed control. Replay with timestep scrubbing and state
+reconstruction from `.nxs` trace files.
+
+### Remaining gaps
+
+- **Web GUI** — a browser-based version would be useful for demos and remote
+  access. Would require the trace format to be fully stabilized (version
+  header + index).
+
+---
+
+## 6. Memory Limits Not Enforced
 
 **Priority: Medium**
 
@@ -80,50 +111,22 @@ controller is enabled on the host.
 
 ---
 
-## 4. Trace File Format Is Unstable
-
-**Priority: Medium** — Blocks GUI development and long-term replay
-compatibility.
-
-### Current state
-
-- `kernel/log.rs` writes TX and RX events as separate binary files using
-  `bincode` with no version header.
-- No index file, so seeking by timestamp requires a full scan.
-- TX and RX logs are separate files.
-
-### Needed
-
-A single, versioned trace format with:
-
-- Magic bytes + version header.
-- A `TraceHeader` containing config hash, start time, timestep size, node/channel name lists.
-- `TraceRecord { timestep, event }` where `event` covers:
-  `MessageSent`, `MessageRecv`, `MessageDropped`, `NodeDied`,
-  `PositionUpdate`, `EnergyUpdate`.
-- A separate `.idx` file with byte offsets per timestep boundary, enabling
-  O(1) seek for GUI scrubbing.
-
-Until this is stabilized, the `replay` command and any future GUI tooling
-cannot be built against a stable contract.
-
----
-
-## 5. Test Coverage Incomplete
+## 7. Test Coverage Incomplete
 
 **Priority: Medium** — Tests exist for config parsing/validation (21 tests),
-energy accounting (23 tests), and position control (33 tests on mobile-nodes
-branch). Gaps remain.
+energy accounting (37 tests), position control (33 tests), and FUSE buffer
+migration (4 tests). Gaps remain.
 
 ### What exists
 
 1. **Config unit tests** — Accept/reject fixture tests for TOML parsing and
    validation, including energy and position config.
-2. **Energy accounting tests** — 23 tests driving `RoutingServer` directly
+2. **Energy accounting tests** — 37 tests driving `RoutingServer` directly
    via `mpsc` channels (no FUSE). Covers drain, ambient, death/restart,
-   TX/RX costs, control files, unit conversion.
-3. **Position control tests** — 33 tests (mobile-nodes branch) for motion
-   patterns, position control file parsing, and log round-trips.
+   TX/RX costs, control files, unit conversion, PID remapping.
+3. **Position control tests** — 33 tests for motion patterns, position
+   control file parsing, and log round-trips.
+4. **FUSE tests** — 4 tests for buffer migration during PID remapping.
 
 ### Still needed
 
@@ -145,45 +148,14 @@ No `.github/workflows/` exists. Should add:
 
 ---
 
-## 6. Fuzz Mode Is a Skeleton
+## 8. Fuzz Mode Is a Skeleton
 
-**Priority: Low** — The `fuzz` concept is mentioned in design notes but
-has no implementation beyond a placeholder.
+**Priority: Low** — The `fuzz` subcommand exists in the CLI but has no
+implementation beyond a `todo!()` placeholder.
 
 The original design intended a fuzz mode where the simulator would inject
 adversarial timing and message reordering to find protocol bugs. This is
 not yet designed in detail or implemented.
-
----
-
-## 7. No Precanned Link Presets
-
-**Priority: Low**
-
-Every simulation must define link parameters from scratch. Common wireless
-standards (LoRa SF7–SF12, 802.11, Bluetooth LE) require looking up and
-transcribing physical layer parameters.
-
-**Proposed**: A `preset = "lora_sf7"` field on `[channels.X]` that expands
-to a full link definition. Individual fields can still be overridden.
-Presets would be Rust constants or a built-in TOML file compiled via
-`include_str!()`. Versioning presets is necessary for config reproducibility.
-
----
-
-## 8. No Web GUI
-
-**Priority: Low** — Useful for demos and thesis figures.
-
-No visualization exists. The proposed design (in implementation-plan.md) is
-a Leptos-based web app with:
-
-- Live mode: tail a running simulation's trace file via WebSocket.
-- Replay mode: load a complete trace, scrub through time.
-- 2D canvas with nodes, animated message arcs, energy bars.
-- Config editor (drag nodes → generate TOML).
-
-This requires the trace file format to be finalized first (item 4).
 
 ---
 
@@ -195,77 +167,26 @@ Signal attenuation currently uses only distance (Friis/RLGC). There is no
 support for terrain, material obstructions, or non-line-of-sight effects.
 
 **Proposed**: An optional heightmap + material layer. For each sender→receiver
-pair with a link-of-sight question, ray-trace through the heightmap and
+pair with a line-of-sight question, ray-trace through the heightmap and
 accumulate dB attenuation from material types (concrete, foliage, water,
 metal). This additional loss term is passed into the RSSI calculation.
-
-This is a large feature with N² ray trace costs per timestep. Spatial
-caching and bounding-box culling would be required for performance.
-
----
-
-## 10. Routing Table Must Be Reworked for Mobile Nodes
-
-**Priority: Depends on item 2**
-
-The current `kernel/router/table.rs` pre-computes a full RSSI matrix at
-startup. This design assumption pervades the routing server. Once mobile
-nodes are supported, RSSI must be computed at message-enqueue time using
-current positions. The table should be split into:
-
-- **Static**: subscriber/publisher relationships (unchanged across the run).
-- **Dynamic**: per-message RSSI from current position snapshot.
-
-This rework also enables energy-based link quality modulation in the future
-(e.g., adjusting tx power and recomputing RSSI).
-
----
-
-## 11. Case Studies Incomplete
-
-The two thesis case studies are partially implemented.
-
-### Ring Routing (Arduino/ATMega2560 + LoRa)
-
-Code at `/home/jordan/repos/ciroh/UVM-NRT-RoS/embedded_projects/aura/projects/simulated_network`.
-
-| Phase | Status |
-|-------|--------|
-| TDMA link layer | Done |
-| Physical layer stub (channel file I/O) | Done |
-| Clusterhead Announcement | Done |
-| Neighbor Discovery (heartbeat) | Unclear |
-| Clusterhead Joining (slot assignment ACK) | Unclear |
-| Follower/Clusterhead data phases | Unclear |
-
-End-to-end test in Nexus with 5+ nodes needed; hardware validation
-(ATMega2560 flash) needed for thesis.
-
-### LoRaMesher (ESP32 + FreeRTOS)
-
-- FreeRTOS POSIX port needed (available upstream).
-- RadioLib send/receive must be replaced with channel file reads/writes.
-- Multi-hop packet delivery verification in Nexus needed.
-- Hardware validation (ESP32 flash) as stretch goal.
-
-FreeRTOS task priorities may interact adversely with cgroup CPU limits;
-may require tuning time dilation or disabling DVFS.
 
 ---
 
 ## Summary Table
 
-| Gap | Priority | Blocks |
+| Gap | Priority | Status |
 |-----|----------|--------|
-| ~~Energy framework~~ | ~~High~~ | Implemented (branch: `charge`) |
-| Mobile nodes | High | Thesis position demos |
-| Memory limits enforcement | Medium | Resource accuracy |
-| Stable trace format | Medium | GUI, replay long-term |
-| Test coverage gaps + CI | Medium | Developer confidence |
-| Fuzz mode | Low | — |
-| Precanned link presets | Low | Ease of use |
-| Web GUI | Low | Requires stable trace format |
-| Environment simulation | Low | — |
-| Routing table rework | Depends on mobile nodes | Mobile nodes |
-| Ring Routing completion | High | Thesis |
-| LoRaMesher port | Medium | Thesis (secondary) |
+| ~~Energy framework~~ | ~~High~~ | Implemented |
+| ~~Mobile nodes~~ | ~~High~~ | Implemented |
+| ~~Trace format~~ | ~~Medium~~ | Implemented (no version header or index) |
+| ~~Module system~~ | ~~High~~ | Implemented |
+| ~~GUI~~ | ~~Medium~~ | Implemented (desktop; no web) |
+| CPU-proportional energy drain | Medium | Not implemented |
+| Per-byte TX/RX costs | Medium | Not implemented |
+| Memory limits enforcement | Medium | Not implemented |
+| Test coverage gaps + CI | Medium | Partial |
+| Fuzz mode | Low | Skeleton only |
+| Environment simulation | Low | Not planned |
+| Trace version header + index | Medium | Not implemented |
+| Web GUI | Low | Not planned |

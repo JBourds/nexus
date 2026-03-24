@@ -12,7 +12,12 @@ nexus/
 ├── kernel/             discrete-event engine and message routing
 ├── fuse/               FUSE filesystem implementation
 ├── runner/             process execution and cgroup management
-└── cpuutils/           CPU frequency / affinity utilities
+├── cpuutils/           CPU frequency / affinity utilities
+├── trace/              binary trace format parsing and analysis
+├── gui/                native desktop GUI (egui/eframe)
+├── modules/            standard library of reusable config modules
+├── examples/           18 runnable example simulations
+└── doc/                documentation
 ```
 
 ## Crate Reference
@@ -21,13 +26,16 @@ nexus/
 
 **Path:** `cli/src/`
 
-The `cli` crate is the binary entry point. It dispatches three subcommands:
+The `cli` crate is the binary entry point. It dispatches six subcommands:
 
 | Subcommand | Description |
 |------------|-------------|
 | `simulate` | Run a simulation from a TOML config file |
 | `replay` | Replay a completed simulation from binary trace logs |
 | `logs` | Inspect or convert binary log files to CSV |
+| `modules` | List, show, or verify reusable module files |
+| `parse` | Parse and filter `.nxs` binary trace files |
+| `fuzz` | (placeholder) Fuzz testing mode |
 
 **Key files:**
 - `main.rs` — argument parsing, subcommand dispatch, top-level orchestration
@@ -36,6 +44,8 @@ The `cli` crate is the binary entry point. It dispatches three subcommands:
 The `simulate` path performs the full startup sequence: config parse →
 runner build → runner run → FUSE mount → kernel run → collect results.
 
+See [cli-reference.md](cli-reference.md) for complete subcommand documentation.
+
 ---
 
 ### `config` — TOML Parsing and Validation
@@ -43,33 +53,37 @@ runner build → runner run → FUSE mount → kernel run → collect results.
 **Path:** `config/src/`
 
 Parses a TOML simulation file into a typed `Simulation` AST. All user-visible
-types (nodes, channels, links, positions, resources) are defined here.
+types (nodes, channels, links, positions, resources) are defined here. Also
+handles module resolution and profile merging.
 
 **Key files:**
 
 | File | Responsibility |
 |------|---------------|
-| `ast.rs` | All type definitions: `Simulation`, `Node`, `Channel`, `Link`, `Medium`, `Charge`, `PowerRate`, `Position`, `Resources` |
+| `ast.rs` | All type definitions: `Simulation`, `Node`, `Channel`, `Link`, `Medium`, `Charge`, `PowerRate`, `Position`, `Resources`, `NodeProfile` |
 | `parse.rs` | TOML → AST deserialization |
-| `validate.rs` | Cross-field validation (e.g., channel references valid links, node protocols reference valid channels) |
+| `validate.rs` | Cross-field validation (channel references, node protocols, energy config) |
 | `channel.rs` | `ChannelType` helpers: TTL calculation, max buffer size |
 | `medium.rs` | Signal model implementations: `rssi_wireless()` (Friis), `rssi_wired()` (RLGC) |
+| `signal.rs` | Friis free-space path loss and RLGC transmission line models |
 | `time.rs` | Timestep and delay calculations; time unit conversions |
-| `signal_model.rs` | Friis free-space path loss and RLGC models |
 | `resources.rs` | CPU/memory resource parsing and unit handling |
 | `position.rs` | `Position` type: parsing, unit conversions, distance calculation |
 | `units.rs` | Shared unit conversion utilities |
 | `namespace.rs` | Name validation; checks handle uniqueness and naming rules |
+| `module.rs` | Module resolution: `use` directive, stdlib path, NEXUS_MODULE_PATH search |
+| `profile.rs` | Node profile merging: multi-profile layering, user-wins semantics |
+| `serialize.rs` | Config snapshot serialization with CRC32 checksums for replay |
 
 **Key types:**
 
 ```rust
 Simulation {
-    params: Params,
+    params: Params,                              // timestep, seed, root, time_dilation
     channels: HashMap<ChannelHandle, Channel>,
     nodes: HashMap<NodeHandle, Node>,
-    sinks: HashMap<SinkHandle, PowerRate>,    // power sinks (future)
-    sources: HashMap<SourceHandle, PowerRate>, // power sources (future)
+    sinks: HashMap<SinkHandle, PowerRate>,
+    sources: HashMap<SourceHandle, PowerRate>,
 }
 
 Node {
@@ -99,15 +113,17 @@ Link {
 
 **Path:** `kernel/src/`
 
-The core of Nexus. Owns the main simulation loop, message routing, health
-monitoring, and binary log writing.
+The core of Nexus. Owns the main simulation loop, message routing, energy
+accounting, position tracking, health monitoring, and trace log writing.
 
 #### `kernel/src/lib.rs` — `Kernel`
 
 The `Kernel` struct owns two server threads and drives the event loop.
 
 ```rust
-Kernel::new(config, fuse_handles) -> Kernel
+KernelBuilder::new(config, fuse_handles) -> KernelBuilder
+    .time_dilation(arc)     // optional: shared speed control
+    .build() -> Kernel
 Kernel::run() -> Vec<ProtocolSummary>
 ```
 
@@ -115,64 +131,73 @@ Kernel::run() -> Vec<ProtocolSummary>
 
 Runs in a dedicated thread. On each timestep it:
 
-1. Drains all `FsMessage::Write` events (protocol transmissions) from FUSE.
-2. For each write, computes delivery time and applies link simulation (bit
+1. Advances all node positions via active motion patterns.
+2. Performs per-node energy accounting (sources, sinks, power state drain).
+3. Drains all `FsMessage::Write` events (protocol transmissions) from FUSE.
+4. For each write, computes delivery time and applies link simulation (bit
    error injection, packet loss via RSSI expression evaluation).
-3. Drains all `FsMessage::Read` events (protocols waiting for data) from FUSE.
-4. Delivers messages whose simulated delivery time has elapsed by sending
-   `KernelMessage::Exclusive` / `Shared` / `Empty` back to FUSE.
+5. Drains all `FsMessage::Read` events (protocols waiting for data) from FUSE.
+6. Delivers messages whose simulated delivery time has elapsed.
+7. Reports energy events (depleted/recovered nodes) to the main loop.
 
 Key files:
 
 | File | Responsibility |
 |------|---------------|
 | `mod.rs` | `RoutingServer` struct; `serve()` thread loop; `poll()` per timestep |
-| `delivery.rs` | Message delivery logic: TTL expiry, exclusive vs. shared fanout |
+| `delivery.rs` | Message delivery: TTL expiry, exclusive vs. shared fanout, RSSI recomputation |
 | `link_simulation.rs` | Bit error injection, packet loss evaluation, RSSI → probability |
-| `table.rs` | `RoutingTable`: pre-computed at startup; maps (publisher, channel) → subscribers with RSSI |
-| `timectl.rs` | Handles `ctl.time.*` reads (return current sim time) and writes (block until time) |
+| `table.rs` | `RoutingTable`: publisher→subscriber graph with dynamic distance computation |
+| `timectl.rs` | Handles `ctl.time/*` reads/writes and `ctl.elapsed/*` reads |
 | `messages.rs` | `RouterMessage` enum |
+| `energy_tests.rs` | 37 tests for energy accounting, death/restart, TX/RX costs, PID remapping |
 
 The message queue is a `BinaryHeap<(Reverse<Timestep>, seq, Message)>` to
 maintain causal order with deterministic tie-breaking via sequence numbers.
+
+#### `kernel/src/energy.rs` — `EnergyManager`
+
+Per-node battery tracking with power states, sources, sinks, and death/restart
+lifecycle. See [energy-framework.md](energy-framework.md).
+
+#### `kernel/src/types.rs` — Core Types
+
+Defines `NodeIdx`, `ChannelIdx`, `MotionPattern` (Static/Velocity/Linear/Circle),
+`PowerFlowState` (Constant/PiecewiseLinear), `EnergyState`, and `SignalInfo`.
 
 #### `kernel/src/status/` — `StatusServer`
 
 Runs in a dedicated thread. Responsibilities:
 
 - **Health check**: Polls all child process PIDs each timestep to detect
-  premature exits (e.g., a protocol crashed before the simulation ended).
+  premature exits.
 - **Resource update**: Reads host CPU frequency from `/sys/`, recomputes the
   throttle ratio for each protocol, and writes updated `cpu.max` values to
   the cgroup hierarchy.
+- **Node freeze/unfreeze**: Writes to `cgroup.freeze` when nodes deplete
+  or recover energy.
+- **Process respawn**: Kills and respawns protocol processes on energy recovery,
+  producing PID remap pairs for the FUSE filesystem.
 
 Key files:
 
 | File | Responsibility |
 |------|---------------|
-| `mod.rs` | `StatusServer`; CPU freq refresh; periodic tick |
+| `mod.rs` | `StatusServer`; CPU freq refresh; periodic tick; time dilation support |
 | `health.rs` | PID existence checks; premature exit detection |
 | `messages.rs` | `KernelMessage` / `StatusMessage` enums |
 
-#### `kernel/src/log.rs` — Binary Logging
+#### `kernel/src/logging.rs` — Trace Logging
 
-Writes binary TX and RX event logs using `bincode`. Used by the `replay`
-command to reconstruct the exact sequence of message deliveries.
+Emits structured trace events via the `tracing` crate. Events include:
+MessageSent, MessageRecv, MessageDropped, PositionUpdate, EnergyUpdate,
+MotionUpdate. These are captured by either the binary log layer (for `.nxs`
+files) or the GUI bridge layer (for live visualization).
 
 #### `kernel/src/resolver.rs` — Handle Resolution
 
 Converts string-keyed config types to usize-indexed kernel types at startup,
 enabling O(1) lookup in the hot routing path.
-
-```rust
-ResolvedChannels {
-    nodes: Vec<Node>,
-    node_names: Vec<String>,
-    channels: Vec<Channel>,
-    channel_names: Vec<String>,
-    handles: Vec<(PID, NodeHandle, ChannelHandle)>,
-}
-```
 
 ---
 
@@ -181,17 +206,19 @@ ResolvedChannels {
 **Path:** `fuse/src/`
 
 Implements the FUSE filesystem that protocol processes interact with.
-Exposes channel files (one per subscribed/published channel) and control
-files (`ctl.*`) under each protocol's root directory.
+Exposes channel directories (with `channel`, `rssi`, `snr` sub-files) and
+control file directories (`ctl.time/`, `ctl.elapsed/`, `ctl.pos/`) plus
+flat control files (`ctl.energy_left`, `ctl.energy_state`, `ctl.power_flows`)
+under each protocol's root directory.
 
 **Key files:**
 
 | File | Responsibility |
 |------|---------------|
 | `lib.rs` | Public types: `KernelMessage`, `FsMessage`, `NexusFs`, `NexusChannel` |
-| `fs.rs` | FUSE ops: `lookup`, `getattr`, `open`, `read`, `write`, `release`; `CONTROL_FILES` array |
+| `fs.rs` | FUSE ops: `lookup`, `getattr`, `open`, `read`, `write`, `release`; `CONTROL_FILES`, `TIME_SUBFILES`, `ELAPSED_SUBFILES`, `POS_SUBFILES`, `CHANNEL_SUBFILES` arrays |
 | `file.rs` | `NexusFile`: per-PID message buffer; manages queued messages for each subscriber |
-| `channel.rs` | `ChannelMode` enum: distinguishes exclusive vs. shared channel behavior |
+| `channel.rs` | `ChannelMode` enum: ReadOnly, WriteOnly, ReadWrite, ReplayWrites, FuzzWrites |
 | `errors.rs` | `FsError` enum |
 
 **IPC with kernel:**
@@ -202,10 +229,6 @@ The FUSE thread and kernel communicate via two `mpsc` channels:
   message.
 - `KernelMessage` (kernel → FUSE): `Exclusive(Message)`, `Shared(Message)`,
   or `Empty(Message)` to deliver a message or signal no-data.
-
-**CONTROL_FILES** is a static array in `fs.rs` listing all control file
-names and their access modes. The FUSE read/write handlers dispatch on
-filename to the appropriate handler (`timectl.rs` for time files, etc.).
 
 ---
 
@@ -221,9 +244,9 @@ cgroup v2 hierarchy for resource control.
 | File | Responsibility |
 |------|---------------|
 | `lib.rs` | `build()` — compile protocols; `run()` — spawn processes, return `RunController` |
-| `cli.rs` | `RunCmd` enum: build vs. run command definitions |
+| `cli.rs` | `Cli` struct (clap), `RunCmd` enum with all subcommands and flags |
 | `cgroups.rs` | `CgroupController`: create cgroup hierarchy, write `cgroup.procs`, `cpu.weight`, `cpu.max`, `cpu.uclamp.*`, `cgroup.freeze` |
-| `assignment.rs` | `Affinity` (CPU pinning), `Bandwidth` (cpu.max ratio), `Relative` (cpu.weight) computation |
+| `assignment.rs` | `Affinity` (CPU pinning), `Bandwidth` (cpu.max ratio with time dilation), `Relative` (cpu.weight) computation |
 | `errors.rs` | `RunnerError` enum |
 
 **cgroup v2 hierarchy:**
@@ -242,6 +265,60 @@ Control files written per-cgroup: `cgroup.procs`, `cgroup.freeze`,
 **`RunController`** holds references to all cgroup controllers, affinity
 settings, and process handles. The kernel's status server holds a
 `RunController` to update bandwidth on each tick.
+
+---
+
+### `trace` — Trace File Parsing
+
+**Path:** `trace/src/`
+
+Reads and analyzes `.nxs` binary trace files produced by the kernel's logging
+layer. Provides the implementation for the `nexus parse` CLI command.
+
+**Key files:**
+
+| File | Responsibility |
+|------|---------------|
+| `lib.rs` | `TraceHeader`, `TraceEvent` types; trace file reading |
+| `parse.rs` | `run_parse()`: filtering, formatting, and adapter support for the `parse` command |
+
+**Capabilities:**
+- Parse trace headers (node names, channel names, timestep count, max energy)
+- Filter events by type (tx, rx, drop, position, energy, motion)
+- Filter by node name, channel name, and timestep range
+- Output as text, JSON, or JSON Lines
+- Pipe payloads through external adapter commands for decoding
+
+See [trace-format.md](trace-format.md) for format details.
+
+---
+
+### `gui` — Desktop GUI
+
+**Path:** `gui/src/`
+
+Native desktop application built with [egui](https://github.com/emilk/egui)
+and [eframe](https://github.com/emilk/egui/tree/master/crates/eframe).
+
+**Key files:**
+
+| File | Responsibility |
+|------|---------------|
+| `main.rs` | Entry point; constructs `NexusApp` and hands it to eframe |
+| `app.rs` | `NexusApp`: App impl, per-mode rendering, event processing |
+| `state.rs` | `AppMode` enum (Home, ConfigEditor, LiveSimulation, Replay) and all state structs |
+| `config_editor/` | Form-based TOML editor (params, links, channels, nodes) with module browser |
+| `panels/` | Grid, inspector, messages, timeline, and toolbar panels |
+| `render/` | GridView (pan/zoom), node circles, message arcs |
+| `sim/` | `SimController`, `launch_simulation`, kernel thread management |
+
+**Application modes:**
+- **Home**: Splash screen with action buttons
+- **Config Editor**: Form-based config editing with live grid preview and module browser
+- **Live Simulation**: Real-time visualization with pause/resume and speed control
+- **Replay**: Scrubber interface for recorded `.nxs` trace files
+
+See [gui.md](gui.md) for detailed documentation.
 
 ---
 
@@ -268,7 +345,8 @@ cli
  ├── config
  ├── runner
  ├── kernel
- └── fuse
+ ├── fuse
+ └── trace
 
 kernel
  ├── config
@@ -279,6 +357,15 @@ runner
  ├── config
  └── cpuutils
 
+gui
+ ├── config
+ ├── kernel
+ ├── fuse
+ └── trace
+
 fuse
  └── config    (channel type info)
+
+trace
+ └── (standalone, no internal deps)
 ```

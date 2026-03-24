@@ -8,7 +8,8 @@ simulators (ns-3, OMNET++) where the protocol logic lives inside the simulator,
 Nexus runs protocol code as real OS processes. The simulator's job is to:
 
 1. Present each process with a filesystem interface that looks like a network
-   (files to read from / write to in place of sockets or radio calls).
+   (directories with files to read from / write to in place of sockets or
+   radio calls).
 2. Inject realistic channel behavior: delays, bit errors, packet loss, signal
    attenuation based on distance.
 3. Control how fast each process perceives time by throttling CPU using cgroups,
@@ -21,11 +22,12 @@ HAL shims replacing radio calls with file I/O) can be tested in simulation.
 
 ### Simulation Config
 
-A simulation is described in a TOML file. The three main entities are:
+A simulation is described in a TOML file. The main entities are:
 
 - **Nodes:** logical hosts in the network. A node can represent a physical
   device, a sensor, a gateway, etc. Each node has a position in 3D space,
-  optional resource limits (CPU clock rate, memory), and one or more protocols.
+  optional resource limits (CPU clock rate, memory), optional energy config
+  (battery, power states), and one or more protocols.
 
 - **Protocols:** OS processes that run inside a node. A node can run multiple
   protocols (e.g., a MAC layer and an application layer process). Each protocol
@@ -33,10 +35,15 @@ A simulation is described in a TOML file. The three main entities are:
 
 - **Channels:** named communication mediums. Channels have a type (exclusive
   or shared) and reference a link definition that describes the physical
-  properties of the medium.
+  properties of the medium. Each channel appears as a directory in the FUSE
+  filesystem with `channel`, `rssi`, and `snr` sub-files.
 
 - **Links:** reusable link definitions specifying signal model, error rates,
-  and delays. A channel references a link by name.
+  and delays. A channel references a link by name. Links support inheritance.
+
+- **Modules:** reusable configuration fragments imported via a `use` directive.
+  Modules contribute links, channels, and node profiles from a standard library
+  of 24 hardware/protocol definitions.
 
 ### Channel Types
 
@@ -46,7 +53,7 @@ of the message in its own queue. Messages are delivered in order with no
 collisions. This models a point-to-point or star-topology channel.
 
 **Shared** channels model a true broadcast medium (e.g., LoRa, 802.11 air).
-When multiple nodes transmit simultaneously, an OR-collision occurs : all
+When multiple nodes transmit simultaneously, an OR-collision occurs: all
 concurrent transmissions are dropped. Protocols must implement their own
 medium access control (e.g., TDMA, CSMA) to avoid collisions.
 
@@ -56,7 +63,7 @@ Simulation advances in discrete timesteps. Each timestep the routing server
 processes all pending writes and delivers messages whose simulated delivery
 time has elapsed. The timestep length is configurable (e.g., 1 ms, 20 ms).
 
-Protocols can query and block on simulated time via the `ctl.time.*` control
+Protocols can query and block on simulated time via the `ctl.time/*` control
 files. This allows a protocol to sleep until a specific simulated time without
 busy-waiting on wall-clock time.
 
@@ -65,50 +72,72 @@ busy-waiting on wall-clock time.
 CPU clock-rate emulation is implemented via cgroup v2 `cpu.max`. Given a
 configured clock rate (e.g., 16 MHz) and the host CPU's current frequency,
 Nexus computes a throttle ratio and applies it to each protocol's cgroup. The
-protocol process therefore gets exactly the CPU time budget proportional to
-the ratio of simulated-to-real clock speed.
+`time_dilation` parameter further scales this ratio. The protocol process
+therefore gets exactly the CPU time budget proportional to the ratio of
+simulated-to-real clock speed.
+
+### Energy Model
+
+Nodes can be configured with batteries, named power states (sleep, active,
+transmit), always-on power sources (solar panels), and always-on power sinks
+(MCU baseline draw). When a node's battery depletes, its process is killed
+and the cgroup is frozen. If a restart threshold is set, the node respawns
+when the battery recovers. See [energy-framework.md](energy-framework.md).
+
+### Mobile Nodes
+
+Nodes can change position during a simulation via `ctl.pos/*` control files.
+Four motion patterns are supported: Static, Velocity, Linear interpolation,
+and Circular orbit. RSSI is recomputed dynamically from live positions at
+message queue and delivery time. See [position-control.md](position-control.md).
 
 ## Components
 
 ```
-┌────────────────────────────────────────────────────┐
-│  CLI (cli/)                                        │
-│  simulate / replay / logs subcommands              │
-└──────────┬─────────────────────────────────────────┘
-           │ config parse + validate
+┌────────────────────────────────────────────────────────────┐
+│  CLI (cli/)                                                │
+│  simulate / replay / logs / modules / parse subcommands    │
+└──────────┬─────────────────────────────────────────────────┘
+           │ config parse + validate + module resolution
            ▼
-┌────────────────────────────────────────────────────┐
-│  Config (config/)                                  │
-│  TOML → Simulation AST                             │
-│  Signal models, delay calculators, unit handling   │
-└──────────┬─────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Config (config/)                                          │
+│  TOML → Simulation AST                                     │
+│  Signal models, delay calculators, unit handling           │
+│  Module resolution, profile merging                        │
+└──────────┬─────────────────────────────────────────────────┘
            │ AST
            ▼
-┌────────────────────────────────────────────────────┐
-│  Runner (runner/)                                  │
-│  Build protocols (make/cargo/etc.)                 │
-│  Spawn protocol processes                          │
-│  Set up cgroup v2 hierarchy                        │
-│  Set CPU affinity, bandwidth, weights              │
-└──────────┬─────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────┐
+│  Runner (runner/)                                          │
+│  Build protocols (make/cargo/etc.)                         │
+│  Spawn protocol processes                                  │
+│  Set up cgroup v2 hierarchy                                │
+│  Set CPU affinity, bandwidth, weights                      │
+└──────────┬─────────────────────────────────────────────────┘
            │ process handles + cgroup controllers
            ▼
-┌─────────────────────────────────┐  ┌──────────────────────────────────┐
-│  FUSE Filesystem (fuse/)        │  │  Kernel (kernel/)                │
-│  Channel files (read/write)     ◄──►  RoutingServer: event loop       │
-│  Control files (ctl.*)          │  │  StatusServer: health + resources│
-│  Per-PID buffering              │  │  Binary TX/RX log writing        │
-└─────────────────────────────────┘  └──────────────────────────────────┘
-           │
-           │ channel files mounted at each node's root path
-           ▼
-┌────────────────────────────────────────────────────┐
-│  Protocol Processes                                │
-│  (the code under test)                             │
-│  Read from channel files → receive messages        │
-│  Write to channel files → transmit messages        │
-│  Read/write ctl.* files → query/control sim state  │
-└────────────────────────────────────────────────────┘
+┌─────────────────────────────────┐  ┌───────────────────────────────────┐
+│  FUSE Filesystem (fuse/)        │  │  Kernel (kernel/)                 │
+│  Channel dirs (channel/rssi/snr)◄──►  RoutingServer: event loop        │
+│  Control dirs (ctl.time/, etc.) │  │  StatusServer: health + resources  │
+│  Control files (ctl.energy_*)   │  │  EnergyManager: battery lifecycle  │
+│  Per-PID buffering              │  │  Trace logging (.nxs format)      │
+└─────────────────────────────────┘  └───────────────────────────────────┘
+           │                                     │
+           │ channel files mounted at            │ GuiEvent channel
+           │ each node's root path               ▼
+           ▼                           ┌───────────────────────────────────┐
+┌─────────────────────────────────┐    │  GUI (gui/)                       │
+│  Protocol Processes             │    │  Config editor, live simulation,  │
+│  (the code under test)          │    │  replay with scrubbing            │
+│  Read from channel files → RX   │    └───────────────────────────────────┘
+│  Write to channel files → TX    │
+│  Read/write ctl.* files         │    ┌───────────────────────────────────┐
+└─────────────────────────────────┘    │  Trace (trace/)                   │
+                                       │  .nxs file parsing, filtering,    │
+                                       │  `nexus parse` command            │
+                                       └───────────────────────────────────┘
 ```
 
 ## Data Flow
@@ -116,14 +145,13 @@ the ratio of simulated-to-real clock speed.
 ### Startup Sequence
 
 ```
-1. CLI reads TOML → config::parse() → Simulation AST
+1. CLI reads TOML → config::parse() → module resolution → profile merge → Simulation AST
 2. runner::build()   : compile each protocol (optional)
 3. runner::run()     : spawn processes, create cgroup hierarchy,
                        apply CPU affinity + bandwidth throttling
-4. NexusFs::new()    : create FUSE filesystem with channel + control files
+4. NexusFs::new()    : create FUSE filesystem with channel dirs + control files
 5. Kernel::new()     : resolve string channel names → usize handles,
-                       pre-compute routing table (subscriber/publisher graph,
-                       RSSI between all node pairs)
+                       build routing table (subscriber/publisher graph)
 6. FUSE mounted at each node's root path
 7. Kernel::run()     : main event loop begins
 ```
@@ -132,29 +160,41 @@ the ratio of simulated-to-real clock speed.
 
 ```
 for each timestep:
-  StatusServer::check_health()           // detect premature process exits
-  RoutingServer::poll(timestep)
+  RoutingServer::step()
+      apply_all_motions_and_log()        // advance node positions
+      energy_accounting()                 // sources, sinks, power state drain
       ← FsMessage::Write  (protocol wrote to a channel file)
       ← FsMessage::Read   (protocol is blocking on a channel file)
-      → KernelMessage::Exclusive / Shared / Empty  (deliver message to FUSE)
+      link_simulation()                  // RSSI, bit errors, packet loss
+      → KernelMessage::Exclusive / Shared / Empty  (deliver to FUSE)
+      → EnergyEvents { depleted, recovered }
+
+  StatusServer::check_health()           // detect premature process exits
   StatusServer::update_resources()       // refresh CPU frequencies,
                                          // recompute + apply cgroup bandwidth
+
+  for depleted nodes:
+      freeze_node()                      // cgroup.freeze = 1
+  for recovered nodes:
+      respawn_node()                     // kill + respawn processes
+      remap_pids()                       // update FUSE buffers
 ```
 
 ### Message Lifecycle
 
 ```
-Protocol A writes to channel file
+Protocol A writes to <channel>/channel file
   → FUSE captures write → FsMessage::Write sent to RoutingServer
   → RoutingServer looks up publishers/subscribers for that channel
   → Applies link simulation:
-      - Computes RSSI from sender/receiver positions
+      - Computes RSSI from sender/receiver positions (dynamic, live)
       - Evaluates bit_error and packet_loss expressions against RSSI
       - If not lost: schedules delivery at (now + propagation + processing
         + transmission delay)
   → At delivery timestep: KernelMessage::Exclusive (or Shared) sent to FUSE
   → FUSE buffers message in per-PID queue for subscriber
-  → Protocol B reads channel file → FUSE dequeues + returns message
+  → Protocol B reads <channel>/channel file → FUSE dequeues + returns message
+  → Protocol B reads <channel>/rssi → signal strength from last message
 ```
 
 ## Key Design Decisions
@@ -175,6 +215,15 @@ genuinely cannot run faster than its configured clock rate allows.
 names throughout. At kernel startup, a resolver converts all string handles to
 array indices for O(1) lookup in the hot event loop path.
 
-**Separate TX and RX logs**: Binary logs record every write (TX) and every
-delivery (RX) with timestamps. Used for the `replay` command and for
-post-simulation analysis.
+**Dynamic RSSI from live positions**: The routing table stores only the
+publisher/subscriber graph. Distance and RSSI are computed at message queue
+and delivery time from current node positions, enabling mobile nodes without
+a routing table redesign.
+
+**Kill-and-respawn on energy recovery**: When a node's battery recovers, its
+processes are killed and respawned (not just unfrozen). This matches real
+embedded device behavior where power loss means total state loss.
+
+**Module system for reuse**: Common hardware configurations (LoRa, Wi-Fi,
+batteries, boards) are packaged as TOML modules in a standard library,
+eliminating the need to look up and transcribe RF parameters for every project.

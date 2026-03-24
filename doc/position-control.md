@@ -25,7 +25,7 @@ which in turn drives link simulation. Bit error rates, packet loss, and
 propagation delay are all computed from inter-node distance at the moment a
 message is sent or received.
 
-Protocol code controls its node's position through a set of `ctl.pos.*` files
+Protocol code controls its node's position through a set of `ctl.pos/*` files
 exposed in its FUSE working directory. Writes to these files take effect
 immediately: the routing server computes distances from the updated live
 positions at the next message queue or delivery event. No simulation restart is
@@ -41,22 +41,22 @@ computations.
 
 ## Control Files
 
-Each protocol process sees the following `ctl.pos.*` files in its working
+Each protocol process sees the following `ctl.pos/*` files in its working
 directory. All files are per-PID: each process reads and writes its own node's
 position.
 
 | File | Mode | Description |
 |------|------|-------------|
-| `ctl.pos.x` | Read/Write | X coordinate in the node's distance unit. |
-| `ctl.pos.y` | Read/Write | Y coordinate in the node's distance unit. |
-| `ctl.pos.z` | Read/Write | Z coordinate in the node's distance unit. |
-| `ctl.pos.az` | Read/Write | Azimuth (yaw) in degrees. |
-| `ctl.pos.el` | Read/Write | Elevation (pitch) in degrees. |
-| `ctl.pos.roll` | Read/Write | Roll in degrees. |
-| `ctl.pos.dx` | Write-only | Add a delta to X; snapshots current position first. |
-| `ctl.pos.dy` | Write-only | Add a delta to Y; snapshots current position first. |
-| `ctl.pos.dz` | Write-only | Add a delta to Z; snapshots current position first. |
-| `ctl.pos.motion` | Read/Write | Active motion pattern; see spec format below. |
+| `ctl.pos/x` | Read/Write | X coordinate in the node's distance unit. |
+| `ctl.pos/y` | Read/Write | Y coordinate in the node's distance unit. |
+| `ctl.pos/z` | Read/Write | Z coordinate in the node's distance unit. |
+| `ctl.pos/az` | Read/Write | Azimuth (yaw) in degrees. |
+| `ctl.pos/el` | Read/Write | Elevation (pitch) in degrees. |
+| `ctl.pos/roll` | Read/Write | Roll in degrees. |
+| `ctl.pos/dx` | Write-only | Add a delta to X; snapshots current position first. |
+| `ctl.pos/dy` | Write-only | Add a delta to Y; snapshots current position first. |
+| `ctl.pos/dz` | Write-only | Add a delta to Z; snapshots current position first. |
+| `ctl.pos/motion` | Read/Write | Active motion pattern; see spec format below. |
 
 **Read format.** All readable files return an ASCII decimal representation of
 their value followed by no trailing newline. Float values use Rust's default
@@ -112,8 +112,8 @@ z(t) = initial.z + velocity.z * dt_us
 ```
 
 The node moves indefinitely; there is no stopping condition. To halt a
-velocity-driven node, write `none` to `ctl.pos.motion` or write an absolute
-position to any `ctl.pos.{x,y,z}` file.
+velocity-driven node, write `none` to `ctl.pos/motion` or write an absolute
+position to any `ctl.pos/{x,y,z}` file.
 
 ### Linear
 
@@ -181,7 +181,7 @@ start_angle_deg = atan2(current.y - center.y, current.x - center.x)
 
 ## Motion Pattern Spec Format
 
-`ctl.pos.motion` is read and written as a plain-text spec string. Whitespace
+`ctl.pos/motion` is read and written as a plain-text spec string. Whitespace
 between tokens is collapsed; leading and trailing whitespace is stripped.
 
 ### Read
@@ -253,7 +253,7 @@ These rules govern what happens to the active motion pattern when a position
 control file is written. They ensure that transitions between positioning modes
 are continuous. The node never jumps.
 
-### Writing an absolute coordinate (`ctl.pos.{x,y,z,az,el,roll}`)
+### Writing an absolute coordinate (`ctl.pos/{x,y,z,az,el,roll}`)
 
 1. If a motion pattern is active, `current_point()` is evaluated at the
    current timestep to snapshot the node's in-progress position into
@@ -262,18 +262,18 @@ are continuous. The node never jumps.
 3. The active motion pattern is reset to `Static`.
 
 The snapshot in step 1 preserves the other coordinates that were not written.
-For example, writing only `ctl.pos.x` while a velocity pattern is active will
+For example, writing only `ctl.pos/x` while a velocity pattern is active will
 fix the node at the Y and Z coordinates it had reached at that timestep, then
 set X to the written value.
 
-### Writing a relative delta (`ctl.pos.{dx,dy,dz}`)
+### Writing a relative delta (`ctl.pos/{dx,dy,dz}`)
 
 1. If a motion pattern is active, `current_point()` is evaluated to snapshot
    the in-progress position into `position.point`.
 2. The delta is added to the snapshotted coordinate.
 3. The active motion pattern is reset to `Static`.
 
-### Writing a motion pattern (`ctl.pos.motion`)
+### Writing a motion pattern (`ctl.pos/motion`)
 
 1. If a motion pattern is active, `current_point()` is evaluated to snapshot
    the in-progress position into `position.point`.
@@ -287,7 +287,7 @@ from exactly where the velocity-driven node had reached, with no jump.
 
 ### Effect of all writes on the movement log
 
-Every write to a `ctl.pos.*` file — absolute, delta, or motion pattern — emits
+Every write to a `ctl.pos/*` file — absolute, delta, or motion pattern — emits
 a `movement` tracing event with the resulting position. These events are
 captured by the binary log layer and written as `LogRecord::Movement` records.
 See [Logging](#logging).
@@ -387,11 +387,11 @@ example conventions.
 
 ```python
 def get_position():
-    with open("ctl.pos.x") as f:
+    with open("ctl.pos/x") as f:
         x = float(f.read())
-    with open("ctl.pos.y") as f:
+    with open("ctl.pos/y") as f:
         y = float(f.read())
-    with open("ctl.pos.z") as f:
+    with open("ctl.pos/z") as f:
         z = float(f.read())
     return x, y, z
 
@@ -406,17 +406,17 @@ node at the specified location. Write all three axes to fully reposition:
 
 ```python
 def set_position(x, y, z):
-    with open("ctl.pos.x", "w") as f:
+    with open("ctl.pos/x", "w") as f:
         f.write(str(x))
-    with open("ctl.pos.y", "w") as f:
+    with open("ctl.pos/y", "w") as f:
         f.write(str(y))
-    with open("ctl.pos.z", "w") as f:
+    with open("ctl.pos/z", "w") as f:
         f.write(str(z))
 
 set_position(100.0, 200.0, 0.0)
 ```
 
-> **Note:** Each write to a `ctl.pos.*` absolute file independently clears the
+> **Note:** Each write to a `ctl.pos/*` absolute file independently clears the
 > motion pattern. Writing all three axes in sequence is safe; the intermediate
 > states after the first and second writes are coherent (Static pattern, partial
 > position update).
@@ -426,7 +426,7 @@ set_position(100.0, 200.0, 0.0)
 ```python
 # Move 10 units in the X direction from the current position,
 # stopping any active motion pattern.
-with open("ctl.pos.dx", "w") as f:
+with open("ctl.pos/dx", "w") as f:
     f.write("10.0")
 ```
 
@@ -434,7 +434,7 @@ with open("ctl.pos.dx", "w") as f:
 
 ```python
 # Drift north (positive Y) at 0.002 units/µs (2000 units/second).
-with open("ctl.pos.motion", "w") as f:
+with open("ctl.pos/motion", "w") as f:
     f.write("velocity 0.0 0.002 0.0")
 ```
 
@@ -442,7 +442,7 @@ with open("ctl.pos.motion", "w") as f:
 
 ```python
 # Linear interpolation to (500, 500, 0) over 10,000,000 µs (10 seconds).
-with open("ctl.pos.motion", "w") as f:
+with open("ctl.pos/motion", "w") as f:
     f.write("linear 500.0 500.0 0.0 10000000")
 ```
 
@@ -452,14 +452,14 @@ with open("ctl.pos.motion", "w") as f:
 # Orbit (0, 0, 0) at radius 300 units, counter-clockwise, one full
 # revolution per 60 seconds (360 degrees / 60,000,000 µs).
 angular_vel = 360.0 / 60_000_000   # ~6e-6 deg/µs
-with open("ctl.pos.motion", "w") as f:
+with open("ctl.pos/motion", "w") as f:
     f.write(f"circle 0.0 0.0 0.0 300.0 {angular_vel}")
 ```
 
 ### Read the active motion pattern
 
 ```python
-with open("ctl.pos.motion") as f:
+with open("ctl.pos/motion") as f:
     spec = f.read()
 print(f"Active pattern: {spec}")
 # e.g.: "circle 0.0 0.0 0.0 300.0 6e-6"
@@ -468,7 +468,7 @@ print(f"Active pattern: {spec}")
 ### Stop all motion
 
 ```python
-with open("ctl.pos.motion", "w") as f:
+with open("ctl.pos/motion", "w") as f:
     f.write("none")
 ```
 
@@ -480,8 +480,8 @@ position coordinates.
 
 ```python
 # Point the node 45 degrees azimuth, 10 degrees elevation.
-with open("ctl.pos.az", "w") as f:
+with open("ctl.pos/az", "w") as f:
     f.write("45.0")
-with open("ctl.pos.el", "w") as f:
+with open("ctl.pos/el", "w") as f:
     f.write("10.0")
 ```
