@@ -7,24 +7,164 @@
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
+use std::path::Path;
 
 use crate::ast::DistanceUnit;
 use crate::units::DecimalScaled;
+
+/// A loaded heightmap with elevation data and coordinate mapping.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct Heightmap {
+    /// Row-major elevation grid (top-to-bottom, left-to-right).
+    data: Vec<f32>,
+    width: usize,
+    height: usize,
+    /// World-space bounds.
+    bounds_min: (f64, f64),
+    bounds_max: (f64, f64),
+    /// Elevation range in the terrain's distance unit.
+    elevation_min: f64,
+    elevation_max: f64,
+}
+
+impl Heightmap {
+    /// Load a grayscale PNG heightmap and map pixel luminance to elevation.
+    pub fn from_png(
+        path: &Path,
+        bounds_min: (f64, f64),
+        bounds_max: (f64, f64),
+        elevation_min: f64,
+        elevation_max: f64,
+    ) -> Result<Self, String> {
+        let img = image::open(path)
+            .map_err(|e| format!("Failed to open heightmap \"{}\": {e}", path.display()))?;
+        let gray = img.to_luma16();
+        let width = gray.width() as usize;
+        let height = gray.height() as usize;
+        let elev_range = elevation_max - elevation_min;
+        let data: Vec<f32> = gray
+            .pixels()
+            .map(|p| {
+                let normalized = p.0[0] as f64 / u16::MAX as f64;
+                (elevation_min + normalized * elev_range) as f32
+            })
+            .collect();
+        Ok(Self {
+            data,
+            width,
+            height,
+            bounds_min,
+            bounds_max,
+            elevation_min,
+            elevation_max,
+        })
+    }
+
+    /// Get the elevation at a world-space (x, y) coordinate.
+    /// Uses bilinear interpolation. Returns `None` if outside bounds.
+    pub fn elevation_at(&self, x: f64, y: f64) -> Option<f64> {
+        let (bmin_x, bmin_y) = self.bounds_min;
+        let (bmax_x, bmax_y) = self.bounds_max;
+        if x < bmin_x || x > bmax_x || y < bmin_y || y > bmax_y {
+            return None;
+        }
+        let world_w = bmax_x - bmin_x;
+        let world_h = bmax_y - bmin_y;
+        if world_w <= 0.0 || world_h <= 0.0 {
+            return None;
+        }
+
+        // Map world coords to pixel coords.
+        // X maps to columns, Y maps to rows (Y increases upward in world,
+        // but rows increase downward in the image).
+        let px = ((x - bmin_x) / world_w) * (self.width as f64 - 1.0);
+        let py = ((bmax_y - y) / world_h) * (self.height as f64 - 1.0);
+
+        let x0 = (px.floor() as usize).min(self.width - 1);
+        let x1 = (x0 + 1).min(self.width - 1);
+        let y0 = (py.floor() as usize).min(self.height - 1);
+        let y1 = (y0 + 1).min(self.height - 1);
+
+        let fx = px - px.floor();
+        let fy = py - py.floor();
+
+        let v00 = self.data[y0 * self.width + x0] as f64;
+        let v10 = self.data[y0 * self.width + x1] as f64;
+        let v01 = self.data[y1 * self.width + x0] as f64;
+        let v11 = self.data[y1 * self.width + x1] as f64;
+
+        let top = v00 * (1.0 - fx) + v10 * fx;
+        let bottom = v01 * (1.0 - fx) + v11 * fx;
+        Some(top * (1.0 - fy) + bottom * fy)
+    }
+
+    /// World-space bounds of this heightmap.
+    pub fn bounds(&self) -> ((f64, f64), (f64, f64)) {
+        (self.bounds_min, self.bounds_max)
+    }
+
+    /// Elevation range.
+    pub fn elevation_range(&self) -> (f64, f64) {
+        (self.elevation_min, self.elevation_max)
+    }
+
+    /// Grid dimensions (width, height) in pixels.
+    pub fn dimensions(&self) -> (usize, usize) {
+        (self.width, self.height)
+    }
+
+    /// Raw elevation data (row-major).
+    pub fn data(&self) -> &[f32] {
+        &self.data
+    }
+}
+
+/// Configuration for a visual map overlay image in the GUI.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct MapOverlayConfig {
+    /// Path to the map image file.
+    pub path: String,
+    /// World-space bounds.
+    pub bounds_min: (f64, f64),
+    pub bounds_max: (f64, f64),
+    /// Opacity (0.0–1.0).
+    pub opacity: f32,
+}
 
 /// A fully resolved terrain map ready for ray-cast queries.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TerrainMap {
     obstacles: Vec<ResolvedObstacle>,
     unit: DistanceUnit,
+    /// Optional heightmap for elevation queries.
+    heightmap: Option<Heightmap>,
+    /// Optional map overlay image config for the GUI.
+    map_overlay: Option<MapOverlayConfig>,
 }
 
 /// An obstacle with its attenuation already resolved (no material lookup needed).
 #[derive(Clone, Debug, Serialize, Deserialize)]
-struct ResolvedObstacle {
-    #[allow(dead_code)]
+pub struct ResolvedObstacle {
     name: String,
     attenuation_db: f64,
     shape: ObstacleShape,
+}
+
+impl ResolvedObstacle {
+    /// The obstacle's name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Attenuation in dB.
+    pub fn attenuation_db(&self) -> f64 {
+        self.attenuation_db
+    }
+
+    /// The geometric shape.
+    pub fn shape(&self) -> &ObstacleShape {
+        &self.shape
+    }
 }
 
 /// Geometric shape of an obstacle in the XY plane.
@@ -66,7 +206,46 @@ impl TerrainMap {
                 shape,
             })
             .collect();
-        Self { obstacles, unit }
+        Self {
+            obstacles,
+            unit,
+            heightmap: None,
+            map_overlay: None,
+        }
+    }
+
+    /// Set the heightmap for this terrain map.
+    pub fn set_heightmap(&mut self, heightmap: Heightmap) {
+        self.heightmap = Some(heightmap);
+    }
+
+    /// Set the map overlay config.
+    pub fn set_map_overlay(&mut self, overlay: MapOverlayConfig) {
+        self.map_overlay = Some(overlay);
+    }
+
+    /// Get the heightmap, if any.
+    pub fn heightmap(&self) -> Option<&Heightmap> {
+        self.heightmap.as_ref()
+    }
+
+    /// Get the map overlay config, if any.
+    pub fn map_overlay(&self) -> Option<&MapOverlayConfig> {
+        self.map_overlay.as_ref()
+    }
+
+    /// Look up elevation at a world-space (x, y) coordinate.
+    /// Handles unit conversion if the query coordinates differ from the
+    /// terrain's unit. Returns `None` if no heightmap or point is outside bounds.
+    pub fn elevation_at(&self, x: f64, y: f64, point_unit: DistanceUnit) -> Option<f64> {
+        let hm = self.heightmap.as_ref()?;
+        let (cx, cy) = self.convert_to_terrain_unit((x, y), point_unit);
+        hm.elevation_at(cx, cy)
+    }
+
+    /// The obstacles in this terrain map (for rendering outlines).
+    pub fn obstacles(&self) -> &[ResolvedObstacle] {
+        &self.obstacles
     }
 
     /// Compute total terrain attenuation in dB for a ray between two 2D points.

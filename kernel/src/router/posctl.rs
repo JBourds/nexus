@@ -61,12 +61,24 @@ impl RoutingServer {
 
     /// Apply the current motion pattern to `node_index`, updating
     /// `position.point` to reflect the current timestep.  No-op for `Static`.
+    /// If a terrain heightmap is loaded, the node's z coordinate is set to
+    /// the elevation at (x, y).
     pub(super) fn apply_motion(&mut self, node_index: usize) {
         let timestep = self.timestep;
         let us_per_step = self.us_per_step();
         let node = &mut self.channels.nodes[node_index];
         if let Some(new_point) = node.motion.current_point(timestep, us_per_step) {
             node.position.point = new_point;
+            // Apply terrain elevation if available.
+            if let Some(ref terrain) = self.terrain {
+                if let Some(z) = terrain.elevation_at(
+                    node.position.point.x,
+                    node.position.point.y,
+                    node.position.unit,
+                ) {
+                    node.position.point.z = z;
+                }
+            }
         }
     }
 
@@ -81,6 +93,16 @@ impl RoutingServer {
                 continue;
             };
             node.position.point = new_point;
+            // Apply terrain elevation if available.
+            if let Some(ref terrain) = self.terrain {
+                if let Some(z) = terrain.elevation_at(
+                    node.position.point.x,
+                    node.position.point.y,
+                    node.position.unit,
+                ) {
+                    node.position.point.z = z;
+                }
+            }
             Self::emit_movement_event(node_idx, node, timestep);
         }
     }
@@ -128,6 +150,8 @@ impl RoutingServer {
 
     /// Write handler for `ctl.pos/x/y/z/az/el/roll` (absolute set).
     /// Resets the motion pattern to `Static`.
+    /// When x or y is changed and a terrain heightmap is loaded, z is
+    /// automatically updated to the terrain elevation.
     pub fn write_pos(&mut self, node_index: usize, msg: fuse::Message) -> Result<(), RouterError> {
         // Snapshot any in-progress motion before overriding.
         self.apply_motion(node_index);
@@ -142,6 +166,7 @@ impl RoutingServer {
             .strip_prefix("ctl.pos/")
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
+        let is_xy = matches!(component, "x" | "y");
         match component {
             "x" => node.position.point.x = val,
             "y" => node.position.point.y = val,
@@ -150,6 +175,18 @@ impl RoutingServer {
             "el" => node.position.orientation.el = val,
             "roll" => node.position.orientation.roll = val,
             _ => return Err(RouterError::InvalidString(msg.data)),
+        }
+        // Apply terrain elevation when x or y changes.
+        if is_xy {
+            if let Some(ref terrain) = self.terrain {
+                if let Some(z) = terrain.elevation_at(
+                    node.position.point.x,
+                    node.position.point.y,
+                    node.position.unit,
+                ) {
+                    node.position.point.z = z;
+                }
+            }
         }
         node.motion = MotionPattern::Static;
         let timestep = self.timestep;
@@ -161,6 +198,7 @@ impl RoutingServer {
     /// Write handler for `ctl.pos/dx/dy/dz` (relative offset).
     /// Snapshots the current (motion-applied) position, adds the delta, and
     /// resets the motion pattern to `Static`.
+    /// When dx or dy changes, z is updated from the terrain heightmap if loaded.
     pub fn write_pos_delta(
         &mut self,
         node_index: usize,
@@ -179,11 +217,24 @@ impl RoutingServer {
             .strip_prefix("ctl.pos/d")
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let node = &mut self.channels.nodes[node_index];
+        let is_xy = matches!(axis, "x" | "y");
         match axis {
             "x" => node.position.point.x += val,
             "y" => node.position.point.y += val,
             "z" => node.position.point.z += val,
             _ => return Err(RouterError::InvalidString(msg.data)),
+        }
+        // Apply terrain elevation when x or y changes.
+        if is_xy {
+            if let Some(ref terrain) = self.terrain {
+                if let Some(z) = terrain.elevation_at(
+                    node.position.point.x,
+                    node.position.point.y,
+                    node.position.unit,
+                ) {
+                    node.position.point.z = z;
+                }
+            }
         }
         node.motion = MotionPattern::Static;
         let timestep = self.timestep;

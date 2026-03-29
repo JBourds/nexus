@@ -239,7 +239,7 @@ impl Simulation {
 
         let terrain = val
             .terrain
-            .map(|t| validate_terrain(t))
+            .map(|t| validate_terrain(config_root, t))
             .transpose()
             .context("Failed to validate terrain configuration")?;
 
@@ -254,7 +254,10 @@ impl Simulation {
     }
 }
 
-fn validate_terrain(val: parse::Terrain) -> Result<crate::terrain::TerrainMap> {
+fn validate_terrain(
+    config_root: &PathBuf,
+    val: parse::Terrain,
+) -> Result<crate::terrain::TerrainMap> {
     let unit = val
         .unit
         .map(|u| <DistanceUnit as ValidateUnit>::validate(u))
@@ -325,7 +328,74 @@ fn validate_terrain(val: parse::Terrain) -> Result<crate::terrain::TerrainMap> {
         obstacles.push((name, attenuation_db, shape));
     }
 
-    Ok(crate::terrain::TerrainMap::new(obstacles, unit))
+    let mut terrain = crate::terrain::TerrainMap::new(obstacles, unit);
+
+    // Load heightmap if specified.
+    if let Some(ref hm_path) = val.heightmap {
+        let bounds = val.heightmap_bounds.as_ref().with_context(|| {
+            "heightmap_bounds is required when heightmap is specified"
+        })?;
+        let elev = val.elevation_range.with_context(|| {
+            "elevation_range is required when heightmap is specified"
+        })?;
+        ensure!(
+            bounds.min[0] < bounds.max[0] && bounds.min[1] < bounds.max[1],
+            "heightmap_bounds min must be less than max"
+        );
+        ensure!(
+            elev[0] <= elev[1],
+            "elevation_range[0] must be <= elevation_range[1]"
+        );
+
+        let full_path = config_root.join(hm_path);
+        ensure!(
+            full_path.exists(),
+            "Heightmap file not found: \"{}\"",
+            full_path.display()
+        );
+
+        let heightmap = crate::terrain::Heightmap::from_png(
+            &full_path,
+            (bounds.min[0], bounds.min[1]),
+            (bounds.max[0], bounds.max[1]),
+            elev[0],
+            elev[1],
+        )
+        .map_err(|e| anyhow::anyhow!("{e}"))
+        .context("Failed to load heightmap")?;
+        terrain.set_heightmap(heightmap);
+    }
+
+    // Store map overlay config if specified.
+    if let Some(ref map_path) = val.map_image {
+        let map_bounds = val.map_bounds.as_ref().or(val.heightmap_bounds.as_ref());
+        let bounds = map_bounds.with_context(|| {
+            "map_bounds (or heightmap_bounds) is required when map_image is specified"
+        })?;
+        ensure!(
+            bounds.min[0] < bounds.max[0] && bounds.min[1] < bounds.max[1],
+            "map_bounds min must be less than max"
+        );
+        let full_path = config_root.join(map_path);
+        ensure!(
+            full_path.exists(),
+            "Map image file not found: \"{}\"",
+            full_path.display()
+        );
+        let opacity = val.map_opacity.unwrap_or(0.6);
+        ensure!(
+            (0.0..=1.0).contains(&opacity),
+            "map_opacity must be between 0.0 and 1.0, got {opacity}"
+        );
+        terrain.set_map_overlay(crate::terrain::MapOverlayConfig {
+            path: full_path.to_string_lossy().into_owned(),
+            bounds_min: (bounds.min[0], bounds.min[1]),
+            bounds_max: (bounds.max[0], bounds.max[1]),
+            opacity,
+        });
+    }
+
+    Ok(terrain)
 }
 
 impl Cpu {

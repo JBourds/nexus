@@ -28,6 +28,26 @@ pub struct Terrain {
     /// List of obstacles in the terrain.
     #[serde(default)]
     pub(super) obstacles: Vec<TerrainObstacle>,
+    /// Path to a grayscale PNG heightmap file.
+    pub(super) heightmap: Option<String>,
+    /// World-space bounds of the heightmap: { min = [x0, y0], max = [x1, y1] }.
+    pub(super) heightmap_bounds: Option<Bounds2D>,
+    /// Elevation range mapped from pixel values: [min_elevation, max_elevation].
+    pub(super) elevation_range: Option<[f64; 2]>,
+    /// Path to a visual map overlay image (PNG/JPEG) for the GUI.
+    pub(super) map_image: Option<String>,
+    /// World-space bounds of the map overlay: { min = [x0, y0], max = [x1, y1] }.
+    pub(super) map_bounds: Option<Bounds2D>,
+    /// Opacity of the map overlay in the GUI (0.0–1.0, default 0.6).
+    pub(super) map_opacity: Option<f32>,
+}
+
+/// 2D axis-aligned bounds.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Bounds2D {
+    pub(super) min: [f64; 2],
+    pub(super) max: [f64; 2],
 }
 
 /// A single obstacle in the terrain.

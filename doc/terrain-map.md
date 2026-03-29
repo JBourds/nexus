@@ -585,7 +585,6 @@ process scheduling overhead.
 18. `test_terrain_no_effect_on_wired` — wired links ignore terrain
 19. `test_terrain_loss_in_expression` — `terrain_loss` variable in meval works
 20. `test_terrain_with_mobile_nodes` — moving node changes terrain intersection
-<<<<<<< HEAD
 
 ---
 
@@ -853,5 +852,3 @@ accurate enough for areas up to ~50 km across.
 9. Signal propagation accounts for terrain obstruction (Phase 1 obstacles)
    and distance (already implemented).
 
-=======
->>>>>>> 94bf81c (feat: add terrain/map system with 2D obstacle-based signal attenuation)

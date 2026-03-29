@@ -221,6 +221,8 @@ impl NexusApp {
                 &[],
                 dist_unit,
                 &no_highlights,
+                state.sim.terrain.as_ref(),
+                Some(&mut state.terrain_overlay),
             );
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
@@ -724,6 +726,8 @@ impl NexusApp {
                     &state.active_arrows,
                     dist_unit,
                     &highlights,
+                    state.sim.terrain.as_ref(),
+                    Some(&mut state.terrain_overlay),
                 );
                 if let Some(clicked) = clicked {
                     let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -865,6 +869,7 @@ impl NexusApp {
                 view_mode: ViewMode::default(),
                 bp_input: BreakpointInput::default(),
                 seq_zoom: SEQ_ZOOM_DEFAULT,
+                terrain_overlay: TerrainOverlay::default(),
             }));
         }
     }
@@ -1270,6 +1275,8 @@ impl NexusApp {
                     &state.active_arrows,
                     dist_unit,
                     &highlights,
+                    state.sim.terrain.as_ref(),
+                    Some(&mut state.terrain_overlay),
                 );
                 if let Some(clicked) = clicked {
                     let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -1353,6 +1360,7 @@ impl NexusApp {
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
                     open_output_windows: HashSet::new(),
+                    terrain_overlay: TerrainOverlay::default(),
                 }));
             }
             Err(e) => {
@@ -1414,6 +1422,7 @@ impl NexusApp {
                     build_status: SimBuildStatus::Building,
                     process_outputs: Vec::new(),
                     open_output_windows: HashSet::new(),
+                    terrain_overlay: TerrainOverlay::default(),
                 }));
             }
             Err(e) => {
@@ -1474,6 +1483,7 @@ impl NexusApp {
             breakpoints: Vec::new(),
             bp_input: BreakpointInput::default(),
             initial_run_until: None,
+            terrain_overlay: TerrainOverlay::default(),
         }));
     }
 
@@ -1531,6 +1541,7 @@ impl NexusApp {
                         view_mode: ViewMode::default(),
                         bp_input: BreakpointInput::default(),
                         seq_zoom: SEQ_ZOOM_DEFAULT,
+                        terrain_overlay: TerrainOverlay::default(),
                     }));
                 }
                 Err(e) => {

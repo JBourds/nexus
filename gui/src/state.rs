@@ -210,6 +210,8 @@ pub struct ConfigEditorState {
     pub bp_input: BreakpointInput,
     /// Initial run-until condition to apply when the simulation starts.
     pub initial_run_until: Option<BreakpointKind>,
+    /// Cached terrain overlay for the grid panel.
+    pub terrain_overlay: TerrainOverlay,
 }
 
 impl ConfigEditorState {
@@ -244,6 +246,7 @@ impl ConfigEditorState {
             breakpoints: Vec::new(),
             bp_input: BreakpointInput::default(),
             initial_run_until: None,
+            terrain_overlay: TerrainOverlay::default(),
         })
     }
 }
@@ -305,6 +308,8 @@ pub struct LiveSimState {
     pub process_outputs: Vec<ProcessOutput>,
     /// Set of open output windows, keyed by "node.protocol".
     pub open_output_windows: HashSet<String>,
+    /// Cached terrain overlay for the grid panel.
+    pub terrain_overlay: TerrainOverlay,
 }
 
 /// State for replay mode.
@@ -355,6 +360,8 @@ pub struct ReplayState {
     pub bp_input: BreakpointInput,
     /// Zoom level for the sequence diagram (1.0 = default).
     pub seq_zoom: f32,
+    /// Cached terrain overlay for the grid panel.
+    pub terrain_overlay: TerrainOverlay,
 }
 
 /// Per-node runtime state for visualization.
@@ -513,4 +520,139 @@ pub struct ProcessOutput {
     pub protocol: String,
     pub stdout: String,
     pub stderr: String,
+}
+
+/// Cached terrain overlay for the grid panel.
+pub struct TerrainOverlay {
+    /// Map overlay texture loaded from the map_image file.
+    pub map_texture: Option<egui::TextureHandle>,
+    /// World-space bounds for the map overlay.
+    pub map_bounds_min: (f64, f64),
+    pub map_bounds_max: (f64, f64),
+    /// Opacity for the map overlay.
+    pub map_opacity: f32,
+    /// Heightmap elevation texture (colorized from heightmap data).
+    pub heightmap_texture: Option<egui::TextureHandle>,
+    /// World-space bounds for the heightmap.
+    pub hm_bounds_min: (f64, f64),
+    pub hm_bounds_max: (f64, f64),
+    /// Whether the overlay has been initialized from config.
+    pub initialized: bool,
+}
+
+impl Default for TerrainOverlay {
+    fn default() -> Self {
+        Self {
+            map_texture: None,
+            map_bounds_min: (0.0, 0.0),
+            map_bounds_max: (0.0, 0.0),
+            map_opacity: 0.6,
+            heightmap_texture: None,
+            hm_bounds_min: (0.0, 0.0),
+            hm_bounds_max: (0.0, 0.0),
+            initialized: false,
+        }
+    }
+}
+
+impl TerrainOverlay {
+    /// Initialize the overlay from a terrain config.
+    /// Loads textures if not already done.
+    pub fn init_from_terrain(
+        &mut self,
+        terrain: &config::terrain::TerrainMap,
+        ctx: &egui::Context,
+    ) {
+        if self.initialized {
+            return;
+        }
+        self.initialized = true;
+
+        // Load heightmap as a colorized texture.
+        if let Some(hm) = terrain.heightmap() {
+            let (w, h) = hm.dimensions();
+            let (elev_min, elev_max) = hm.elevation_range();
+            let elev_range = elev_max - elev_min;
+            let data = hm.data();
+            let mut pixels = Vec::with_capacity(w * h);
+            for val in data {
+                let normalized = if elev_range > 0.0 {
+                    ((*val as f64 - elev_min) / elev_range).clamp(0.0, 1.0) as f32
+                } else {
+                    0.5
+                };
+                let color = elevation_to_color(normalized);
+                pixels.push(color);
+            }
+            let image = egui::ColorImage {
+                size: [w, h],
+                pixels,
+            };
+            self.heightmap_texture = Some(ctx.load_texture(
+                "terrain_heightmap",
+                image,
+                egui::TextureOptions::LINEAR,
+            ));
+            let (bmin, bmax) = hm.bounds();
+            self.hm_bounds_min = bmin;
+            self.hm_bounds_max = bmax;
+        }
+
+        // Load map overlay image.
+        if let Some(overlay) = terrain.map_overlay() {
+            if let Ok(img) = image::open(&overlay.path) {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.as_raw().to_vec();
+                let image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                self.map_texture = Some(ctx.load_texture(
+                    "terrain_map_overlay",
+                    image,
+                    egui::TextureOptions::LINEAR,
+                ));
+                self.map_bounds_min = overlay.bounds_min;
+                self.map_bounds_max = overlay.bounds_max;
+                self.map_opacity = overlay.opacity;
+            }
+        }
+    }
+}
+
+/// Map a normalized elevation (0.0–1.0) to a terrain color.
+/// Green (low) → Brown (mid) → White (high).
+fn elevation_to_color(t: f32) -> egui::Color32 {
+    let (r, g, b) = if t < 0.3 {
+        // Deep green to lighter green
+        let s = t / 0.3;
+        (
+            (40.0 + s * 60.0) as u8,
+            (100.0 + s * 80.0) as u8,
+            (30.0 + s * 30.0) as u8,
+        )
+    } else if t < 0.6 {
+        // Green to brown
+        let s = (t - 0.3) / 0.3;
+        (
+            (100.0 + s * 60.0) as u8,
+            (180.0 - s * 80.0) as u8,
+            (60.0 + s * 20.0) as u8,
+        )
+    } else if t < 0.85 {
+        // Brown to gray
+        let s = (t - 0.6) / 0.25;
+        (
+            (160.0 + s * 40.0) as u8,
+            (100.0 + s * 60.0) as u8,
+            (80.0 + s * 70.0) as u8,
+        )
+    } else {
+        // Gray to white
+        let s = (t - 0.85) / 0.15;
+        (
+            (200.0 + s * 55.0) as u8,
+            (160.0 + s * 95.0) as u8,
+            (150.0 + s * 105.0) as u8,
+        )
+    };
+    egui::Color32::from_rgb(r, g, b)
 }
