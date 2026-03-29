@@ -25,6 +25,7 @@ pub fn show_nodes(
             internal_names: Vec::new(),
             resources: ast::Resources::default(),
             start: SystemTime::now(),
+            network: None,
         });
     }
 

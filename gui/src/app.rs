@@ -1908,6 +1908,7 @@ fn create_sim_from_trace_header(
                 internal_names: Vec::new(),
                 resources: Resources::default(),
                 start: SystemTime::now(),
+                network: None,
             },
         );
     }

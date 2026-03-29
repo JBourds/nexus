@@ -1,5 +1,5 @@
 [workspace]
-members = [ "cli", "config" , "cpuutils", "fuse", "gui", "kernel", "runner", "trace"]
+members = [ "cli", "config" , "cpuutils", "fuse", "gui", "kernel", "netdev", "runner", "trace"]
 resolver = "3"
 
 [workspace.dependencies]

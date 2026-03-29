@@ -813,6 +813,7 @@ impl Node {
             initial_state,
             restart_threshold,
             start,
+            network,
         } in deployments
         {
             let start = start
@@ -886,6 +887,12 @@ impl Node {
                 internal_names: internal_names.iter().cloned().collect(),
                 protocols,
                 start,
+                network: network.and_then(|nc| {
+                    nc.address.map(|addr| crate::ast::NetworkConfig {
+                        address: addr,
+                        gateway: nc.gateway,
+                    })
+                }),
             });
         }
         Ok(nodes)

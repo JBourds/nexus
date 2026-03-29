@@ -242,6 +242,18 @@ pub struct Deployment {
     pub(super) restart_threshold: Option<f64>,
     /// Optionally let a deployment start with a different time than simulation
     pub(super) start: Option<Datetime>,
+    /// Network configuration for TAP-based networking (optional).
+    pub(super) network: Option<NetworkConfig>,
+}
+
+/// Per-deployment network configuration for TAP-based networking.
+#[derive(Debug, Default, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct NetworkConfig {
+    /// IP address in CIDR notation (e.g., "10.0.0.1/24").
+    pub(super) address: Option<String>,
+    /// Default gateway IP address.
+    pub(super) gateway: Option<String>,
 }
 
 #[derive(Debug, Default, Deserialize)]

@@ -1,0 +1,13 @@
+[package]
+name = "netdev"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+libc = { workspace = true }
+nix = { version = "0.29", features = ["ioctl", "net", "sched", "fs"] }
+tracing = { workspace = true }
+
+[dev-dependencies]

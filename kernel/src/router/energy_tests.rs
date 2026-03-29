@@ -697,6 +697,7 @@ mod tests {
             internal_names: vec![],
             resources: config::ast::Resources::default(),
             start: SystemTime::UNIX_EPOCH,
+            network: None,
         };
         let ts = test_ts_config(); // 1 ms timesteps
         let e = EnergyState::from_node(&node, &ts).unwrap();
@@ -727,6 +728,7 @@ mod tests {
             internal_names: vec![],
             resources: config::ast::Resources::default(),
             start: SystemTime::UNIX_EPOCH,
+            network: None,
         };
         assert!(EnergyState::from_node(&node, &test_ts_config()).is_none());
     }
@@ -747,6 +749,7 @@ mod tests {
             internal_names: vec![],
             resources: config::ast::Resources::default(),
             start: SystemTime::UNIX_EPOCH,
+            network: None,
         };
         let e = EnergyState::from_node(&node, &test_ts_config()).unwrap();
         assert!(e.is_dead, "Zero initial charge means node starts dead");

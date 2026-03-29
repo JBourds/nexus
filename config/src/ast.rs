@@ -119,6 +119,17 @@ pub struct Node {
     pub resources: Resources,
     #[serde(with = "system_time_serde")]
     pub start: SystemTime,
+    /// Optional network configuration for TAP-based networking.
+    pub network: Option<NetworkConfig>,
+}
+
+/// Network configuration for a node deployment (TAP interface + namespace).
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct NetworkConfig {
+    /// IP address in CIDR notation (e.g., "10.0.0.1/24").
+    pub address: String,
+    /// Default gateway IP address (optional).
+    pub gateway: Option<String>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
