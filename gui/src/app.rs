@@ -1458,6 +1458,7 @@ impl NexusApp {
             },
             channels: HashMap::new(),
             nodes: HashMap::new(),
+            terrain: None,
         };
         self.mode = AppMode::ConfigEditor(Box::new(ConfigEditorState {
             sim,
@@ -1926,6 +1927,7 @@ fn create_sim_from_trace_header(
         },
         channels: HashMap::new(),
         nodes,
+        terrain: None,
     }
 }
 

@@ -13,6 +13,7 @@ mod position;
 mod resources;
 mod time;
 pub mod units;
+pub mod terrain;
 mod validate;
 
 pub mod ast;

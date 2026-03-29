@@ -76,6 +76,7 @@ pub struct Kernel {
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
+    terrain: Option<config::terrain::TerrainMap>,
 }
 
 /// Builder for constructing a `Kernel` with optional flags.
@@ -130,6 +131,7 @@ impl KernelBuilder {
 
     pub fn build(self) -> Result<Kernel, KernelError> {
         let sim = self.sim;
+        let terrain = sim.terrain;
         // Sort nodes lexicographically for deterministic ordering
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
@@ -160,6 +162,7 @@ impl KernelBuilder {
             remap_tx: self.remap_tx,
             abort: self.abort,
             pause: self.pause,
+            terrain,
         })
     }
 }
@@ -197,11 +200,12 @@ impl Kernel {
             remap_tx,
             abort,
             pause,
+            terrain,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
+            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx, terrain)
         }?;
         let mut status_server = StatusServer::serve(time_dilation.clone(), runc)?;
         queue_event(

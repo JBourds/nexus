@@ -51,6 +51,9 @@ impl RoutingServer {
     /// - dropped packets
     /// - bit errors
     ///
+    /// `terrain_loss_db` is additional attenuation from obstacles between the
+    /// sender and receiver (0.0 if no terrain is configured).
+    ///
     /// Returns `None` if the packet was dropped, or
     /// `Some((data, bit_errors, rssi_dbm, snr_db))` on success.
     pub(super) fn send_through_channel<'a>(
@@ -58,6 +61,7 @@ impl RoutingServer {
         mut buf: Cow<'a, [u8]>,
         distance: f64,
         unit: DistanceUnit,
+        terrain_loss_db: f64,
         rng: &mut StdRng,
     ) -> Option<(Cow<'a, [u8]>, bool, f64, f64)> {
         let Link {
@@ -68,17 +72,17 @@ impl RoutingServer {
         } = &channel.link;
         // TODO: Allow TX power to be configured via control file for the link
         let tx_dbm = medium.tx_max_dbm();
-        let rssi = packet_loss.rssi(tx_dbm, distance, unit, medium);
+        let rssi = packet_loss.rssi(tx_dbm, distance, unit, medium) - terrain_loss_db;
         if rssi < medium.noise_floor_dbm() {
-            warn!("Packet dropped (rssi = {rssi})");
+            warn!("Packet dropped (rssi = {rssi}, terrain_loss = {terrain_loss_db})");
             return None;
         }
-        if packet_loss.sample_oneshot(tx_dbm, distance, unit, medium, rng) {
+        if packet_loss.sample_rssi(rssi, rng) {
             warn!("Packet dropped (packet_loss, rssi = {rssi})");
             return None;
         }
 
-        let rssi = bit_error.rssi(tx_dbm, distance, unit, medium);
+        let rssi = bit_error.rssi(tx_dbm, distance, unit, medium) - terrain_loss_db;
         let snr = rssi - medium.noise_floor_dbm();
         let ber = bit_error.probability(rssi);
         let mut had_bit_errors = false;

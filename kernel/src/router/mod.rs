@@ -116,6 +116,8 @@ pub(crate) struct RoutingServer {
     next_msg_id: u64,
     /// Per-handle signal quality from the last RX on each channel endpoint.
     signal_info: Vec<SignalInfo>,
+    /// Optional terrain map for obstacle-based signal attenuation.
+    terrain: Option<config::terrain::TerrainMap>,
 }
 
 /// Last-received signal quality for a (destination_node, channel) pair.
@@ -135,6 +137,7 @@ impl RoutingServer {
         rng: StdRng,
         mut source: Source,
         remap_tx: mpsc::Sender<(u32, u32)>,
+        terrain: Option<config::terrain::TerrainMap>,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -163,6 +166,7 @@ impl RoutingServer {
                     sequence: 0,
                     next_msg_id: 0,
                     signal_info: vec![SignalInfo::default(); handles_count],
+                    terrain,
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {

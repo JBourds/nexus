@@ -47,6 +47,7 @@ pub struct Simulation {
     pub params: Params,
     pub channels: HashMap<ChannelHandle, Channel>,
     pub nodes: HashMap<NodeHandle, Node>,
+    pub terrain: Option<crate::terrain::TerrainMap>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]

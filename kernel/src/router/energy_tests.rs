@@ -110,6 +110,7 @@ mod tests {
             sequence: 0,
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); mailbox_count],
+            terrain: None,
         };
         (router, rx)
     }
@@ -527,6 +528,7 @@ mod tests {
             sequence: 0,
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
+            terrain: None,
         };
 
         // Write "active" to ctl.energy_state
@@ -598,6 +600,7 @@ mod tests {
             sequence: 0,
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
+            terrain: None,
         };
 
         // Write unknown state
@@ -1176,6 +1179,7 @@ mod tests {
             sequence: 0,
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
+            terrain: None,
         };
 
         // Write a source and a sink via control file (nj/ts passthrough)
@@ -1277,6 +1281,7 @@ mod tests {
             sequence: 0,
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
+            terrain: None,
         };
 
         // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep

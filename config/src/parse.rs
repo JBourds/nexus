@@ -13,6 +13,55 @@ pub struct Simulation {
     pub(super) nodes: HashMap<String, Node>,
     pub(super) channels: HashMap<String, Channel>,
     pub(super) profiles: Option<HashMap<String, NodeProfile>>,
+    pub(super) terrain: Option<Terrain>,
+}
+
+/// Terrain configuration for 2D obstacle-based signal attenuation.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Terrain {
+    /// Distance unit for obstacle coordinates (default: meters).
+    pub(super) unit: Option<Unit>,
+    /// Custom material attenuation overrides (name → dB per traversal).
+    #[serde(default)]
+    pub(super) materials: HashMap<String, f64>,
+    /// List of obstacles in the terrain.
+    #[serde(default)]
+    pub(super) obstacles: Vec<TerrainObstacle>,
+}
+
+/// A single obstacle in the terrain.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TerrainObstacle {
+    /// Human-readable label.
+    pub(super) name: Option<String>,
+    /// Material name (references terrain.materials or built-in defaults).
+    pub(super) material: Option<String>,
+    /// Inline attenuation override in dB (takes precedence over material).
+    pub(super) attenuation_db: Option<f64>,
+    /// Geometric shape of the obstacle.
+    pub(super) shape: TerrainShape,
+}
+
+/// Geometric shape for a terrain obstacle.
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields, tag = "type", rename_all = "snake_case")]
+pub enum TerrainShape {
+    Rect {
+        min: [f64; 2],
+        max: [f64; 2],
+    },
+    Line {
+        start: [f64; 2],
+        end: [f64; 2],
+        #[serde(default = "default_line_thickness")]
+        thickness: f64,
+    },
+}
+
+fn default_line_thickness() -> f64 {
+    0.3
 }
 
 /// A module file: restricted subset of nexus.toml (no params, no nodes).

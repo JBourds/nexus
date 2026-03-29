@@ -237,14 +237,95 @@ impl Simulation {
             );
         }
 
+        let terrain = val
+            .terrain
+            .map(|t| validate_terrain(t))
+            .transpose()
+            .context("Failed to validate terrain configuration")?;
+
         let mut res = Self {
             params,
             nodes,
             channels,
+            terrain,
         };
         res.scale_cpu(res.params.time_dilation);
         Ok(res)
     }
+}
+
+fn validate_terrain(val: parse::Terrain) -> Result<crate::terrain::TerrainMap> {
+    let unit = val
+        .unit
+        .map(|u| <DistanceUnit as ValidateUnit>::validate(u))
+        .transpose()
+        .context("Invalid terrain unit")?
+        .unwrap_or(DistanceUnit::Meters);
+
+    // Build material lookup: start with defaults, overlay user overrides.
+    let mut materials = crate::terrain::default_materials();
+    for (name, db) in &val.materials {
+        ensure!(*db >= 0.0, "Material \"{name}\" has negative attenuation ({db} dB)");
+        materials.insert(name.clone(), *db);
+    }
+
+    let mut obstacles = Vec::with_capacity(val.obstacles.len());
+    for (i, obs) in val.obstacles.into_iter().enumerate() {
+        let name = obs.name.unwrap_or_else(|| format!("obstacle_{i}"));
+
+        // Resolve attenuation: inline override > material lookup.
+        let attenuation_db = if let Some(db) = obs.attenuation_db {
+            ensure!(db >= 0.0, "Obstacle \"{name}\" has negative attenuation_db ({db})");
+            db
+        } else if let Some(ref mat_name) = obs.material {
+            *materials.get(mat_name).with_context(|| {
+                format!(
+                    "Obstacle \"{name}\" references unknown material \"{mat_name}\". \
+                     Available: {:?}",
+                    materials.keys().collect::<Vec<_>>()
+                )
+            })?
+        } else {
+            bail!(
+                "Obstacle \"{name}\" must specify either `material` or `attenuation_db`"
+            );
+        };
+
+        let shape = match obs.shape {
+            parse::TerrainShape::Rect { min, max } => {
+                ensure!(
+                    min[0] < max[0] && min[1] < max[1],
+                    "Obstacle \"{name}\": rect min must be less than max \
+                     (got min={min:?}, max={max:?})"
+                );
+                crate::terrain::ObstacleShape::Rect { min, max }
+            }
+            parse::TerrainShape::Line {
+                start,
+                end,
+                thickness,
+            } => {
+                ensure!(
+                    (start[0] - end[0]).abs() > f64::EPSILON
+                        || (start[1] - end[1]).abs() > f64::EPSILON,
+                    "Obstacle \"{name}\": line start and end must differ"
+                );
+                ensure!(
+                    thickness > 0.0,
+                    "Obstacle \"{name}\": line thickness must be positive (got {thickness})"
+                );
+                crate::terrain::ObstacleShape::Line {
+                    start,
+                    end,
+                    thickness,
+                }
+            }
+        };
+
+        obstacles.push((name, attenuation_db, shape));
+    }
+
+    Ok(crate::terrain::TerrainMap::new(obstacles, unit))
 }
 
 impl Cpu {

@@ -49,6 +49,20 @@ pub(crate) struct QueuedMessage {
 }
 
 impl RoutingServer {
+    /// Compute terrain attenuation between two nodes, or 0.0 if no terrain.
+    fn terrain_loss(&self, src: NodeHandle, dst: NodeHandle) -> f64 {
+        self.terrain.as_ref().map_or(0.0, |t| {
+            let src_pos = &self.channels.nodes[src.0].position;
+            let dst_pos = &self.channels.nodes[dst.0].position;
+            t.attenuation_between_positions(
+                (src_pos.point.x, src_pos.point.y),
+                src_pos.unit,
+                (dst_pos.point.x, dst_pos.point.y),
+                dst_pos.unit,
+            )
+        })
+    }
+
     /// Take a message along the channel indicated by `channel_handle` from
     /// `src_node` and post it to the queue along the precomputed route.
     ///
@@ -97,6 +111,7 @@ impl RoutingServer {
 
             // For exclusive channels, run link simulation now; drop the
             // message if it doesn't survive.
+            let terrain_loss = self.terrain_loss(src_node, dst_node);
             let (buf, msg_bit_errors, rssi_dbm, snr_db): (Rc<[u8]>, bool, f64, f64) =
                 if is_shared {
                     (Rc::clone(&shared_buf), false, 0.0, 0.0)
@@ -106,6 +121,7 @@ impl RoutingServer {
                         Cow::from(&msg),
                         distance,
                         distance_unit,
+                        terrain_loss,
                         &mut self.rng,
                     ) {
                         Some((b, be, rssi, snr)) => (b.into(), be, rssi, snr),
@@ -170,12 +186,14 @@ impl RoutingServer {
                     &self.channels.nodes[msg.src.0].position,
                     &self.channels.nodes[node_handle.0].position,
                 );
+                let terrain_loss = self.terrain_loss(msg.src, node_handle);
 
                 if let Some((buf, bit_errors, rssi_dbm, snr_db)) = Self::send_through_channel(
                     channel,
                     Cow::from(msg.buf.as_ref()),
                     distance,
                     unit,
+                    terrain_loss,
                     &mut self.rng,
                 ) {
                     self.signal_info[index].rssi_dbm = rssi_dbm;
@@ -215,11 +233,22 @@ impl RoutingServer {
                         &self.channels.nodes[msg.src.0].position,
                         &self.channels.nodes[node_handle.0].position,
                     );
+                    let terrain_loss = self.terrain.as_ref().map_or(0.0, |t| {
+                        let src_pos = &self.channels.nodes[msg.src.0].position;
+                        let dst_pos = &self.channels.nodes[node_handle.0].position;
+                        t.attenuation_between_positions(
+                            (src_pos.point.x, src_pos.point.y),
+                            src_pos.unit,
+                            (dst_pos.point.x, dst_pos.point.y),
+                            dst_pos.unit,
+                        )
+                    });
                     Self::send_through_channel(
                         channel,
                         Cow::from(msg.buf.as_ref()),
                         distance,
                         unit,
+                        terrain_loss,
                         &mut self.rng,
                     )
                 });
