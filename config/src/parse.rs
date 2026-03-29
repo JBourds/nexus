@@ -178,6 +178,8 @@ pub enum ChannelType {
         read_own_writes: Option<bool>,
         nbuffered: Option<NonZeroUsize>,
     },
+    /// TAP-based virtual networking channel.
+    Network,
 }
 
 impl Default for ChannelType {

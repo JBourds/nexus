@@ -12,7 +12,6 @@ use crate::{
     assignment::{Bandwidth, Relative},
     cgroupfs::{CgroupFs, RealCgroupFs},
     errors::ProtocolError,
-    run_protocol,
 };
 
 pub const NODES_LIMITED: &str = "nodes_limited";
@@ -48,6 +47,8 @@ pub struct CgroupController {
     pub nodes_unlimited: NodeBucket,
     /// filesystem abstraction for cgroup operations
     fs: Box<dyn CgroupFs>,
+    /// Network namespace names to clean up on drop (for TAP networking).
+    pub netns_names: Vec<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -74,6 +75,8 @@ pub struct ProtocolHandle {
     pub process: Option<Child>,
     /// Path to the cgroup directory for this protocol.
     pub cgroup_path: Option<PathBuf>,
+    /// Optional network namespace prefix (e.g., "ip netns exec nexus_node0 ").
+    pub netns_prefix: Option<String>,
 }
 
 impl ProtocolHandle {
@@ -92,6 +95,7 @@ impl ProtocolHandle {
             protocol,
             process: None,
             cgroup_path: None,
+            netns_prefix: None,
         }
     }
 
@@ -150,8 +154,12 @@ impl ProtocolHandle {
 
     pub fn run(&mut self, cgroup: impl AsRef<Path>) -> Result<bool, ProtocolError> {
         if self.process.is_none() {
-            let process =
-                run_protocol(&self.ast, cgroup.as_ref()).map_err(ProtocolError::UnableToRun)?;
+            let process = crate::run_protocol_with_netns(
+                &self.ast,
+                cgroup.as_ref(),
+                self.netns_prefix.as_deref(),
+            )
+            .map_err(ProtocolError::UnableToRun)?;
             move_process(&RealCgroupFs, cgroup.as_ref(), process.id());
             self.process = Some(process);
             Ok(true)
@@ -225,6 +233,7 @@ impl CgroupController {
             nodes_limited,
             nodes_unlimited,
             fs,
+            netns_names: Vec::new(),
         };
         obj.freeze_nodes();
         Ok(obj)
@@ -306,6 +315,16 @@ impl CgroupController {
         protocol: &NodeProtocol,
         handle: &NodeHandle,
     ) -> Result<ProtocolHandle, ProtocolError> {
+        self.add_protocol_with_netns(name, protocol, handle, None)
+    }
+
+    pub fn add_protocol_with_netns(
+        &mut self,
+        name: &str,
+        protocol: &NodeProtocol,
+        handle: &NodeHandle,
+        netns_prefix: Option<String>,
+    ) -> Result<ProtocolHandle, ProtocolError> {
         // Extract what we need before re-borrowing self
         let (cgroup, protocol_count) = {
             let node = self
@@ -322,6 +341,7 @@ impl CgroupController {
             name.to_string(),
         );
         proto_handle.cgroup_path = Some(cgroup.clone());
+        proto_handle.netns_prefix = netns_prefix;
         proto_handle.run(&cgroup)?;
         // Re-borrow to add the protocol cgroup
         let node = self.get_node(handle).expect("node was just looked up");
@@ -425,6 +445,12 @@ fn move_process(fs: &dyn CgroupFs, cgroup: &Path, pid: u32) {
 
 impl Drop for CgroupController {
     fn drop(&mut self) {
+        // Clean up network namespaces first (best-effort).
+        for ns_name in &self.netns_names {
+            let _ = std::process::Command::new("ip")
+                .args(["netns", "delete", ns_name])
+                .output();
+        }
         // Clean up per-simulation cgroup directories. Errors are best-effort
         // since the kernel may still have processes in these groups.
         let _ = self.fs.remove_dir_all(&self.root);

@@ -17,6 +17,7 @@ impl ChannelType {
         match &self.kind {
             ChannelKind::Shared => Some(NonZeroUsize::MAX),
             ChannelKind::Exclusive { nbuffered } => *nbuffered,
+            ChannelKind::Network => None,
         }
     }
 

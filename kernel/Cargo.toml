@@ -8,11 +8,13 @@ cpuutils = { path = "../cpuutils" }
 config = { path = "../config" }
 runner = { path = "../runner" }
 fuse = { path = "../fuse" }
+netdev = { path = "../netdev" }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 thiserror = { workspace = true }
 serde = { workspace = true }
 bincode = { workspace = true }
 rand = { workspace = true }
+anyhow = { workspace = true }
 mio = {version = "1.0.4", features = ["os-poll", "os-ext"] }
 trace = { path = "../trace" }

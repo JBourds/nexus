@@ -67,6 +67,10 @@ impl RoutingServer {
     ) -> Result<(), RouterError> {
         let sz: u64 = msg.len().try_into().expect("usize fits u64");
         let channel = &self.channels.channels[channel_handle.0];
+        // Network channels are handled by the TapRouter, not FUSE mailboxes.
+        if matches!(channel.r#type.kind, ChannelKind::Network) {
+            return Ok(());
+        }
         let is_shared = matches!(channel.r#type.kind, ChannelKind::Shared);
         let timestep = self.timestep;
         let ts_config = self.ts_config;
@@ -143,6 +147,7 @@ impl RoutingServer {
         match &channel.r#type.kind {
             ChannelKind::Shared => self.deliver_shared_msg(index),
             ChannelKind::Exclusive { .. } => self.deliver_exclusive_msg(index),
+            ChannelKind::Network => Ok(false),
         }
     }
 

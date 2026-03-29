@@ -43,16 +43,30 @@ struct BuildCtx<'a> {
     handle: Child,
 }
 
-fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
+pub(crate) fn run_protocol_with_netns(
+    p: &NodeProtocol,
+    cgroup: &Path,
+    netns_prefix: Option<&str>,
+) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
 
     let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
-    script.push_str(&format!(
-        "{UNBUFFER} {} {}",
-        p.runner.cmd,
-        p.runner.args.join(" ")
-    ));
+    // When a network namespace is configured, wrap the command so the process
+    // executes inside the namespace.
+    if let Some(prefix) = netns_prefix {
+        script.push_str(&format!(
+            "{prefix}{UNBUFFER} {} {}",
+            p.runner.cmd,
+            p.runner.args.join(" ")
+        ));
+    } else {
+        script.push_str(&format!(
+            "{UNBUFFER} {} {}",
+            p.runner.cmd,
+            p.runner.args.join(" ")
+        ));
+    }
     cmd.current_dir(&p.root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -137,9 +151,12 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         affinity_builder.add_node(node_name, &node.resources);
         relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
+        let netns_prefix = node.network.as_ref().map(|_| {
+            format!("ip netns exec nexus_{node_name} ")
+        });
         for (protocol_name, protocol) in &node.protocols {
             let protocol_handle =
-                cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
+                cgroup_controller.add_protocol_with_netns(protocol_name, protocol, &handle, netns_prefix.clone())?;
             let pid = protocol_handle.pid().ok_or_else(|| {
                 ProtocolError::UnableToRun(io::Error::other(format!(
                     "process not started for {node_name}/{protocol_name}"

@@ -21,7 +21,7 @@ pub struct ChannelIdx(pub usize);
 pub type NodeHandle = NodeIdx;
 pub type ChannelHandle = ChannelIdx;
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct Channel {
     #[allow(unused)]
     pub link: Link,

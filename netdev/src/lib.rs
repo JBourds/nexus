@@ -10,7 +10,9 @@
 //!   runtime capability checks and return clear errors.
 
 pub mod namespace;
+pub mod router;
 pub mod tap;
 
 pub use namespace::Namespace;
+pub use router::{TapRouter, TapRouterHandle};
 pub use tap::TapDevice;

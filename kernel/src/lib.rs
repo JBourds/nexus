@@ -2,6 +2,7 @@ pub mod errors;
 mod events;
 mod helpers;
 pub mod log;
+mod networking;
 mod resolver;
 pub(crate) mod router;
 pub mod sources;
@@ -76,6 +77,8 @@ pub struct Kernel {
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
+    /// Optional TAP networking state (present when a `Network` channel exists).
+    networking: Option<networking::NetworkingState>,
 }
 
 /// Builder for constructing a `Kernel` with optional flags.
@@ -128,11 +131,21 @@ impl KernelBuilder {
         self
     }
 
-    pub fn build(self) -> Result<Kernel, KernelError> {
+    pub fn build(mut self) -> Result<Kernel, KernelError> {
         let sim = self.sim;
         // Sort nodes lexicographically for deterministic ordering
         let mut sorted_nodes: Vec<(ast::NodeHandle, ast::Node)> = sim.nodes.into_iter().collect();
         sorted_nodes.sort_by_key(|(name, _)| name.clone());
+
+        // Extract per-node network configs before nodes are consumed.
+        let node_network_configs: Vec<(String, usize, ast::NetworkConfig)> = sorted_nodes
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, (name, node))| {
+                node.network.clone().map(|nc| (name.clone(), idx, nc))
+            })
+            .collect();
+
         let (node_names, nodes) = unzip(sorted_nodes);
         let node_handles: HashMap<String, NodeHandle> = make_handles(node_names.clone())
             .into_iter()
@@ -146,6 +159,17 @@ impl KernelBuilder {
             self.file_handles,
             &sim.params.timestep,
         )?;
+
+        // Set up TAP networking if any network channels + configs exist.
+        let tap_rng = StdRng::seed_from_u64(sim.params.seed.wrapping_add(1));
+        let networking =
+            networking::NetworkingState::setup(&channels, &node_network_configs, tap_rng)
+                .map_err(|e| KernelError::NetworkingError(e.to_string()))?;
+        let networking = networking.map(|(state, ns_names)| {
+            self.runc.cgroups.netns_names.extend(ns_names);
+            state
+        });
+
         Ok(Kernel {
             root: sim.params.root,
             rng: StdRng::seed_from_u64(sim.params.seed),
@@ -160,6 +184,7 @@ impl KernelBuilder {
             remap_tx: self.remap_tx,
             abort: self.abort,
             pause: self.pause,
+            networking,
         })
     }
 }
@@ -197,7 +222,9 @@ impl Kernel {
             remap_tx,
             abort,
             pause,
+            networking,
         } = self;
+        let mut tap_networking = networking;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
@@ -277,6 +304,11 @@ impl Kernel {
                         routing_server.remap_pids(pid_changes)?;
                     }
                 }
+
+                // Poll TAP frames and apply link simulation for network channels.
+                if let Some(ref mut net) = tap_networking {
+                    net.poll_and_route();
+                }
             }
             if start.elapsed().is_err() {
                 return Err(KernelError::TimestepError(timestep));
@@ -286,6 +318,13 @@ impl Kernel {
         // Handle any outstanding FS requests so it can be cleanly unmounted
         let run_handles = status_server.shutdown()?;
         routing_server.shutdown()?;
+
+        // Shut down TAP networking if active.
+        if let Some(net) = tap_networking {
+            if let Err(e) = net.shutdown() {
+                warn!("TAP router shutdown error: {e}");
+            }
+        }
 
         Ok(run_handles)
     }

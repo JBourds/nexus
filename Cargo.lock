@@ -2036,11 +2036,13 @@ dependencies = [
 name = "kernel"
 version = "0.1.0"
 dependencies = [
+ "anyhow",
  "bincode",
  "config",
  "cpuutils",
  "fuse",
  "mio",
+ "netdev",
  "rand 0.9.2",
  "runner",
  "serde",
@@ -2299,6 +2301,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ee6cda3051665f1fb8d9e08fc35c96d5a244fb1be711a03b71118828afc9a873"
 dependencies = [
  "jni-sys",
+]
+
+[[package]]
+name = "netdev"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "mio",
+ "nix 0.29.0",
+ "thiserror 2.0.12",
+ "tracing",
 ]
 
 [[package]]

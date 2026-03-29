@@ -87,6 +87,9 @@ pub enum ChannelKind {
         /// Number of buffered messages per node. If None, is infinite.
         nbuffered: Option<NonZeroUsize>,
     },
+    /// TAP-based virtual networking channel. Frames are routed between nodes'
+    /// network namespaces with link simulation applied to raw Ethernet frames.
+    Network,
 }
 
 /// Energy-related configuration for a node (battery, power states, flows, etc.).

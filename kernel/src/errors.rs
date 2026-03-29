@@ -35,6 +35,8 @@ pub enum KernelError {
     PollRegistration,
     #[error("Error encountered when polling file.")]
     PollError,
+    #[error("Error setting up TAP networking: {0}")]
+    NetworkingError(String),
 }
 
 #[derive(Error, Debug)]

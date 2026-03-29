@@ -54,6 +54,13 @@ impl ChannelType {
                 read_own_writes,
                 ChannelKind::Exclusive { nbuffered },
             ),
+            parse::ChannelType::Network => (
+                None,
+                None,
+                None,
+                None,
+                ChannelKind::Network,
+            ),
         };
         let unit = validate_optional(unit, TimeUnit::validate)
             .context("Failed to validate time unit when parsing channel type.")?;

@@ -46,23 +46,31 @@ pub fn show_channels(ui: &mut Ui, sim: &mut ast::Simulation, buf: &mut String) {
 
 fn show_channel_body(ui: &mut Ui, name: &str, channel: &mut ast::Channel) {
     // Type switcher
-    let is_shared = matches!(channel.r#type.kind, ChannelKind::Shared);
-    let mut type_idx: usize = if is_shared { 0 } else { 1 };
+    let type_idx_current: usize = match channel.r#type.kind {
+        ChannelKind::Shared => 0,
+        ChannelKind::Exclusive { .. } => 1,
+        ChannelKind::Network => 2,
+    };
+    let mut type_idx = type_idx_current;
     ui.horizontal(|ui| {
         ui.label("Type:");
+        let labels = ["Shared", "Exclusive", "Network"];
         egui::ComboBox::from_id_salt(format!("ch_type_{name}"))
-            .selected_text(if is_shared { "Shared" } else { "Exclusive" })
+            .selected_text(labels[type_idx])
             .show_ui(ui, |ui| {
                 ui.selectable_value(&mut type_idx, 0, "Shared");
                 ui.selectable_value(&mut type_idx, 1, "Exclusive");
+                ui.selectable_value(&mut type_idx, 2, "Network");
             });
     });
 
     // Switch type if changed
-    if type_idx == 0 && !is_shared {
-        channel.r#type.kind = ChannelKind::Shared;
-    } else if type_idx == 1 && is_shared {
-        channel.r#type.kind = ChannelKind::Exclusive { nbuffered: None };
+    if type_idx != type_idx_current {
+        channel.r#type.kind = match type_idx {
+            0 => ChannelKind::Shared,
+            2 => ChannelKind::Network,
+            _ => ChannelKind::Exclusive { nbuffered: None },
+        };
     }
 
     // Common fields

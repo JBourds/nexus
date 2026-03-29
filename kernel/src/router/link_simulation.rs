@@ -53,7 +53,7 @@ impl RoutingServer {
     ///
     /// Returns `None` if the packet was dropped, or
     /// `Some((data, bit_errors, rssi_dbm, snr_db))` on success.
-    pub(super) fn send_through_channel<'a>(
+    pub(crate) fn send_through_channel<'a>(
         channel: &Channel,
         mut buf: Cow<'a, [u8]>,
         distance: f64,
