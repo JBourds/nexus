@@ -206,7 +206,7 @@ impl NexusApp {
             config_editor::show_config_editor(ui, state);
 
             // Remaining: grid view with nodes
-            let nodes = nodes_from_sim(&state.sim);
+            let mut nodes = nodes_from_sim(&state.sim);
             if state.needs_fit {
                 state.grid.fit_to_nodes(&nodes, ui.available_size());
                 state.needs_fit = false;
@@ -216,12 +216,24 @@ impl NexusApp {
             let (clicked, _hovered) = grid::show_grid_panel(
                 ui,
                 &mut state.grid,
-                &nodes,
+                &mut nodes,
                 &state.selected_node,
                 &[],
                 dist_unit,
                 &no_highlights,
             );
+            // Write back dragged node positions to the AST
+            for ns in &nodes {
+                if let Some(ast_node) = state.sim.nodes.get_mut(&ns.name) {
+                    if (ast_node.position.point.x - ns.x).abs() > f64::EPSILON
+                        || (ast_node.position.point.y - ns.y).abs() > f64::EPSILON
+                    {
+                        ast_node.position.point.x = ns.x;
+                        ast_node.position.point.y = ns.y;
+                        state.dirty = true;
+                    }
+                }
+            }
             if let Some(clicked) = clicked {
                 state.selected_node = Some(clicked);
             }
@@ -405,7 +417,7 @@ impl NexusApp {
                                 let insp_action = inspector::show_inspector(
                                     ui,
                                     &state.sim,
-                                    &state.node_states,
+                                    &mut state.node_states,
                                     &state.selected_node,
                                     &mut state.expanded_nodes,
                                     &state.messages,
@@ -719,7 +731,7 @@ impl NexusApp {
                 let (clicked, hovered) = grid::show_grid_panel(
                     ui,
                     &mut state.grid,
-                    &state.node_states,
+                    &mut state.node_states,
                     &state.selected_node,
                     &state.active_arrows,
                     dist_unit,
@@ -1002,7 +1014,7 @@ impl NexusApp {
                                 let insp_action = inspector::show_inspector(
                                     ui,
                                     &state.sim,
-                                    &state.node_states,
+                                    &mut state.node_states,
                                     &state.selected_node,
                                     &mut state.expanded_nodes,
                                     &state.messages,
@@ -1265,7 +1277,7 @@ impl NexusApp {
                 let (clicked, hovered) = grid::show_grid_panel(
                     ui,
                     &mut state.grid,
-                    &state.node_states,
+                    &mut state.node_states,
                     &state.selected_node,
                     &state.active_arrows,
                     dist_unit,
