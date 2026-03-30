@@ -11,6 +11,7 @@ use crate::state::{ArrowAnimation, NodeState};
 /// Returns (clicked_node, hovered_node).
 ///
 /// `node_highlights` maps node name -> ring color (e.g. green for received, red for dropped).
+/// `draggable` enables click-and-drag repositioning of nodes (only in config editor).
 pub fn show_grid_panel(
     ui: &mut Ui,
     grid: &mut GridView,
@@ -19,6 +20,7 @@ pub fn show_grid_panel(
     arrows: &[ArrowAnimation],
     distance_unit: DistanceUnit,
     node_highlights: &HashMap<String, Color32>,
+    draggable: bool,
 ) -> (Option<String>, Option<String>) {
     let unit_label = distance_unit_abbrev(distance_unit);
     let available = ui.available_size();
@@ -32,7 +34,7 @@ pub fn show_grid_panel(
         let hit = response
             .interact_pointer_pos()
             .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes));
-        drag_started_on_node = hit.is_some();
+        drag_started_on_node = draggable && hit.is_some();
         ui.data_mut(|d| d.insert_temp(drag_on_node_id, drag_started_on_node));
         ui.data_mut(|d| d.insert_temp::<Option<String>>(dragged_node_id, hit));
     }
@@ -111,12 +113,13 @@ pub fn show_grid_panel(
         .input(|i| i.pointer.hover_pos())
         .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes));
 
-    // Show grab cursor when hovering over a node
-    if hovered_node.is_some() {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-    }
-    if drag_started_on_node && response.dragged_by(egui::PointerButton::Primary) && !is_shift {
-        ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+    // Show grab cursor when hovering over a draggable node
+    if draggable {
+        if drag_started_on_node && response.dragged_by(egui::PointerButton::Primary) && !is_shift {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if hovered_node.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
     }
 
     (clicked_node, hovered_node)

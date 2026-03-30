@@ -221,6 +221,7 @@ impl NexusApp {
                 &[],
                 dist_unit,
                 &no_highlights,
+                true,
             );
             // Write back dragged node positions to the AST
             for ns in &nodes {
@@ -736,6 +737,7 @@ impl NexusApp {
                     &state.active_arrows,
                     dist_unit,
                     &highlights,
+                    false,
                 );
                 if let Some(clicked) = clicked {
                     let already_selected = state.selected_node.as_ref() == Some(&clicked);
@@ -1282,6 +1284,7 @@ impl NexusApp {
                     &state.active_arrows,
                     dist_unit,
                     &highlights,
+                    false,
                 );
                 if let Some(clicked) = clicked {
                     let already_selected = state.selected_node.as_ref() == Some(&clicked);
