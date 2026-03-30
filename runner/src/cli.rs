@@ -24,6 +24,10 @@ pub struct Cli {
     /// Location where the NexusFS should be mounted during simulation
     #[arg(short, long)]
     pub root: Option<PathBuf>,
+
+    /// Number of worker threads for distributed simulation (default: 1)
+    #[arg(short, long, default_value_t = 1)]
+    pub workers: usize,
 }
 
 #[derive(ValueEnum, Debug, Default, Clone)]

@@ -4,7 +4,7 @@ mod tests {
 
     use crate::{
         resolver::ResolvedChannels,
-        router::{RoutingServer, SignalInfo, energy::EnergyManager, table::RoutingTable},
+        router::{RoutingServer, coordinator::Coordinator, table::RoutingTable},
         types::{self, ChannelIdx, EnergyState, NodeIdx, PowerFlowState},
     };
     use config::ast::{
@@ -12,7 +12,7 @@ mod tests {
     };
     use rand::{SeedableRng, rngs::StdRng};
     use std::{
-        collections::{BinaryHeap, HashMap, HashSet, VecDeque},
+        collections::{HashMap, HashSet},
         num::NonZeroU64,
         path::PathBuf,
         sync::mpsc,
@@ -89,29 +89,54 @@ mod tests {
         };
         let fuse_mapping = resolved.make_fuse_mapping();
         let routes = RoutingTable::new(&resolved);
-        let mailbox_count = handles.len();
-        let energy_mgr = EnergyManager::new(&resolved.nodes);
+        let mut rng = StdRng::seed_from_u64(42);
+        let coordinator = Coordinator::new(1, &resolved, &mut rng);
         let router = RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
             channels: resolved,
             routes,
-            queued: BinaryHeap::new(),
             fuse_mapping,
-            mailboxes: vec![VecDeque::new(); mailbox_count],
-            rng: StdRng::seed_from_u64(42),
+            rng,
             tx,
-            energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
                 let tc = test_ts_config();
                 tc.length.get() * tc.unit.to_ns_factor()
             },
-            sequence: 0,
             next_msg_id: 0,
-            signal_info: vec![SignalInfo::default(); mailbox_count],
+            coordinator,
+            num_workers: 1,
         };
         (router, rx)
+    }
+
+    /// Build a RoutingServer from pre-constructed ResolvedChannels and a tx sender.
+    fn make_router_from_resolved(
+        resolved: ResolvedChannels,
+        tx: mpsc::Sender<fuse::KernelMessage>,
+    ) -> RoutingServer {
+        let fuse_mapping = resolved.make_fuse_mapping();
+        let routes = RoutingTable::new(&resolved);
+        let mut rng = StdRng::seed_from_u64(42);
+        let coordinator = Coordinator::new(1, &resolved, &mut rng);
+        RoutingServer {
+            timestep: 1,
+            ts_config: test_ts_config(),
+            channels: resolved,
+            routes,
+            fuse_mapping,
+            rng,
+            tx,
+            remap_tx: std::sync::mpsc::channel().0,
+            timestep_ns: {
+                let tc = test_ts_config();
+                tc.length.get() * tc.unit.to_ns_factor()
+            },
+            next_msg_id: 0,
+            coordinator,
+            num_workers: 1,
+        }
     }
 
     /// Simple router with a single node, no channels.
@@ -221,7 +246,7 @@ mod tests {
         assert_eq!(e.charge_nj, 0);
         assert!(e.is_dead, "Node should be dead when charge == 0");
         // step() pushes to newly_depleted (serve() drains it after each poll)
-        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
+        assert_eq!(router.coordinator.energy_mgr.newly_depleted, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -238,7 +263,7 @@ mod tests {
         router.step().unwrap();
         // In the serve() loop, newly_depleted gets drained after each poll.
         // Since we call step() directly, it should still be there.
-        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
+        assert_eq!(router.coordinator.energy_mgr.newly_depleted, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -289,7 +314,7 @@ mod tests {
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 5050);
         assert!(!e.is_dead, "Should restart when charge >= threshold");
-        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+        assert_eq!(router.coordinator.energy_mgr.newly_recovered, vec![0]);
     }
 
     // -----------------------------------------------------------------------
@@ -505,29 +530,7 @@ mod tests {
             channel_names,
             handles: handles.clone(),
         };
-        let fuse_mapping = resolved.make_fuse_mapping();
-        let routes = RoutingTable::new(&resolved);
-        let energy_mgr = EnergyManager::new(&resolved.nodes);
-        let mut router = RoutingServer {
-            timestep: 1,
-            ts_config: test_ts_config(),
-            channels: resolved,
-            routes,
-            queued: BinaryHeap::new(),
-            fuse_mapping,
-            mailboxes: vec![VecDeque::new(); handles.len()],
-            rng: StdRng::seed_from_u64(42),
-            tx,
-            energy_mgr,
-            remap_tx: std::sync::mpsc::channel().0,
-            timestep_ns: {
-                let tc = test_ts_config();
-                tc.length.get() * tc.unit.to_ns_factor()
-            },
-            sequence: 0,
-            next_msg_id: 0,
-            signal_info: vec![SignalInfo::default(); handles.len()],
-        };
+        let mut router = make_router_from_resolved(resolved, tx);
 
         // Write "active" to ctl.energy_state
         let msg = fuse::Message {
@@ -576,29 +579,7 @@ mod tests {
             channel_names: vec![Arc::from("ctl.energy_state")],
             handles: handles.clone(),
         };
-        let fuse_mapping = resolved.make_fuse_mapping();
-        let routes = RoutingTable::new(&resolved);
-        let energy_mgr = EnergyManager::new(&resolved.nodes);
-        let mut router = RoutingServer {
-            timestep: 1,
-            ts_config: test_ts_config(),
-            channels: resolved,
-            routes,
-            queued: BinaryHeap::new(),
-            fuse_mapping,
-            mailboxes: vec![VecDeque::new(); handles.len()],
-            rng: StdRng::seed_from_u64(42),
-            tx,
-            energy_mgr,
-            remap_tx: std::sync::mpsc::channel().0,
-            timestep_ns: {
-                let tc = test_ts_config();
-                tc.length.get() * tc.unit.to_ns_factor()
-            },
-            sequence: 0,
-            next_msg_id: 0,
-            signal_info: vec![SignalInfo::default(); handles.len()],
-        };
+        let mut router = make_router_from_resolved(resolved, tx);
 
         // Write unknown state
         let msg = fuse::Message {
@@ -635,22 +616,22 @@ mod tests {
         assert!(!e.is_dead);
 
         // Step 2: 150 + 50 - 200 = 0 (dead! charge <= 0)
-        router.energy_mgr.newly_depleted.clear();
+        router.coordinator.energy_mgr.newly_depleted.clear();
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 0);
         assert!(e.is_dead);
-        assert_eq!(router.energy_mgr.newly_depleted, vec![0]);
+        assert_eq!(router.coordinator.energy_mgr.newly_depleted, vec![0]);
 
         // Steps 3-12: dead, only sources. 0 + 10*50 = 500 (at threshold!)
         for _ in 0..10 {
-            router.energy_mgr.newly_recovered.clear();
+            router.coordinator.energy_mgr.newly_recovered.clear();
             router.step().unwrap();
         }
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.charge_nj, 500);
         assert!(!e.is_dead, "Should restart at threshold");
-        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+        assert_eq!(router.coordinator.energy_mgr.newly_recovered, vec![0]);
 
         // Step 13: alive again, draining. 500 + 50 - 200 = 350
         router.step().unwrap();
@@ -887,7 +868,7 @@ mod tests {
 
         // Subscriber mailbox should have the message
         assert!(
-            !router.mailboxes[1].is_empty(),
+            !router.coordinator.workers[0].mailboxes[1].is_empty(),
             "Mailbox should have message before remap"
         );
 
@@ -896,12 +877,12 @@ mod tests {
 
         // Mailbox for the remapped handle should be cleared
         assert!(
-            router.mailboxes[1].is_empty(),
+            router.coordinator.workers[0].mailboxes[1].is_empty(),
             "Mailbox should be cleared after remap"
         );
         // Publisher mailbox (not remapped) should still have its message
         assert!(
-            !router.mailboxes[0].is_empty(),
+            !router.coordinator.workers[0].mailboxes[0].is_empty(),
             "Publisher mailbox should be untouched by remap"
         );
     }
@@ -1035,7 +1016,7 @@ mod tests {
         router.step().unwrap();
 
         // Subscriber mailbox should have received the message
-        assert_eq!(router.mailboxes[1].len(), 1);
+        assert_eq!(router.coordinator.workers[0].mailboxes[1].len(), 1);
     }
 
     // -----------------------------------------------------------------------
@@ -1154,29 +1135,7 @@ mod tests {
             channel_names: vec![Arc::from("ctl.power_flows")],
             handles: handles.clone(),
         };
-        let fuse_mapping = resolved.make_fuse_mapping();
-        let routes = RoutingTable::new(&resolved);
-        let energy_mgr = EnergyManager::new(&resolved.nodes);
-        let mut router = RoutingServer {
-            timestep: 1,
-            ts_config: test_ts_config(),
-            channels: resolved,
-            routes,
-            queued: BinaryHeap::new(),
-            fuse_mapping,
-            mailboxes: vec![VecDeque::new(); handles.len()],
-            rng: StdRng::seed_from_u64(42),
-            tx,
-            energy_mgr,
-            remap_tx: std::sync::mpsc::channel().0,
-            timestep_ns: {
-                let tc = test_ts_config();
-                tc.length.get() * tc.unit.to_ns_factor()
-            },
-            sequence: 0,
-            next_msg_id: 0,
-            signal_info: vec![SignalInfo::default(); handles.len()],
-        };
+        let mut router = make_router_from_resolved(resolved, tx);
 
         // Write a source and a sink via control file (nj/ts passthrough)
         let write_msg = fuse::Message {
@@ -1255,29 +1214,7 @@ mod tests {
             channel_names: vec![Arc::from("ctl.power_flows")],
             handles: handles.clone(),
         };
-        let fuse_mapping = resolved.make_fuse_mapping();
-        let routes = RoutingTable::new(&resolved);
-        let energy_mgr = EnergyManager::new(&resolved.nodes);
-        let mut router = RoutingServer {
-            timestep: 1,
-            ts_config: test_ts_config(),
-            channels: resolved,
-            routes,
-            queued: BinaryHeap::new(),
-            fuse_mapping,
-            mailboxes: vec![VecDeque::new(); handles.len()],
-            rng: StdRng::seed_from_u64(42),
-            tx,
-            energy_mgr,
-            remap_tx: std::sync::mpsc::channel().0,
-            timestep_ns: {
-                let tc = test_ts_config();
-                tc.length.get() * tc.unit.to_ns_factor()
-            },
-            sequence: 0,
-            next_msg_id: 0,
-            signal_info: vec![SignalInfo::default(); handles.len()],
-        };
+        let mut router = make_router_from_resolved(resolved, tx);
 
         // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep
         // nj/ts = 100 * 1_000_000 * 1_000_000 / 1_000_000_000 = 100_000

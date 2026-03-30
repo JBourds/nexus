@@ -17,15 +17,15 @@ use crate::{
 };
 #[allow(unused_imports)] // Position is used by delivery.rs via `use super::*`
 use config::ast::Position;
-use config::ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
+use config::ast::{DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
 use rand::rngs::StdRng;
-use std::rc::Rc;
+use std::sync::Arc;
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
 use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
-use tracing::{Level, debug, event, info, instrument, warn};
+use tracing::{Level, event, info, instrument, warn};
 
 mod control;
 mod energy;
@@ -40,11 +40,14 @@ pub type Timestep = u64;
 pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, usize, AddressedMsg)>;
 pub type Mailbox = VecDeque<QueuedMessage>;
 
+pub(crate) mod coordinator;
 mod delivery;
 mod errors;
 mod link_simulation;
 mod messages;
+mod partitioner;
 mod table;
+pub(crate) mod worker;
 
 use delivery::*;
 pub use errors::*;
@@ -91,31 +94,22 @@ pub(crate) struct RoutingServer {
     channels: ResolvedChannels,
     /// Routing table with information with computed routes between nodes.
     routes: RoutingTable,
-    /// AddressedMsgs queued to become active at a specific timestep.
-    queued: MessageQueue,
     /// Mapping from channel keys used by FUSE to those used by the kernel.
     fuse_mapping: HashMap<fuse::ChannelId, usize>,
-    /// Per-handle file mailbox with buffered messages ready to be read.
-    /// Also contains an optional TTL which marks it as expired if it is in the
-    /// past. Uses the niche optimization that the ttl for a channel cannot be
-    /// 0, which means we can use an Option<T> here with no overhead!
-    mailboxes: Vec<Mailbox>,
     /// Random number generator to use
     rng: StdRng,
     /// Channel which router delivers messages to file system
     tx: mpsc::Sender<fuse::KernelMessage>,
-    /// Energy subsystem: tracks battery nodes, death/recovery transitions.
-    energy_mgr: energy::EnergyManager,
     /// Sender for (old_pid, new_pid) pairs consumed by the FUSE filesystem.
     remap_tx: mpsc::Sender<(u32, u32)>,
     /// Cached nanoseconds per timestep (constant for the simulation).
     timestep_ns: u64,
-    /// Sequence counter for message ordering within a timestep.
-    sequence: usize,
     /// Monotonic counter for unique message IDs across the simulation.
     next_msg_id: u64,
-    /// Per-handle signal quality from the last RX on each channel endpoint.
-    signal_info: Vec<SignalInfo>,
+    /// Coordinator managing workers for distributed message processing.
+    coordinator: coordinator::Coordinator,
+    /// Number of worker threads to use (1 = single-threaded, like before).
+    num_workers: usize,
 }
 
 /// Last-received signal quality for a (destination_node, channel) pair.
@@ -126,15 +120,30 @@ pub(crate) struct SignalInfo {
 }
 
 impl RoutingServer {
-    /// Build the routing table during initialization.
+    /// Build the routing table during initialization (single-worker mode).
+    #[allow(dead_code)]
     #[instrument]
     pub fn serve(
         tx: mpsc::Sender<fuse::KernelMessage>,
         channels: ResolvedChannels,
         ts_config: TimestepConfig,
         rng: StdRng,
+        source: Source,
+        remap_tx: mpsc::Sender<(u32, u32)>,
+    ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
+        Self::serve_with_workers(tx, channels, ts_config, rng, source, remap_tx, 1)
+    }
+
+    /// Build the routing table and spawn workers for distributed simulation.
+    #[instrument]
+    pub fn serve_with_workers(
+        tx: mpsc::Sender<fuse::KernelMessage>,
+        channels: ResolvedChannels,
+        ts_config: TimestepConfig,
+        mut rng: StdRng,
         mut source: Source,
         remap_tx: mpsc::Sender<(u32, u32)>,
+        num_workers: usize,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -142,27 +151,27 @@ impl RoutingServer {
             .name("nexus_router".to_string())
             .spawn(move || {
                 let fuse_mapping = channels.make_fuse_mapping();
-                let handles_count = channels.handles.len();
                 let routes = RoutingTable::new(&channels);
                 let timestep_ns = ts_config.length.get() * ts_config.unit.to_ns_factor();
-                let energy_mgr = energy::EnergyManager::new(&channels.nodes);
+                let coordinator = coordinator::Coordinator::new(
+                    num_workers.max(1),
+                    &channels,
+                    &mut rng,
+                );
                 let mut router = Self {
                     // This makes all the `NonZeroU64`s happy
                     timestep: 1,
                     channels,
                     routes,
-                    queued: BinaryHeap::new(),
-                    mailboxes: vec![VecDeque::new(); handles_count],
                     fuse_mapping,
                     ts_config,
                     rng,
                     tx,
-                    energy_mgr,
                     remap_tx,
                     timestep_ns,
-                    sequence: 0,
                     next_msg_id: 0,
-                    signal_info: vec![SignalInfo::default(); handles_count],
+                    coordinator,
+                    num_workers: num_workers.max(1),
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -183,12 +192,14 @@ impl RoutingServer {
                                 break Err(KernelError::SourceError(e));
                             }
                             let depleted = router
+                                .coordinator
                                 .energy_mgr
                                 .newly_depleted
                                 .drain(..)
                                 .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
                             let recovered = router
+                                .coordinator
                                 .energy_mgr
                                 .newly_recovered
                                 .drain(..)
@@ -218,10 +229,12 @@ impl RoutingServer {
     /// mailboxes for affected handles, and push remaps to the shared FUSE queue.
     fn apply_pid_remaps(&mut self, pairs: &[(u32, u32)]) {
         for &(old_pid, new_pid) in pairs {
+            // Clear worker mailboxes for old PID before updating handles.
+            self.coordinator
+                .clear_mailboxes_for_pid(old_pid, &self.channels);
             for (idx, handle) in self.channels.handles.iter_mut().enumerate() {
                 if handle.0 == old_pid {
                     handle.0 = new_pid;
-                    self.mailboxes[idx].clear();
                     // Update fuse_mapping: remove old key, insert new one
                     let channel_name = self.channels.channel_names[handle.2.0].to_string();
                     self.fuse_mapping.remove(&(old_pid, channel_name.clone()));
@@ -312,9 +325,18 @@ impl RoutingServer {
         self.next_msg_id += 1;
         event!(target: "tx", Level::INFO, timestep, channel = channel_handle.0, node = src_node.0, tx = true, msg_id, data = msg.data.as_slice());
 
-        // Queue the message first; only drain TX energy on success so that
-        // a failed queue does not silently consume charge (BUG-9).
-        self.queue_message(src_node, channel_handle, msg.data, msg_id)?;
+        // Queue the message via the appropriate worker.
+        let worker = self.coordinator.worker_for_handle_mut(index);
+        worker.queue_message(
+            src_node,
+            channel_handle,
+            msg.data,
+            msg_id,
+            &self.channels,
+            &self.routes.entries,
+            timestep,
+            self.ts_config,
+        )?;
 
         energy::EnergyManager::drain_tx(&mut self.channels.nodes, src_node.0, &channel_handle);
 
@@ -396,7 +418,8 @@ impl RoutingServer {
         index: usize,
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
-        match self.deliver_msg(index) {
+        let worker = self.coordinator.worker_for_handle_mut(index);
+        match worker.deliver_msg(index, &self.channels, self.timestep, &self.tx) {
             Ok(true) => Ok(()),
             Ok(false) => self
                 .tx
@@ -447,7 +470,8 @@ impl RoutingServer {
         let Some(&handle_index) = self.fuse_mapping.get(&key) else {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
-        let value = extractor(&self.signal_info[handle_index]);
+        let worker = self.coordinator.worker_for_handle_mut(handle_index);
+        let value = extractor(&worker.signal_info[handle_index]);
         msg.data = format!("{value:.2}").into_bytes();
         self.tx
             .send(fuse::KernelMessage::Exclusive(msg))
@@ -462,65 +486,8 @@ impl RoutingServer {
     /// Take a single step in the simulation.
     pub fn step(&mut self) -> Result<(), RouterError> {
         self.timestep += 1;
-        self.energy_mgr
-            .tick(&mut self.channels.nodes, self.timestep, self.timestep_ns);
         self.apply_all_motions_and_log();
-        self.expire_messages();
-        self.deliver_queued_messages()
-    }
-
-    /// Remove expired messages from all mailboxes.
-    fn expire_messages(&mut self) {
-        let timestep = self.timestep;
-        for mailbox in self.mailboxes.iter_mut() {
-            while mailbox
-                .front()
-                .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < timestep))
-            {
-                let _ = mailbox.pop_front();
-            }
-        }
-    }
-
-    /// Deliver all messages whose activation timestep has arrived.
-    fn deliver_queued_messages(&mut self) -> Result<(), RouterError> {
-        while self
-            .queued
-            .peek()
-            .is_some_and(|(ts, _, _)| ts.0 <= self.timestep)
-        {
-            let Some((_, _, frame)) = self.queued.pop() else {
-                return Err(RouterError::StepError);
-            };
-            let (_, dst_node, channel_handle) = self.channels.handles[frame.handle_ptr];
-            let mailbox = &mut self.mailboxes[frame.handle_ptr];
-            let channel = &mut self.channels.channels[channel_handle.0];
-
-            if channel
-                .r#type
-                .max_buffered()
-                .is_none_or(|n| n.get() > mailbox.len())
-            {
-                mailbox.push_back(frame.msg);
-
-                // Deduct RX channel energy cost on delivery
-                energy::EnergyManager::drain_rx(
-                    &mut self.channels.nodes,
-                    dst_node.0,
-                    &channel_handle,
-                );
-            } else {
-                warn!("Message dropped due to full queue!");
-                event!(
-                    target: "drop", Level::WARN,
-                    timestep = self.timestep,
-                    channel = channel_handle.0,
-                    node = frame.msg.src.0,
-                    msg_id = frame.msg.msg_id,
-                    reason = "buffer_full"
-                );
-            }
-        }
-        Ok(())
+        self.coordinator
+            .step(self.timestep, &mut self.channels, self.timestep_ns)
     }
 }

@@ -204,6 +204,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         let file_handles = make_file_handles(&sim, &runc.handles);
         let protocol_handles =
             KernelBuilder::new(sim.clone(), runc, file_handles, rx, tx, remap_tx)
+                .num_workers(args.workers)
                 .build()?
                 .run(args.cmd.clone())?;
         summaries.extend(get_output(protocol_handles));

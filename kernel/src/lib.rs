@@ -76,6 +76,7 @@ pub struct Kernel {
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
+    num_workers: usize,
 }
 
 /// Builder for constructing a `Kernel` with optional flags.
@@ -89,6 +90,7 @@ pub struct KernelBuilder {
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
     time_dilation: Option<Arc<AtomicU64>>,
+    num_workers: usize,
 }
 
 impl KernelBuilder {
@@ -110,6 +112,7 @@ impl KernelBuilder {
             abort: None,
             pause: None,
             time_dilation: None,
+            num_workers: 1,
         }
     }
 
@@ -125,6 +128,14 @@ impl KernelBuilder {
 
     pub fn time_dilation(mut self, td: Arc<AtomicU64>) -> Self {
         self.time_dilation = Some(td);
+        self
+    }
+
+    /// Set the number of worker threads for distributed simulation.
+    /// Defaults to 1 (single-threaded). Values > 1 enable parallel
+    /// channel processing across multiple CPU cores.
+    pub fn num_workers(mut self, n: usize) -> Self {
+        self.num_workers = n.max(1);
         self
     }
 
@@ -160,6 +171,7 @@ impl KernelBuilder {
             remap_tx: self.remap_tx,
             abort: self.abort,
             pause: self.pause,
+            num_workers: self.num_workers,
         })
     }
 }
@@ -197,11 +209,14 @@ impl Kernel {
             remap_tx,
             abort,
             pause,
+            num_workers,
         } = self;
         let mut event_queue = BTreeMap::new();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
+            RoutingServer::serve_with_workers(
+                tx, channels, timestep, rng, source, remap_tx, num_workers,
+            )
         }?;
         let mut status_server = StatusServer::serve(time_dilation.clone(), runc)?;
         queue_event(

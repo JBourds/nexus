@@ -111,6 +111,7 @@ impl EnergyManager {
     }
 
     /// Deduct RX energy cost for a message received on `channel` by node at `node_idx`.
+    #[allow(dead_code)]
     pub fn drain_rx(nodes: &mut [Node], node_idx: usize, channel: &ChannelHandle) {
         let rx_cost_nj: u64 = nodes[node_idx]
             .channel_energy
