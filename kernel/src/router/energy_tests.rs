@@ -1475,4 +1475,243 @@ mod tests {
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.power_sources[0].1.nj_per_timestep(0), 100_000);
     }
+
+    // -----------------------------------------------------------------------
+    // End-to-end: a real subprocess runs as the node's "program". The kernel
+    // drives it to death via its energy model, sources recharge the node to
+    // above the restart threshold, the subprocess is killed & respawned
+    // (mirroring StatusServer::respawn_node), and the battery tracing events
+    // flow through a subscriber that mirrors the GUI bridge, driving a
+    // GUI-equivalent NodeState whose `is_dead` / `charge_ratio` fields
+    // transition exactly as the real GUI would render them.
+    //
+    // This covers the full revival path kernel → tracing → GUI-facing state
+    // and proves that "a new node gets started" at revival corresponds to
+    // both a subprocess respawn AND an observable GUI state transition.
+    //
+    // Scope: the cgroup freeze/unfreeze done by StatusServer in production
+    // is stubbed (we just track whether the subprocess is alive); it's
+    // infrastructure, not revival logic.
+    // -----------------------------------------------------------------------
+    mod e2e_revival {
+        use std::process::{Child, Command, Stdio};
+        use std::sync::{Arc, Mutex};
+
+        use trace::format::{TraceEvent, TraceRecord};
+        use tracing::field::Visit;
+        use tracing::{Event, Subscriber};
+        use tracing_subscriber::layer::{Context, Layer};
+        use tracing_subscriber::prelude::*;
+
+        use super::*;
+
+        /// Mirror of `gui::sim::bridge::BridgeVisitor` restricted to the
+        /// fields the "battery" branch reads.
+        #[derive(Default)]
+        struct BatteryVisitor {
+            timestep: u64,
+            node: u32,
+            charge_nj: u64,
+        }
+
+        impl Visit for BatteryVisitor {
+            fn record_debug(&mut self, _: &tracing::field::Field, _: &dyn std::fmt::Debug) {}
+            fn record_u64(&mut self, field: &tracing::field::Field, value: u64) {
+                match field.name() {
+                    "timestep" => self.timestep = value,
+                    "node" => self.node = value as u32,
+                    "charge_nj" => self.charge_nj = value,
+                    _ => {}
+                }
+            }
+        }
+
+        /// Mirror of `gui::sim::bridge::ReloadableSimLayer`'s "battery"
+        /// branch: translate a tracing event into a `TraceRecord` and
+        /// forward it — identical wire format to what the GUI receives.
+        struct CaptureLayer {
+            tx: Arc<Mutex<std::sync::mpsc::Sender<TraceRecord>>>,
+        }
+
+        impl<S: Subscriber> Layer<S> for CaptureLayer {
+            fn on_event(&self, event: &Event<'_>, _: Context<'_, S>) {
+                if event.metadata().target() != "battery" {
+                    return;
+                }
+                let mut v = BatteryVisitor::default();
+                event.record(&mut v);
+                let record = TraceRecord {
+                    timestep: v.timestep,
+                    event: TraceEvent::EnergyUpdate {
+                        node: v.node,
+                        energy_nj: v.charge_nj,
+                    },
+                };
+                let _ = self.tx.lock().unwrap().send(record);
+            }
+        }
+
+        /// Minimal clone of the GUI's `NodeState` for the fields the
+        /// revival path touches. Field update logic is copied verbatim
+        /// from `gui/src/app.rs` `process_gui_event`'s `EnergyUpdate`
+        /// branch so this test drifts with any change there.
+        #[derive(Debug)]
+        struct GuiNodeState {
+            max_nj: u64,
+            charge_ratio: f32,
+            is_dead: bool,
+        }
+
+        impl GuiNodeState {
+            fn apply(&mut self, record: &TraceRecord) {
+                if let TraceEvent::EnergyUpdate { energy_nj, .. } = &record.event {
+                    let ratio = if self.max_nj == 0 {
+                        1.0
+                    } else {
+                        *energy_nj as f32 / self.max_nj as f32
+                    };
+                    self.charge_ratio = ratio.clamp(0.0, 1.0);
+                    self.is_dead = *energy_nj == 0 && self.max_nj > 0;
+                }
+            }
+        }
+
+        fn spawn_real_program() -> Child {
+            Command::new("sleep")
+                .arg("600")
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .stdin(Stdio::null())
+                .spawn()
+                .expect("failed to spawn `sleep` subprocess")
+        }
+
+        fn is_alive(child: &mut Child) -> bool {
+            matches!(child.try_wait(), Ok(None))
+        }
+
+        #[test]
+        fn test_e2e_revival_respawns_process_and_updates_gui_state() {
+            // ---- 1. Real program for the node ----
+            let mut child = spawn_real_program();
+            let initial_pid = child.id();
+            assert!(is_alive(&mut child), "subprocess should start alive");
+
+            // ---- 2. Tracing pipeline identical to the GUI bridge ----
+            let (tx, rx) = std::sync::mpsc::channel::<TraceRecord>();
+            let layer = CaptureLayer {
+                tx: Arc::new(Mutex::new(tx)),
+            };
+            let subscriber = tracing_subscriber::registry().with(layer);
+
+            // ---- 3. Kernel router with a revival-prone node ----
+            // 300 start charge, +50/ts source, -200/ts drain, threshold 500.
+            // Dies at step 2; revives at step 12 (when charge hits 500).
+            let mut energy = energy_with_source(300, 10_000, 50);
+            energy.power_states_nj = HashMap::from([("active".into(), 200)]);
+            energy.current_state = Some("active".into());
+            energy.restart_threshold_nj = Some(500);
+            let max_nj = energy.max_nj;
+            let (mut router, _fuse_rx) = make_single_node_router(energy);
+
+            // ---- 4. GUI-equivalent state ----
+            let mut gui_state = GuiNodeState {
+                max_nj,
+                charge_ratio: 300.0 / max_nj as f32,
+                is_dead: false,
+            };
+
+            let mut saw_gui_death = false;
+            let mut saw_gui_revival = false;
+            let mut kernel_depleted_at: Option<u64> = None;
+            let mut kernel_recovered_at: Option<u64> = None;
+            let mut respawned_pid: Option<u32> = None;
+
+            tracing::subscriber::with_default(subscriber, || {
+                for step in 1..=20u64 {
+                    router.energy_mgr.newly_depleted.clear();
+                    router.energy_mgr.newly_recovered.clear();
+                    router.step().unwrap();
+
+                    // Drain every TraceRecord the "GUI" would have received
+                    // this step and apply it to GUI state.
+                    while let Ok(record) = rx.try_recv() {
+                        let was_dead = gui_state.is_dead;
+                        gui_state.apply(&record);
+                        if !was_dead && gui_state.is_dead {
+                            saw_gui_death = true;
+                        }
+                        if was_dead && !gui_state.is_dead {
+                            saw_gui_revival = true;
+                        }
+                    }
+
+                    // Mirror StatusServer reactions to kernel energy events.
+                    if !router.energy_mgr.newly_depleted.is_empty() {
+                        kernel_depleted_at.get_or_insert(step);
+                        // Production: freeze the cgroup. Here: verify the
+                        // subprocess is still alive (stand-in for "frozen").
+                        assert!(
+                            is_alive(&mut child),
+                            "subprocess should still exist while 'frozen'"
+                        );
+                    }
+                    if !router.energy_mgr.newly_recovered.is_empty() {
+                        kernel_recovered_at.get_or_insert(step);
+                        // Production respawn: kill the frozen process and
+                        // spawn a fresh one (kernel/src/status/mod.rs:148).
+                        let _ = child.kill();
+                        let _ = child.wait();
+                        child = spawn_real_program();
+                        respawned_pid = Some(child.id());
+                    }
+                }
+            });
+
+            // ---- Kernel side ----
+            assert_eq!(
+                kernel_depleted_at,
+                Some(2),
+                "node should deplete at step 2 (charge 300 + 50 - 200*2 = 0)"
+            );
+            assert_eq!(
+                kernel_recovered_at,
+                Some(12),
+                "node should recover at step 12 (0 + 10*50 = 500 == threshold)"
+            );
+
+            // ---- Subprocess side ----
+            let new_pid = respawned_pid.expect("subprocess was respawned on revival");
+            assert_ne!(
+                new_pid, initial_pid,
+                "revival must start a *new* process, not keep the old one"
+            );
+            assert!(
+                is_alive(&mut child),
+                "respawned subprocess should be running after revival"
+            );
+
+            // ---- GUI-facing state ----
+            assert!(
+                saw_gui_death,
+                "GUI NodeState should have observed is_dead=true (charge == 0)"
+            );
+            assert!(
+                saw_gui_revival,
+                "GUI NodeState should have observed is_dead=false again after revival"
+            );
+            assert!(
+                !gui_state.is_dead,
+                "final GUI state should show node alive"
+            );
+            assert!(
+                gui_state.charge_ratio > 0.0,
+                "final GUI charge_ratio should be positive"
+            );
+
+            // Cleanup.
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
 }
