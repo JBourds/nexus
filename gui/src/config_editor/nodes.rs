@@ -65,10 +65,22 @@ pub fn show_nodes(
 fn show_node(
     ui: &mut Ui,
     name: &str,
-    _node: &mut ast::Node,
+    node: &mut ast::Node,
     _available_channels: &[String],
     modules: &mut ModuleState,
 ) {
+    // --- Position ---
+    ui.label("Position:");
+    ui.horizontal(|ui| {
+        ui.label("X:");
+        ui.add(egui::DragValue::new(&mut node.position.point.x).speed(0.1));
+        ui.label("Y:");
+        ui.add(egui::DragValue::new(&mut node.position.point.y).speed(0.1));
+        ui.label("Z:");
+        ui.add(egui::DragValue::new(&mut node.position.point.z).speed(0.1));
+    });
+    ui.separator();
+
     // --- Profiles ---
     if !modules.available_profiles.is_empty() {
         ui.label("Profiles:");

@@ -11,31 +11,53 @@ use crate::state::{ArrowAnimation, NodeState};
 /// Returns (clicked_node, hovered_node).
 ///
 /// `node_highlights` maps node name -> ring color (e.g. green for received, red for dropped).
+/// `draggable` enables click-and-drag repositioning of nodes (only in config editor).
 pub fn show_grid_panel(
     ui: &mut Ui,
     grid: &mut GridView,
-    nodes: &[NodeState],
+    nodes: &mut [NodeState],
     selected_node: &Option<String>,
     arrows: &[ArrowAnimation],
     distance_unit: DistanceUnit,
     node_highlights: &HashMap<String, Color32>,
+    draggable: bool,
 ) -> (Option<String>, Option<String>) {
     let unit_label = distance_unit_abbrev(distance_unit);
     let available = ui.available_size();
     let (canvas_rect, response) = ui.allocate_exact_size(available, Sense::click_and_drag());
 
-    // Track whether drag started on a node (persisted across frames via egui temp data).
+    // Track which node the drag started on (persisted across frames via egui temp data).
     let drag_on_node_id = ui.id().with("drag_on_node");
+    let dragged_node_id = ui.id().with("dragged_node_name");
     let mut drag_started_on_node: bool = ui.data(|d| d.get_temp(drag_on_node_id)).unwrap_or(false);
     if response.drag_started() {
-        drag_started_on_node = response
+        let hit = response
             .interact_pointer_pos()
-            .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes))
-            .is_some();
+            .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes));
+        drag_started_on_node = draggable && hit.is_some();
         ui.data_mut(|d| d.insert_temp(drag_on_node_id, drag_started_on_node));
+        ui.data_mut(|d| d.insert_temp::<Option<String>>(dragged_node_id, hit));
     }
     if response.drag_stopped() {
         ui.data_mut(|d| d.insert_temp(drag_on_node_id, false));
+        ui.data_mut(|d| d.insert_temp::<Option<String>>(dragged_node_id, None));
+    }
+
+    // Node dragging: move the dragged node by the screen delta converted to world coords.
+    let is_shift = response.ctx.input(|i| i.modifiers.shift);
+    if drag_started_on_node && !is_shift && response.dragged_by(egui::PointerButton::Primary) {
+        let delta = response.drag_delta();
+        if delta.x != 0.0 || delta.y != 0.0 {
+            let dragged_name: Option<String> =
+                ui.data(|d| d.get_temp(dragged_node_id)).unwrap_or(None);
+            if let Some(ref name) = dragged_name {
+                if let Some(node) = nodes.iter_mut().find(|n| &n.name == name) {
+                    // Convert screen delta to world delta (Y is inverted in world coords)
+                    node.x += (delta.x / grid.zoom) as f64;
+                    node.y -= (delta.y / grid.zoom) as f64;
+                }
+            }
+        }
     }
 
     // Interactive scrollbars (must come before handle_input so drag is detected first)
@@ -50,7 +72,7 @@ pub fn show_grid_panel(
     grid.draw(ui, canvas_rect, unit_label);
 
     // Draw nodes (rendering only)
-    for node in nodes {
+    for node in nodes.iter() {
         let is_selected = selected_node.as_ref().is_some_and(|s| s == &node.name);
         render::node::draw_node(ui, canvas_rect, grid, node, is_selected);
         // Draw receiver highlight ring if applicable
@@ -90,6 +112,15 @@ pub fn show_grid_panel(
         .ctx()
         .input(|i| i.pointer.hover_pos())
         .and_then(|pos| hit_test_node(pos, canvas_rect, grid, nodes));
+
+    // Show grab cursor when hovering over a draggable node
+    if draggable {
+        if drag_started_on_node && response.dragged_by(egui::PointerButton::Primary) && !is_shift {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if hovered_node.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        }
+    }
 
     (clicked_node, hovered_node)
 }
