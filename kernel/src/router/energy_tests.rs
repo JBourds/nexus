@@ -660,6 +660,191 @@ mod tests {
     }
 
     // -----------------------------------------------------------------------
+    // Test: dead node accumulating charge below its threshold stays dead
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_revival_stays_dead_below_threshold() {
+        // Source adds 10 nj/ts; threshold = 5000. 100 steps → 1000 nj, still dead.
+        let mut energy = energy_with_source(0, 10_000, 10);
+        energy.is_dead = true;
+        energy.restart_threshold_nj = Some(5000);
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        for _ in 0..100 {
+            router.step().unwrap();
+        }
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.charge_nj, 1000, "100 steps * 10 nj/ts = 1000 nj");
+        assert!(e.is_dead, "Should remain dead while charge < threshold");
+        assert!(
+            router.energy_mgr.newly_recovered.is_empty(),
+            "No recovery event should fire while below threshold"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: revival fires exactly at threshold (off-by-one boundary)
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_revival_threshold_boundary() {
+        // Source = 1 nj/ts, threshold = 1000. Step N brings charge to N.
+        // Step 999 → charge 999 < threshold → still dead.
+        // Step 1000 → charge 1000 == threshold → revives.
+        let mut energy = energy_with_source(0, 10_000, 1);
+        energy.is_dead = true;
+        energy.restart_threshold_nj = Some(1000);
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        for _ in 0..999 {
+            router.step().unwrap();
+        }
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.charge_nj, 999);
+        assert!(e.is_dead, "charge == threshold - 1 should still be dead");
+        assert!(router.energy_mgr.newly_recovered.is_empty());
+
+        router.step().unwrap();
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.charge_nj, 1000);
+        assert!(!e.is_dead, "charge == threshold should revive");
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: newly_recovered is populated only on the transition step,
+    // not on subsequent steps once the node is already alive.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_newly_recovered_fires_once_per_revival() {
+        let mut energy = energy_with_source(500, 10_000, 100);
+        energy.is_dead = true;
+        energy.restart_threshold_nj = Some(500);
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        // Step 1: dead, 500 + 100 = 600 >= 500 → revives.
+        router.step().unwrap();
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+        assert!(!router.channels.nodes[0].energy.as_ref().unwrap().is_dead);
+
+        // Node is now alive. Further steps should not push it again.
+        router.energy_mgr.newly_recovered.clear();
+        for _ in 0..10 {
+            router.step().unwrap();
+        }
+        assert!(
+            router.energy_mgr.newly_recovered.is_empty(),
+            "newly_recovered must only fire on the dead→alive transition"
+        );
+        assert!(!router.channels.nodes[0].energy.as_ref().unwrap().is_dead);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: node cycles through alive → dead → revive → dead → revive.
+    // Verifies revival works on every cycle, not just the first.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_revival_repeated_cycle() {
+        // 300 start, +50/ts source, -200/ts drain, threshold 500.
+        // Dies every ~14 steps, revives every ~10 steps when dead.
+        let mut energy = energy_with_source(300, 10_000, 50);
+        energy.power_states_nj = HashMap::from([("active".into(), 200)]);
+        energy.current_state = Some("active".into());
+        energy.restart_threshold_nj = Some(500);
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        let mut death_count = 0;
+        let mut revival_count = 0;
+        for _ in 0..50 {
+            router.energy_mgr.newly_depleted.clear();
+            router.energy_mgr.newly_recovered.clear();
+            router.step().unwrap();
+            death_count += router.energy_mgr.newly_depleted.len();
+            revival_count += router.energy_mgr.newly_recovered.len();
+        }
+        assert!(
+            death_count >= 2,
+            "Expected at least 2 deaths over 50 steps, got {death_count}"
+        );
+        assert!(
+            revival_count >= 2,
+            "Expected at least 2 revivals over 50 steps, got {revival_count}"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: multiple dead nodes revive independently at their own pace
+    // based on their individual source rates.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_revival_staggered_multi_node() {
+        // Node A: threshold 500, source 100 nj/ts → revives at step 5.
+        let mut energy_a = energy_with_source(0, 10_000, 100);
+        energy_a.is_dead = true;
+        energy_a.restart_threshold_nj = Some(500);
+
+        // Node B: threshold 500, source 50 nj/ts → revives at step 10.
+        let mut energy_b = energy_with_source(0, 10_000, 50);
+        energy_b.is_dead = true;
+        energy_b.restart_threshold_nj = Some(500);
+
+        let (mut router, _rx) = make_router(
+            vec![
+                make_node(Some(energy_a)),
+                make_node(Some(energy_b)),
+            ],
+            vec![],
+            vec![],
+        );
+
+        // Steps 1..=5: A hits 500 at step 5 → revives. B at 250 → still dead.
+        for _ in 0..5 {
+            router.energy_mgr.newly_recovered.clear();
+            router.step().unwrap();
+        }
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+        assert!(!router.channels.nodes[0].energy.as_ref().unwrap().is_dead);
+        assert!(router.channels.nodes[1].energy.as_ref().unwrap().is_dead);
+        assert_eq!(router.channels.nodes[1].energy.as_ref().unwrap().charge_nj, 250);
+
+        // Steps 6..=10: B hits 500 at step 10 → revives. A already alive.
+        for _ in 0..5 {
+            router.energy_mgr.newly_recovered.clear();
+            router.step().unwrap();
+        }
+        assert_eq!(router.energy_mgr.newly_recovered, vec![1]);
+        assert!(!router.channels.nodes[1].energy.as_ref().unwrap().is_dead);
+        assert_eq!(router.channels.nodes[1].energy.as_ref().unwrap().charge_nj, 500);
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: a revived node immediately behaves as alive — its power-state
+    // drain resumes on the next tick.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_revived_node_drains_on_next_tick() {
+        // Starts dead at 400. Source = 200, drain = 50, threshold = 500.
+        let mut energy = energy_with_source(400, 10_000, 200);
+        energy.power_states_nj = HashMap::from([("active".into(), 50)]);
+        energy.current_state = Some("active".into());
+        energy.is_dead = true;
+        energy.restart_threshold_nj = Some(500);
+        let (mut router, _rx) = make_single_node_router(energy);
+
+        // Step 1: dead, drain skipped. 400 + 200 = 600 >= 500 → revives.
+        router.step().unwrap();
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.charge_nj, 600, "dead tick applies source but not drain");
+        assert!(!e.is_dead);
+        assert_eq!(router.energy_mgr.newly_recovered, vec![0]);
+
+        // Step 2: alive, drain applies. 600 + 200 - 50 = 750.
+        router.step().unwrap();
+        let e = router.channels.nodes[0].energy.as_ref().unwrap();
+        assert_eq!(e.charge_nj, 750, "alive tick applies source and drain");
+        assert!(!e.is_dead);
+    }
+
+    // -----------------------------------------------------------------------
     // Test: EnergyState::from_node conversion
     // -----------------------------------------------------------------------
     #[test]
