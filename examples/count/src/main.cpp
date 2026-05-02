@@ -15,6 +15,9 @@ void alarm_handler(int signum) {
 }
 
 int main() {
+    // Nexus tears down protocols with SIGKILL; without this, our final
+    // printf can sit in libc's pipe-buffered FILE buffer and be lost.
+    setbuf(stdout, NULL);
     signal(SIGALRM, alarm_handler);
     struct itimerval timer;
     timer.it_value.tv_sec = 1;
