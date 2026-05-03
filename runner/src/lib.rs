@@ -5,6 +5,7 @@ use std::{
     path::Path,
     process::{Child, Command, Output, Stdio},
 };
+use tempfile::TempDir;
 pub mod assignment;
 pub mod cgroupfs;
 pub mod cgroups;
@@ -14,10 +15,6 @@ use errors::*;
 
 use crate::assignment::{Affinity, AffinityBuilder, Bandwidth, Relative, RelativeBuilder};
 pub use crate::cgroups::*;
-
-const BASH: &str = "bash";
-const UNBUFFER: &str = "stdbuf -i0 -o0 -e0";
-const ECHO: &str = "echo";
 
 #[derive(Debug)]
 pub struct RunController {
@@ -43,23 +40,33 @@ struct BuildCtx<'a> {
     handle: Child,
 }
 
-fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
-    let mut cmd = Command::new(BASH);
+fn run_protocol(p: &NodeProtocol, cgroup: &Path, lockfile: &Path) -> io::Result<Child> {
     let procs_file = cgroup.join(cgroups::PROCS);
-
-    let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
+    let mut script = String::new();
+    let cgroups_proc = procs_file.display();
+    // Put this process' PID into the cgroups file then wait for lockfile to be
+    // deleted (this is required otherwise the node would complete the rest of
+    // its current quantum which could lead to executing before FUSE fs is
+    // fully setup), then execute the program with no buffering (to avoid losing
+    // any output).
     script.push_str(&format!(
-        "{UNBUFFER} {} {}",
-        p.runner.cmd,
-        p.runner.args.join(" ")
+        "echo $$ > {cgroups_proc}
+while [ -e {lockfile:?} ]; 
+    do sleep 0.01
+done
+exec stdbuf -i0 -o0 -e0 {cmd} {args}
+",
+        cmd = &p.runner.cmd,
+        args = p.runner.args.join(" ")
     ));
-    cmd.current_dir(&p.root)
+    Command::new("bash")
+        .current_dir(&p.root)
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .arg("-c")
-        .arg(script);
-    cmd.spawn()
+        .arg(script)
+        .spawn()
 }
 
 fn build_protocol<'a>(
@@ -133,13 +140,26 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
     let mut handles = Vec::new();
     let mut affinity_builder = AffinityBuilder::new();
     let mut relative_builder = RelativeBuilder::new();
+    let lockdir = TempDir::new().expect("couldn't create temp file");
+    let lockfile = lockdir.path().join("lock");
+    // Create lockfile
+    let _ = std::fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(&lockfile)
+        .expect("couldn't create lock file");
     for (node_name, node) in &sim.nodes {
         affinity_builder.add_node(node_name, &node.resources);
         relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
         for (protocol_name, protocol) in &node.protocols {
-            let protocol_handle =
-                cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
+            let protocol_handle = cgroup_controller.add_protocol(
+                protocol_name,
+                protocol,
+                &handle,
+                lockfile.as_path(),
+            )?;
             let pid = protocol_handle.pid().ok_or_else(|| {
                 ProtocolError::UnableToRun(io::Error::other(format!(
                     "process not started for {node_name}/{protocol_name}"

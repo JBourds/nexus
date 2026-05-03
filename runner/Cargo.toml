@@ -9,3 +9,4 @@ config = { path = "../config" }
 sysinfo = "0.36.1"
 thiserror = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
+tempfile = "3.27.0"

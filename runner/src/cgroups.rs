@@ -6,6 +6,7 @@ use std::{
 };
 
 use config::ast::{self, NodeProtocol, Resources};
+use tempfile::TempDir;
 
 use crate::{
     ProtocolSummary,
@@ -48,6 +49,8 @@ pub struct CgroupController {
     pub nodes_unlimited: NodeBucket,
     /// filesystem abstraction for cgroup operations
     fs: Box<dyn CgroupFs>,
+    /// Directory used to place lockfiles
+    lockdir: TempDir,
 }
 
 #[derive(Clone, Debug)]
@@ -102,7 +105,7 @@ impl ProtocolHandle {
 
     /// Kill the current process and respawn it in its cgroup.
     /// Returns `(old_pid, new_pid)` on success.
-    pub fn respawn(&mut self) -> Option<(u32, u32)> {
+    pub fn respawn(&mut self, phony: &Path) -> Option<(u32, u32)> {
         let old_pid = self.pid()?;
         let cgroup = self.cgroup_path.as_ref()?;
         // Kill and wait for the old process
@@ -111,8 +114,8 @@ impl ProtocolHandle {
             let _ = child.wait();
         }
         self.process = None;
-        // Spawn a fresh process
-        self.run(cgroup.clone()).ok()?;
+        // Spawn a fresh process (without lockfile)
+        let _ = self.run(&cgroup.clone(), phony).ok()?;
         let new_pid = self.pid()?;
         Some((old_pid, new_pid))
     }
@@ -148,11 +151,11 @@ impl ProtocolHandle {
         }
     }
 
-    pub fn run(&mut self, cgroup: impl AsRef<Path>) -> Result<bool, ProtocolError> {
+    pub fn run(&mut self, cgroup: &Path, lockfile: &Path) -> Result<bool, ProtocolError> {
         if self.process.is_none() {
             let process =
-                run_protocol(&self.ast, cgroup.as_ref()).map_err(ProtocolError::UnableToRun)?;
-            move_process(&RealCgroupFs, cgroup.as_ref(), process.id());
+                run_protocol(&self.ast, cgroup, lockfile).map_err(ProtocolError::UnableToRun)?;
+            move_process(&RealCgroupFs, cgroup, process.id());
             self.process = Some(process);
             Ok(true)
         } else {
@@ -220,11 +223,13 @@ impl CgroupController {
         let nodes_unlimited = NodeBucket::new(&*fs, root.join(NODES_UNLIMITED))?;
         let nodes_limited = NodeBucket::new(&*fs, root.join(NODES_LIMITED))?;
 
+        let lockdir = TempDir::new().expect("couldn't create temp file");
         let mut obj = Self {
             root,
             nodes_limited,
             nodes_unlimited,
             fs,
+            lockdir,
         };
         obj.freeze_nodes();
         Ok(obj)
@@ -240,6 +245,12 @@ impl CgroupController {
     pub fn unfreeze_nodes(&mut self) {
         freeze(&*self.fs, &self.nodes_unlimited.root, false);
         freeze(&*self.fs, &self.nodes_limited.root, false);
+    }
+
+    /// One-time function which releases lockfile and unfreezes nodes
+    pub fn start(&mut self) {
+        self.unfreeze_nodes();
+        std::fs::remove_file(self.lockdir.path().join("lock")).expect("couldn't release lockfile");
     }
 
     /// Set the frozen state of a single node's cgroup by name.
@@ -262,12 +273,14 @@ impl CgroupController {
     /// Unfreeze a node's cgroup, then respawn all its protocols.
     /// Returns the list of `(old_pid, new_pid)` pairs.
     pub fn respawn_node(&mut self, name: &str, handles: &mut [ProtocolHandle]) -> Vec<(u32, u32)> {
-        self.unfreeze_node(name);
-        handles
+        let phone_lockfile = self.lockdir.path().join("phony");
+        let remaps = handles
             .iter_mut()
             .filter(|h| h.node == name)
-            .filter_map(|h| h.respawn())
-            .collect()
+            .filter_map(|h| h.respawn(phone_lockfile.as_path()))
+            .collect();
+        self.unfreeze_node(name);
+        remaps
     }
 
     pub fn add_node(&mut self, name: &str, resources: Resources) -> io::Result<NodeHandle> {
@@ -305,6 +318,7 @@ impl CgroupController {
         name: &str,
         protocol: &NodeProtocol,
         handle: &NodeHandle,
+        lockfile: &Path,
     ) -> Result<ProtocolHandle, ProtocolError> {
         // Extract what we need before re-borrowing self
         let (cgroup, protocol_count) = {
@@ -322,7 +336,7 @@ impl CgroupController {
             name.to_string(),
         );
         proto_handle.cgroup_path = Some(cgroup.clone());
-        proto_handle.run(&cgroup)?;
+        proto_handle.run(&cgroup, lockfile)?;
         // Re-borrow to add the protocol cgroup
         let node = self.get_node(handle).expect("node was just looked up");
         node.add(cgroup);

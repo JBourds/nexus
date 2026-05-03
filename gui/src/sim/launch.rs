@@ -210,7 +210,7 @@ fn run_inner(
         .map_err(|e| anyhow::anyhow!("unable to mount FUSE filesystem: {e:?}"))?;
 
     // FUSE is mounted; unfreeze processes so they can access their files.
-    runc.cgroups.unfreeze_nodes();
+    runc.cgroups.start();
 
     let kernel = KernelBuilder::new(sim, runc, file_handles, rx, tx, remap_tx)
         .abort_flag(abort)
