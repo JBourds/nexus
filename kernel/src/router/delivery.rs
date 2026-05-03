@@ -8,9 +8,9 @@ pub(crate) struct AddressedMsg {
     pub(super) msg: QueuedMessage,
 }
 
-// Ordering for BinaryHeap: only used as tiebreaker after (Reverse<Timestep>, seq).
-// The sequence counter guarantees unique ordering, so this is never actually
-// reached, but the trait is required by BinaryHeap's element constraint.
+// See MessageQueue in mod.rs for tuple-ordering rationale; the
+// sequence counter guarantees unique ordering, so this comparison is
+// never reached. The trait is only required by BinaryHeap's bound.
 impl PartialEq for AddressedMsg {
     fn eq(&self, other: &Self) -> bool {
         self.handle_ptr == other.handle_ptr && self.msg.msg_id == other.msg.msg_id
@@ -131,7 +131,8 @@ impl RoutingServer {
 
             let num = self.sequence;
             self.sequence += 1;
-            self.queued.push((Reverse(becomes_active_at), num, msg));
+            self.queued
+                .push((Reverse(becomes_active_at), Reverse(num), msg));
         }
 
         Ok(())
@@ -316,5 +317,63 @@ impl RoutingServer {
         } else {
             Ok(false)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::NodeIdx;
+
+    fn synth(msg_id: u64) -> AddressedMsg {
+        AddressedMsg {
+            handle_ptr: 0,
+            msg: QueuedMessage {
+                src: NodeIdx(0),
+                buf: Rc::from(&[][..]),
+                expiration: None,
+                bit_errors: false,
+                msg_id,
+                rssi_dbm: 0.0,
+                snr_db: 0.0,
+            },
+        }
+    }
+
+    /// Within a single timestep, multiple writes from one publisher must
+    /// pop in insertion order. Without `Reverse` on the sequence number
+    /// the BinaryHeap (a max-heap on raw usize) would pop in reverse
+    /// insertion order, scrambling multi-write payloads — see the
+    /// MessageQueue type alias for context.
+    #[test]
+    fn message_queue_pops_in_insertion_order_within_timestep() {
+        let mut q: MessageQueue = BinaryHeap::new();
+        let ts = Reverse(7u64);
+        for (seq, mid) in (0..4).zip([100, 101, 102, 103]) {
+            q.push((ts, Reverse(seq), synth(mid)));
+        }
+
+        let mut got = Vec::new();
+        while let Some((_, _, frame)) = q.pop() {
+            got.push(frame.msg.msg_id);
+        }
+        assert_eq!(got, vec![100, 101, 102, 103]);
+    }
+
+    /// Earlier timesteps must still pop before later ones, regardless of
+    /// insertion order. Guards against accidentally Reversing the
+    /// timestep field too.
+    #[test]
+    fn message_queue_orders_timesteps_ascending() {
+        let mut q: MessageQueue = BinaryHeap::new();
+        q.push((Reverse(10u64), Reverse(0usize), synth(200)));
+        q.push((Reverse(5u64), Reverse(1usize), synth(201)));
+        q.push((Reverse(7u64), Reverse(2usize), synth(202)));
+
+        let mut got = Vec::new();
+        while let Some((Reverse(ts), _, frame)) = q.pop() {
+            got.push((ts, frame.msg.msg_id));
+        }
+        assert_eq!(got, vec![(5, 201), (7, 202), (10, 200)]);
     }
 }

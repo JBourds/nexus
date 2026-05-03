@@ -37,7 +37,15 @@ use crate::types::{ChannelHandle, ChannelIdx};
 use control::ControlFile;
 
 pub type Timestep = u64;
-pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, usize, AddressedMsg)>;
+// Tuple ordering: (Reverse<Timestep>, Reverse<usize>, AddressedMsg).
+// BinaryHeap is a max-heap, so Reverse(Timestep) ensures earlier
+// timesteps pop first. The Reverse around the sequence number is the
+// non-obvious bit: without it, two messages enqueued in the same
+// timestep would pop in reverse insertion order (a max-heap on raw
+// usize), silently scrambling multi-write payloads from one publisher.
+// AddressedMsg is never compared (heap stops at the second tuple field
+// because it's a strict total order on the prefix).
+pub type MessageQueue = BinaryHeap<(Reverse<Timestep>, Reverse<usize>, AddressedMsg)>;
 pub type Mailbox = VecDeque<QueuedMessage>;
 
 mod delivery;
