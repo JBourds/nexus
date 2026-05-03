@@ -120,13 +120,18 @@ impl ResolvedChannels {
     /// operations by removing the need for a hash map). This function creates
     /// the mapping between the key used by the FUSE module and the handle
     /// used by the kernel.
-    pub fn make_fuse_mapping(&self) -> HashMap<fuse::ChannelId, usize> {
-        self.handles
-            .iter()
-            .enumerate()
-            .map(|(index, (pid, _, channel))| {
-                ((*pid, self.channel_names[channel.0].to_string()), index)
-            })
-            .collect()
+    ///
+    /// The mapping is nested by PID so that the inner lookup keys by `&str`,
+    /// avoiding the per-message String allocation that the previous flat
+    /// `HashMap<(PID, String), usize>` shape forced on `receive_write` and
+    /// `request_read`.
+    pub fn make_fuse_mapping(&self) -> HashMap<fuse::PID, HashMap<String, usize>> {
+        let mut map: HashMap<fuse::PID, HashMap<String, usize>> = HashMap::new();
+        for (index, (pid, _, channel)) in self.handles.iter().enumerate() {
+            map.entry(*pid)
+                .or_default()
+                .insert(self.channel_names[channel.0].to_string(), index);
+        }
+        map
     }
 }

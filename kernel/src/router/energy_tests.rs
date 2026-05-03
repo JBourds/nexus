@@ -99,6 +99,8 @@ mod tests {
             queued: BinaryHeap::new(),
             fuse_mapping,
             mailboxes: vec![VecDeque::new(); mailbox_count],
+            nonempty_mailboxes: Vec::new(),
+            mailbox_active: vec![false; mailbox_count],
             rng: StdRng::seed_from_u64(42),
             tx,
             energy_mgr,
@@ -516,6 +518,8 @@ mod tests {
             queued: BinaryHeap::new(),
             fuse_mapping,
             mailboxes: vec![VecDeque::new(); handles.len()],
+            nonempty_mailboxes: Vec::new(),
+            mailbox_active: vec![false; handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
             energy_mgr,
@@ -587,6 +591,8 @@ mod tests {
             queued: BinaryHeap::new(),
             fuse_mapping,
             mailboxes: vec![VecDeque::new(); handles.len()],
+            nonempty_mailboxes: Vec::new(),
+            mailbox_active: vec![false; handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
             energy_mgr,
@@ -834,7 +840,7 @@ mod tests {
 
         // Verify initial state
         assert_eq!(router.channels.handles[0].0, 100);
-        assert!(router.fuse_mapping.contains_key(&(100, "ch_0".to_string())));
+        assert!(router.fuse_mapping.get(&100u32).is_some_and(|m| m.contains_key("ch_0")));
 
         // Remap PID 100 → 200
         router.apply_pid_remaps(&[(100, 200)]);
@@ -842,8 +848,8 @@ mod tests {
         // Handle PID should be updated
         assert_eq!(router.channels.handles[0].0, 200);
         // fuse_mapping should reflect new PID
-        assert!(!router.fuse_mapping.contains_key(&(100, "ch_0".to_string())));
-        assert!(router.fuse_mapping.contains_key(&(200, "ch_0".to_string())));
+        assert!(!router.fuse_mapping.contains_key(&100u32));
+        assert!(router.fuse_mapping.get(&200u32).is_some_and(|m| m.contains_key("ch_0")));
     }
 
     // -----------------------------------------------------------------------
@@ -990,8 +996,8 @@ mod tests {
 
         assert_eq!(router.channels.handles[0].0, 200);
         assert_eq!(router.channels.handles[1].0, 201);
-        assert!(router.fuse_mapping.contains_key(&(200, "ch_0".to_string())));
-        assert!(router.fuse_mapping.contains_key(&(201, "ch_0".to_string())));
+        assert!(router.fuse_mapping.get(&200u32).is_some_and(|m| m.contains_key("ch_0")));
+        assert!(router.fuse_mapping.get(&201u32).is_some_and(|m| m.contains_key("ch_0")));
     }
 
     // -----------------------------------------------------------------------
@@ -1165,6 +1171,8 @@ mod tests {
             queued: BinaryHeap::new(),
             fuse_mapping,
             mailboxes: vec![VecDeque::new(); handles.len()],
+            nonempty_mailboxes: Vec::new(),
+            mailbox_active: vec![false; handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
             energy_mgr,
@@ -1266,6 +1274,8 @@ mod tests {
             queued: BinaryHeap::new(),
             fuse_mapping,
             mailboxes: vec![VecDeque::new(); handles.len()],
+            nonempty_mailboxes: Vec::new(),
+            mailbox_active: vec![false; handles.len()],
             rng: StdRng::seed_from_u64(42),
             tx,
             energy_mgr,

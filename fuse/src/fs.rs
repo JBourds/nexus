@@ -109,7 +109,14 @@ pub struct NexusFs {
     root: PathBuf,
     attr: FileAttr,
     entries: Vec<FsEntry>,
-    buffers: HashMap<ChannelId, NexusFile>,
+    /// (parent_inode -> (child_name -> entry_index)) lookup index. Replaces
+    /// the previous O(N) linear scan of `entries`. With thousands of nodes
+    /// and channels, the scan dominated every FUSE syscall.
+    by_parent: HashMap<u64, HashMap<String, usize>>,
+    /// Per-process file buffers keyed by `(PID, entry_index)`. Switching from
+    /// the previous `(PID, String)` key removed an allocation on every read,
+    /// write, getattr, lookup and open.
+    buffers: HashMap<(u32, usize), NexusFile>,
     fs_side: FsChannels,
     kernel_side: Option<KernelChannels>,
     /// Receiver for (old_pid, new_pid) pairs sent by the router.
@@ -136,15 +143,15 @@ impl NexusFs {
     /// old PIDs to new PIDs.
     fn apply_pending_remaps(&mut self) {
         while let Ok((old_pid, new_pid)) = self.remap_rx.try_recv() {
-            let keys_to_migrate: Vec<String> = self
+            let keys_to_migrate: Vec<usize> = self
                 .buffers
                 .keys()
                 .filter(|(pid, _)| *pid == old_pid)
-                .map(|(_, channel)| channel.clone())
+                .map(|(_, idx)| *idx)
                 .collect();
-            for channel in keys_to_migrate {
-                if let Some(file) = self.buffers.remove(&(old_pid, channel.clone())) {
-                    self.buffers.insert((new_pid, channel), file);
+            for idx in keys_to_migrate {
+                if let Some(file) = self.buffers.remove(&(old_pid, idx)) {
+                    self.buffers.insert((new_pid, idx), file);
                 }
             }
         }
@@ -171,28 +178,36 @@ impl NexusFs {
         tgid
     }
 
-    /// Find or create an entry in the tree. Returns the inode.
+    /// Find or create an entry in the tree. Returns `(inode, entry_index)`.
+    /// Maintains the (parent_inode, name) -> entry_index index so that
+    /// `lookup` does not need to scan `entries` linearly.
     fn get_or_make_entry(
         &mut self,
         name: String,
         parent_inode: u64,
         kind: FsEntryKind,
         path: String,
-    ) -> u64 {
-        if let Some(index) = self
-            .entries
-            .iter()
-            .position(|e| e.name == name && e.parent_inode == parent_inode)
+    ) -> (u64, usize) {
+        if let Some(&index) = self
+            .by_parent
+            .get(&parent_inode)
+            .and_then(|m| m.get(&name))
         {
-            index_to_inode(index)
+            (index_to_inode(index), index)
         } else {
+            let index = self.entries.len();
+            self.by_parent
+                .entry(parent_inode)
+                .or_default()
+                .insert(name.clone(), index);
             self.entries.push(FsEntry {
                 name,
                 parent_inode,
                 kind,
                 path,
             });
-            self.inode_gen.fetch_add(1, Ordering::Relaxed)
+            let inode = self.inode_gen.fetch_add(1, Ordering::Relaxed);
+            (inode, index)
         }
     }
 
@@ -206,7 +221,7 @@ impl NexusFs {
         subfiles: &[(&str, ChannelMode)],
         pids: &[u32],
     ) {
-        let dir_inode = self.get_or_make_entry(
+        let (dir_inode, _) = self.get_or_make_entry(
             dir_name.to_string(),
             parent_inode,
             FsEntryKind::Directory,
@@ -214,15 +229,15 @@ impl NexusFs {
         );
         for &(subfile_name, mode) in subfiles {
             let file_path = format!("{dir_path}/{subfile_name}");
-            let file_inode = self.get_or_make_entry(
+            let (file_inode, file_idx) = self.get_or_make_entry(
                 subfile_name.to_string(),
                 dir_inode,
                 FsEntryKind::RegularFile,
-                file_path.clone(),
+                file_path,
             );
             for &pid in pids {
                 self.buffers.insert(
-                    (pid, file_path.clone()),
+                    (pid, file_idx),
                     NexusFile::new(NonZeroUsize::new(1000).unwrap(), mode, file_inode),
                 );
             }
@@ -232,7 +247,7 @@ impl NexusFs {
     pub fn add_processes(mut self, pids: &[u32]) -> Self {
         // Flat control files (energy, position, power)
         for (file, mode) in CONTROL_FILES.iter() {
-            let inode = self.get_or_make_entry(
+            let (inode, idx) = self.get_or_make_entry(
                 file.to_string(),
                 FUSE_ROOT_ID,
                 FsEntryKind::RegularFile,
@@ -240,7 +255,7 @@ impl NexusFs {
             );
             for &pid in pids {
                 self.buffers.insert(
-                    (pid, file.to_string()),
+                    (pid, idx),
                     NexusFile::new(NonZeroUsize::new(1000).unwrap(), *mode, inode),
                 );
             }
@@ -280,7 +295,7 @@ impl NexusFs {
         } in channels
         {
             // Create directory for the channel (e.g., "lora/")
-            let dir_inode = self.get_or_make_entry(
+            let (dir_inode, _) = self.get_or_make_entry(
                 channel.clone(),
                 FUSE_ROOT_ID,
                 FsEntryKind::Directory,
@@ -289,16 +304,15 @@ impl NexusFs {
 
             // Create "channel" sub-file (data read/write)
             let data_path = format!("{channel}/channel");
-            let data_inode = self.get_or_make_entry(
+            let (data_inode, data_idx) = self.get_or_make_entry(
                 "channel".to_string(),
                 dir_inode,
                 FsEntryKind::RegularFile,
-                data_path.clone(),
+                data_path,
             );
-            let data_key = (pid, data_path);
             if self
                 .buffers
-                .insert(data_key.clone(), NexusFile::new(max_msg_size, mode, data_inode))
+                .insert((pid, data_idx), NexusFile::new(max_msg_size, mode, data_inode))
                 .is_some()
             {
                 return Err(ChannelError::DuplicateChannel);
@@ -306,27 +320,27 @@ impl NexusFs {
 
             // Create "rssi" sub-file (read-only)
             let rssi_path = format!("{channel}/rssi");
-            let rssi_inode = self.get_or_make_entry(
+            let (rssi_inode, rssi_idx) = self.get_or_make_entry(
                 "rssi".to_string(),
                 dir_inode,
                 FsEntryKind::RegularFile,
-                rssi_path.clone(),
+                rssi_path,
             );
             self.buffers.insert(
-                (pid, rssi_path),
+                (pid, rssi_idx),
                 NexusFile::new(NonZeroUsize::new(64).unwrap(), ChannelMode::ReadOnly, rssi_inode),
             );
 
             // Create "snr" sub-file (read-only)
             let snr_path = format!("{channel}/snr");
-            let snr_inode = self.get_or_make_entry(
+            let (snr_inode, snr_idx) = self.get_or_make_entry(
                 "snr".to_string(),
                 dir_inode,
                 FsEntryKind::RegularFile,
-                snr_path.clone(),
+                snr_path,
             );
             self.buffers.insert(
-                (pid, snr_path),
+                (pid, snr_idx),
                 NexusFile::new(NonZeroUsize::new(64).unwrap(), ChannelMode::ReadOnly, snr_inode),
             );
         }
@@ -381,9 +395,15 @@ impl NexusFs {
         Ok((sess, kernel_side))
     }
 
-    fn read_message(&mut self, reply: ReplyData, size: usize, key: ChannelId) {
+    fn read_message(
+        &mut self,
+        reply: ReplyData,
+        size: usize,
+        buf_key: (u32, usize),
+        msg_id: ChannelId,
+    ) {
         // Get the file containing all message buffers
-        let Some(file) = self.buffers.get_mut(&key) else {
+        let Some(file) = self.buffers.get_mut(&buf_key) else {
             reply.error(EACCES);
             return;
         };
@@ -405,7 +425,7 @@ impl NexusFs {
         }
 
         // See if there is anything for client to read
-        if let Ok(msg) = Self::pull_message(&mut self.fs_side, key) {
+        if let Ok(msg) = Self::pull_message(&mut self.fs_side, msg_id) {
             let (allow_incremental_reads, msg) = match msg {
                 KernelMessage::Exclusive(msg) => (true, msg.data),
                 KernelMessage::Shared(msg) => (false, msg.data),
@@ -435,6 +455,7 @@ impl Default for NexusFs {
             root,
             attr: Self::root_attr(),
             entries: Vec::default(),
+            by_parent: HashMap::default(),
             buffers: HashMap::default(),
             fs_side: (fs_tx, fs_rx),
             kernel_side: Some((kernel_tx, kernel_rx)),
@@ -474,17 +495,17 @@ impl Filesystem for NexusFs {
         let pid = self.resolve_tgid(req.pid());
         let name_str = name.to_string_lossy();
 
-        // Find entry matching (parent, name)
-        let found = self
-            .entries
-            .iter()
-            .enumerate()
-            .find(|(_, e)| e.parent_inode == parent && e.name == name_str.as_ref());
-
-        let Some((index, entry)) = found else {
+        // O(1) index lookup keyed by (parent_inode, name).
+        let index_opt = self
+            .by_parent
+            .get(&parent)
+            .and_then(|m| m.get(name_str.as_ref()))
+            .copied();
+        let Some(index) = index_opt else {
             reply.error(ENOENT);
             return;
         };
+        let entry = &self.entries[index];
 
         let inode = index_to_inode(index);
         match entry.kind {
@@ -496,8 +517,7 @@ impl Filesystem for NexusFs {
                 );
             }
             FsEntryKind::RegularFile => {
-                let path = entry.path.clone();
-                if let Some(file) = self.buffers.get(&(pid, path)) {
+                if let Some(file) = self.buffers.get(&(pid, index)) {
                     reply.entry(&TTL, &file.attr, 0);
                 } else {
                     reply.error(ENOENT);
@@ -526,7 +546,7 @@ impl Filesystem for NexusFs {
                         );
                     }
                     FsEntryKind::RegularFile => {
-                        if let Some(file) = self.buffers.get(&(pid, entry.path.clone())) {
+                        if let Some(file) = self.buffers.get(&(pid, index)) {
                             reply.attr(&TTL, &file.attr);
                         } else {
                             reply.error(EACCES);
@@ -552,9 +572,8 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        // Key files by the process and its path
-        let key = (pid, entry.path.clone());
-        let Some(file) = self.buffers.get(&key) else {
+        // Buffer key is (pid, entry_index); no String allocation.
+        let Some(file) = self.buffers.get(&(pid, index)) else {
             reply.error(EACCES);
             return;
         };
@@ -609,8 +628,10 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        let key = (pid, entry.path.clone());
-        self.read_message(reply, size as usize, key);
+        // Path is only cloned for the kernel-bound message id; the buffer
+        // lookup uses the entry index directly.
+        let msg_id = (pid, entry.path.clone());
+        self.read_message(reply, size as usize, (pid, index), msg_id);
     }
 
     #[instrument(skip_all)]
@@ -643,8 +664,7 @@ impl Filesystem for NexusFs {
             return;
         }
 
-        let key = (pid, entry.path.clone());
-        let Some(file) = self.buffers.get(&key) else {
+        let Some(file) = self.buffers.get(&(pid, index)) else {
             reply.error(EACCES);
             return;
         };
@@ -656,7 +676,7 @@ impl Filesystem for NexusFs {
         }
 
         let msg = FsMessage::Write(Message {
-            id: key,
+            id: (pid, entry.path.clone()),
             data: data.to_vec(),
         });
         if self.fs_side.0.send(msg).is_err() {
@@ -708,9 +728,11 @@ impl Filesystem for NexusFs {
             ),
         ];
 
-        // Add children of this directory
-        for (i, entry) in self.entries.iter().enumerate() {
-            if entry.parent_inode == ino {
+        // Add children of this directory using the (parent -> name -> index)
+        // index, avoiding a full scan over every entry in the simulation.
+        if let Some(children) = self.by_parent.get(&ino) {
+            for (_, &i) in children.iter() {
+                let entry = &self.entries[i];
                 let file_type = match entry.kind {
                     FsEntryKind::Directory => FileType::Directory,
                     FsEntryKind::RegularFile => FileType::RegularFile,
@@ -776,6 +798,10 @@ mod tests {
         )
     }
 
+    // Buffer keys are (pid, entry_index) — pick small synthetic indices.
+    const ENT_A: usize = 1;
+    const ENT_B: usize = 2;
+
     #[test]
     fn test_apply_pending_remaps_migrates_buffers() {
         let (tx, rx) = mpsc::channel();
@@ -785,10 +811,10 @@ mod tests {
         };
 
         // Insert buffers for PID 100
-        fs.buffers.insert((100, "ch_a".into()), test_file(1));
-        fs.buffers.insert((100, "ch_b".into()), test_file(1));
+        fs.buffers.insert((100, ENT_A), test_file(1));
+        fs.buffers.insert((100, ENT_B), test_file(1));
         // Insert buffer for a different PID that should not move
-        fs.buffers.insert((200, "ch_a".into()), test_file(1));
+        fs.buffers.insert((200, ENT_A), test_file(1));
 
         // Send a remap: 100 -> 300
         tx.send((100, 300)).unwrap();
@@ -796,13 +822,13 @@ mod tests {
         fs.apply_pending_remaps();
 
         // Old keys gone
-        assert!(!fs.buffers.contains_key(&(100, "ch_a".into())));
-        assert!(!fs.buffers.contains_key(&(100, "ch_b".into())));
+        assert!(!fs.buffers.contains_key(&(100, ENT_A)));
+        assert!(!fs.buffers.contains_key(&(100, ENT_B)));
         // New keys present
-        assert!(fs.buffers.contains_key(&(300, "ch_a".into())));
-        assert!(fs.buffers.contains_key(&(300, "ch_b".into())));
+        assert!(fs.buffers.contains_key(&(300, ENT_A)));
+        assert!(fs.buffers.contains_key(&(300, ENT_B)));
         // Unrelated PID untouched
-        assert!(fs.buffers.contains_key(&(200, "ch_a".into())));
+        assert!(fs.buffers.contains_key(&(200, ENT_A)));
         // Channel should be drained
         assert!(rx_is_empty(&fs.remap_rx));
     }
@@ -815,11 +841,11 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((100, "ch_a".into()), test_file(1));
+        fs.buffers.insert((100, ENT_A), test_file(1));
         fs.apply_pending_remaps();
 
         // Nothing should change
-        assert!(fs.buffers.contains_key(&(100, "ch_a".into())));
+        assert!(fs.buffers.contains_key(&(100, ENT_A)));
     }
 
     #[test]
@@ -830,17 +856,17 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((10, "ch_x".into()), test_file(1));
-        fs.buffers.insert((20, "ch_x".into()), test_file(1));
+        fs.buffers.insert((10, ENT_A), test_file(1));
+        fs.buffers.insert((20, ENT_A), test_file(1));
 
         tx.send((10, 11)).unwrap();
         tx.send((20, 21)).unwrap();
         fs.apply_pending_remaps();
 
-        assert!(fs.buffers.contains_key(&(11, "ch_x".into())));
-        assert!(fs.buffers.contains_key(&(21, "ch_x".into())));
-        assert!(!fs.buffers.contains_key(&(10, "ch_x".into())));
-        assert!(!fs.buffers.contains_key(&(20, "ch_x".into())));
+        assert!(fs.buffers.contains_key(&(11, ENT_A)));
+        assert!(fs.buffers.contains_key(&(21, ENT_A)));
+        assert!(!fs.buffers.contains_key(&(10, ENT_A)));
+        assert!(!fs.buffers.contains_key(&(20, ENT_A)));
     }
 
     #[test]
@@ -852,12 +878,21 @@ mod tests {
             ..Default::default()
         };
 
-        fs.buffers.insert((50, "ch_a".into()), test_file(1));
+        fs.buffers.insert((50, ENT_A), test_file(1));
         fs.apply_pending_remaps();
 
         // Original buffer still there, no panic
-        assert!(fs.buffers.contains_key(&(50, "ch_a".into())));
-        assert!(!fs.buffers.contains_key(&(1000, "ch_a".into())));
+        assert!(fs.buffers.contains_key(&(50, ENT_A)));
+        assert!(!fs.buffers.contains_key(&(1000, ENT_A)));
+    }
+
+    /// Helper for tests: locate an entry's index by full path (slow scan,
+    /// only used in #[cfg(test)] code).
+    fn buffer_for(fs: &NexusFs, pid: u32, path: &str) -> bool {
+        let Some(idx) = fs.entries.iter().position(|e| e.path == path) else {
+            return false;
+        };
+        fs.buffers.contains_key(&(pid, idx))
     }
 
     #[test]
@@ -875,12 +910,12 @@ mod tests {
             .any(|e| e.name == "ctl.elapsed" && matches!(e.kind, FsEntryKind::Directory)));
 
         // Should have sub-file entries
-        assert!(fs.buffers.contains_key(&(100, "ctl.time/us".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.time/ns".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/s".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.elapsed/ns".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.pos/x".into())));
-        assert!(fs.buffers.contains_key(&(100, "ctl.pos/motion".into())));
+        assert!(buffer_for(&fs, 100, "ctl.time/us"));
+        assert!(buffer_for(&fs, 100, "ctl.time/ns"));
+        assert!(buffer_for(&fs, 100, "ctl.elapsed/s"));
+        assert!(buffer_for(&fs, 100, "ctl.elapsed/ns"));
+        assert!(buffer_for(&fs, 100, "ctl.pos/x"));
+        assert!(buffer_for(&fs, 100, "ctl.pos/motion"));
 
         // Should have ctl.pos directory
         assert!(fs
@@ -889,7 +924,7 @@ mod tests {
             .any(|e| e.name == "ctl.pos" && matches!(e.kind, FsEntryKind::Directory)));
 
         // Flat control files should still exist
-        assert!(fs.buffers.contains_key(&(100, "ctl.energy_left".into())));
+        assert!(buffer_for(&fs, 100, "ctl.energy_left"));
     }
 
     #[test]
@@ -911,9 +946,9 @@ mod tests {
             .any(|e| e.name == "lora" && matches!(e.kind, FsEntryKind::Directory)));
 
         // Should have lora/channel, lora/rssi, lora/snr buffer entries
-        assert!(fs.buffers.contains_key(&(100, "lora/channel".into())));
-        assert!(fs.buffers.contains_key(&(100, "lora/rssi".into())));
-        assert!(fs.buffers.contains_key(&(100, "lora/snr".into())));
+        assert!(buffer_for(&fs, 100, "lora/channel"));
+        assert!(buffer_for(&fs, 100, "lora/rssi"));
+        assert!(buffer_for(&fs, 100, "lora/snr"));
     }
 
     fn rx_is_empty(rx: &mpsc::Receiver<(u32, u32)>) -> bool {
