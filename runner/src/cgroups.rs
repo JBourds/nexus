@@ -133,6 +133,27 @@ impl ProtocolHandle {
         }
     }
 
+    /// Send SIGCONT to the protocol process. Used to release protocols
+    /// from the self-imposed SIGSTOP they perform after entering their
+    /// cgroup (see `run_protocol`), once the FUSE filesystem and channel
+    /// buffers have been registered. Sending SIGCONT to a process that is
+    /// already running is a no-op; if the process has already exited we
+    /// silently ignore ESRCH.
+    pub fn cont(&self) -> io::Result<()> {
+        let Some(pid) = self.pid() else {
+            return Ok(());
+        };
+        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGCONT) };
+        if rc == 0 {
+            return Ok(());
+        }
+        let err = io::Error::last_os_error();
+        if err.raw_os_error() == Some(libc::ESRCH) {
+            return Ok(());
+        }
+        Err(err)
+    }
+
     pub fn finish(mut self) -> Result<Option<ProtocolSummary>, io::Error> {
         match self.process.take() {
             Some(mut p) => {

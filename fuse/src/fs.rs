@@ -353,10 +353,15 @@ impl NexusFs {
     /// Mount the filesystem without blocking, yield the background session it
     /// is mounted in, and return the kernel's end of
     pub fn mount(mut self) -> Result<(BackgroundSession, KernelChannels), FsError> {
-        let options = vec![
-            MountOption::FSName("nexus".to_string()),
-            MountOption::AllowOther,
-        ];
+        // AllowOther requires `user_allow_other` in /etc/fuse.conf, which is
+        // not always available (e.g., shared HPC clusters). It is opt-in via
+        // the NEXUS_FUSE_ALLOW_OTHER environment variable. All simulator and
+        // protocol processes run as the same UID, so allow_other is not
+        // required for normal operation.
+        let mut options = vec![MountOption::FSName("nexus".to_string())];
+        if std::env::var_os("NEXUS_FUSE_ALLOW_OTHER").is_some() {
+            options.push(MountOption::AllowOther);
+        }
         let root = self.root.clone();
         if !root.exists() {
             fs::create_dir_all(&root).map_err(|err| FsError::CreateDirError {

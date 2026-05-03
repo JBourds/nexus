@@ -170,6 +170,15 @@ impl StatusServer {
         let (status_tx, status_rx) = mpsc::channel::<StatusMessage>();
 
         runc.cgroups.unfreeze_nodes();
+        // Release each protocol from its self-imposed SIGSTOP barrier.
+        // Protocols stop themselves after entering their cgroup so that
+        // FUSE buffer registration (which races the cgroup-freeze move)
+        // is guaranteed to be complete before they execute any open().
+        for handle in runc.handles.iter() {
+            if let Err(e) = handle.cont() {
+                tracing::warn!("failed to SIGCONT protocol pid {:?}: {e}", handle.pid());
+            }
+        }
         thread::Builder::new()
             .name("nexus_status_server".to_string())
             .spawn(move || {

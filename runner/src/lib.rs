@@ -47,9 +47,19 @@ fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
 
-    let mut script = format!("{ECHO} $$ > {} && ", procs_file.display());
+    // Enter the cgroup, then SIGSTOP self. The kernel's parent-cgroup
+    // freeze is enforced at scheduling boundaries, so it can leak the
+    // moved-in process for a few microseconds before suspending it.
+    let mut script = String::new();
+    script.push_str(&format!("{ECHO} $$ > {} && ", procs_file.display()));
+    script.push_str("kill -STOP $$ && ");
+    // `exec` replaces the bash shell with stdbuf (which in turn exec's the
+    // actual runner via its libstdbuf LD_PRELOAD trampoline). Without exec,
+    // bash stays alive parenting stdbuf, and stdbuf stays alive parenting the
+    // runner, so each protocol becomes 3 processes instead of 1 — wasting
+    // pids and FDs at high N.
     script.push_str(&format!(
-        "{UNBUFFER} {} {}",
+        "exec {UNBUFFER} {} {}",
         p.runner.cmd,
         p.runner.args.join(" ")
     ));
