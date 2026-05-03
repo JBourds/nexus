@@ -13,12 +13,7 @@ impl RoutingServer {
         node_index: usize,
         msg: fuse::Message,
     ) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str())
-            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
-        let s = String::from_utf8_lossy(&msg.data);
-        let val: u64 = s
-            .parse()
-            .map_err(|_| RouterError::InvalidString(msg.data.clone()))?;
+        let (val, unit) = Self::msg_to_time_units(&msg)?;
         let to_units = |val| match unit {
             TimeUnit::Seconds => Duration::from_secs(val),
             TimeUnit::Milliseconds => Duration::from_millis(val),
@@ -63,6 +58,16 @@ impl RoutingServer {
         self.tx
             .send(fuse::KernelMessage::Exclusive(msg))
             .map_err(RouterError::FuseSendError)
+    }
+
+    fn msg_to_time_units(msg: &fuse::Message) -> Result<(u64, TimeUnit), RouterError> {
+        let unit = Self::suffix_to_time(msg.id.1.as_str())
+            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
+        let s = String::from_utf8_lossy(&msg.data);
+        let val: u64 = s
+            .parse()
+            .map_err(|_| RouterError::InvalidString(msg.data.clone()))?;
+        Ok((val, unit))
     }
 
     fn suffix_to_time(s: &str) -> Option<TimeUnit> {
