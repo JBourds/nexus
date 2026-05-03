@@ -1300,4 +1300,224 @@ mod tests {
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
         assert_eq!(e.power_sources[0].1.nj_per_timestep(0), 100_000);
     }
+
+    // -----------------------------------------------------------------------
+    // Test: end-to-end FUSE → router → FUSE delivery via the public API
+    //
+    // Drives the same boundaries the FUSE filesystem uses:
+    //   1. `receive_write(Message{id: (pid, "ch_0/channel"), data})` — the
+    //      "/channel" suffix mirrors what FUSE sends for data-channel writes.
+    //   2. `step()` to drain the queued heap into the subscriber mailbox.
+    //   3. `request_read(Message{id: (sub_pid, "ch_0/channel"), data: []})`
+    //      and verify a `KernelMessage::Exclusive` with the right bytes
+    //      arrives on the FUSE-side rx.
+    //
+    // This is the regression check for the path-stripping / fuse_mapping
+    // refactor: unit tests that bypass `receive_write`/`request_read` and
+    // call `queue_message` directly cannot catch breakage in that layer.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_end_to_end_fuse_write_then_read_delivers_message() {
+        // Two nodes on one exclusive channel. Node 0 (pid=1) publishes;
+        // node 1 (pid=2) subscribes.
+        let pub_node = make_node_with_protocol(
+            None,
+            HashSet::new(),
+            HashSet::from([ChannelIdx(0)]),
+            HashMap::new(),
+        );
+        let sub_node = make_node_with_protocol(
+            None,
+            HashSet::from([ChannelIdx(0)]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([NodeIdx(1)]),
+            publishers: HashSet::from([NodeIdx(0)]),
+        };
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)),
+            (2u32, NodeIdx(1), ChannelIdx(0)),
+        ];
+        let (mut router, rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+
+        // Publisher writes "hello" via the FUSE-shaped path "ch_0/channel".
+        let write_msg = fuse::Message {
+            id: (1u32, "ch_0/channel".to_string()),
+            data: b"hello".to_vec(),
+        };
+        router.receive_write(write_msg).expect("receive_write failed");
+
+        // Step the router so the queued message lands in the subscriber's
+        // mailbox.
+        router.step().expect("step failed");
+
+        // Subscriber reads via the FUSE-shaped path "ch_0/channel". The
+        // router should respond with KernelMessage::Exclusive carrying the
+        // payload to FUSE.
+        let read_msg = fuse::Message {
+            id: (2u32, "ch_0/channel".to_string()),
+            data: Vec::new(),
+        };
+        router.request_read(read_msg).expect("request_read failed");
+
+        // Drain the FUSE-side rx and assert we got the payload back.
+        let kmsg = rx
+            .try_recv()
+            .expect("kernel did not deliver any message to FUSE");
+        match kmsg {
+            fuse::KernelMessage::Exclusive(m) => {
+                assert_eq!(m.data, b"hello", "wrong payload delivered");
+                assert_eq!(m.id.0, 2u32, "delivered to wrong PID");
+            }
+            other => panic!("expected Exclusive, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: a second message after the mailbox empties is still delivered.
+    //
+    // Catches the regression where the non-empty-mailbox tracking forgot to
+    // re-add a mailbox to `nonempty_mailboxes` after it drained, or where
+    // the `mailbox_active` dedup bitmap was left in a stuck state.
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_end_to_end_second_message_after_drain_delivers() {
+        let pub_node = make_node_with_protocol(
+            None,
+            HashSet::new(),
+            HashSet::from([ChannelIdx(0)]),
+            HashMap::new(),
+        );
+        let sub_node = make_node_with_protocol(
+            None,
+            HashSet::from([ChannelIdx(0)]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([NodeIdx(1)]),
+            publishers: HashSet::from([NodeIdx(0)]),
+        };
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)),
+            (2u32, NodeIdx(1), ChannelIdx(0)),
+        ];
+        let (mut router, rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+
+        // Round 1
+        router
+            .receive_write(fuse::Message {
+                id: (1u32, "ch_0/channel".to_string()),
+                data: b"one".to_vec(),
+            })
+            .unwrap();
+        router.step().unwrap();
+        router
+            .request_read(fuse::Message {
+                id: (2u32, "ch_0/channel".to_string()),
+                data: Vec::new(),
+            })
+            .unwrap();
+        match rx.try_recv().expect("no first delivery") {
+            fuse::KernelMessage::Exclusive(m) => assert_eq!(m.data, b"one"),
+            other => panic!("expected Exclusive, got {other:?}"),
+        }
+
+        // Round 2: after the mailbox drained, deliver_queued_messages must
+        // re-mark the mailbox active and the next request_read must pop it.
+        router
+            .receive_write(fuse::Message {
+                id: (1u32, "ch_0/channel".to_string()),
+                data: b"two".to_vec(),
+            })
+            .unwrap();
+        router.step().unwrap();
+        router
+            .request_read(fuse::Message {
+                id: (2u32, "ch_0/channel".to_string()),
+                data: Vec::new(),
+            })
+            .unwrap();
+        match rx.try_recv().expect("no second delivery") {
+            fuse::KernelMessage::Exclusive(m) => assert_eq!(m.data, b"two"),
+            other => panic!("expected Exclusive, got {other:?}"),
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Test: broadcast — one publisher, two subscribers each get the payload.
+    //
+    // Catches the regression where the route iteration in `queue_message`
+    // would push to one mailbox but skip the others (e.g. mismatched
+    // handle/route indexing after the resolver refactor).
+    // -----------------------------------------------------------------------
+    #[test]
+    fn test_end_to_end_broadcast_to_two_subscribers() {
+        let pub_node = make_node_with_protocol(
+            None,
+            HashSet::new(),
+            HashSet::from([ChannelIdx(0)]),
+            HashMap::new(),
+        );
+        let sub_a = make_node_with_protocol(
+            None,
+            HashSet::from([ChannelIdx(0)]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let sub_b = make_node_with_protocol(
+            None,
+            HashSet::from([ChannelIdx(0)]),
+            HashSet::new(),
+            HashMap::new(),
+        );
+        let channel = types::Channel {
+            link: Link::default(),
+            r#type: ChannelType::new_internal(),
+            subscribers: HashSet::from([NodeIdx(1), NodeIdx(2)]),
+            publishers: HashSet::from([NodeIdx(0)]),
+        };
+        let handles = vec![
+            (1u32, NodeIdx(0), ChannelIdx(0)), // publisher
+            (2u32, NodeIdx(1), ChannelIdx(0)), // sub a
+            (3u32, NodeIdx(2), ChannelIdx(0)), // sub b
+        ];
+        let (mut router, rx) = make_router(vec![pub_node, sub_a, sub_b], vec![channel], handles);
+
+        router
+            .receive_write(fuse::Message {
+                id: (1u32, "ch_0/channel".to_string()),
+                data: b"broadcast".to_vec(),
+            })
+            .unwrap();
+        router.step().unwrap();
+
+        // Both subscribers should be able to read the message.
+        for sub_pid in [2u32, 3u32] {
+            router
+                .request_read(fuse::Message {
+                    id: (sub_pid, "ch_0/channel".to_string()),
+                    data: Vec::new(),
+                })
+                .unwrap();
+        }
+
+        let mut delivered: Vec<(u32, Vec<u8>)> = Vec::new();
+        while let Ok(km) = rx.try_recv() {
+            if let fuse::KernelMessage::Exclusive(m) = km {
+                delivered.push((m.id.0, m.data));
+            }
+        }
+        delivered.sort_by_key(|(p, _)| *p);
+        assert_eq!(
+            delivered,
+            vec![(2u32, b"broadcast".to_vec()), (3u32, b"broadcast".to_vec())]
+        );
+    }
 }
