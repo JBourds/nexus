@@ -74,6 +74,11 @@ pub struct ProtocolHandle {
     pub process: Option<Child>,
     /// Path to the cgroup directory for this protocol.
     pub cgroup_path: Option<PathBuf>,
+    /// Path to the simulation startup barrier file. Each spawn execs
+    /// `flock -s <barrier_path>` so respawned processes wait for the same
+    /// barrier as the initial cohort. After the parent has released the
+    /// `LOCK_EX`, late spawners see no contention and proceed immediately.
+    pub barrier_path: PathBuf,
 }
 
 impl ProtocolHandle {
@@ -83,6 +88,7 @@ impl ProtocolHandle {
         ast: NodeProtocol,
         node: ast::NodeHandle,
         protocol: ast::ProtocolHandle,
+        barrier_path: PathBuf,
     ) -> Self {
         ProtocolHandle {
             node_handle,
@@ -92,6 +98,7 @@ impl ProtocolHandle {
             protocol,
             process: None,
             cgroup_path: None,
+            barrier_path,
         }
     }
 
@@ -133,27 +140,6 @@ impl ProtocolHandle {
         }
     }
 
-    /// Send SIGCONT to the protocol process. Used to release protocols
-    /// from the self-imposed SIGSTOP they perform after entering their
-    /// cgroup (see `run_protocol`), once the FUSE filesystem and channel
-    /// buffers have been registered. Sending SIGCONT to a process that is
-    /// already running is a no-op; if the process has already exited we
-    /// silently ignore ESRCH.
-    pub fn cont(&self) -> io::Result<()> {
-        let Some(pid) = self.pid() else {
-            return Ok(());
-        };
-        let rc = unsafe { libc::kill(pid as libc::pid_t, libc::SIGCONT) };
-        if rc == 0 {
-            return Ok(());
-        }
-        let err = io::Error::last_os_error();
-        if err.raw_os_error() == Some(libc::ESRCH) {
-            return Ok(());
-        }
-        Err(err)
-    }
-
     pub fn finish(mut self) -> Result<Option<ProtocolSummary>, io::Error> {
         match self.process.take() {
             Some(mut p) => {
@@ -171,8 +157,8 @@ impl ProtocolHandle {
 
     pub fn run(&mut self, cgroup: impl AsRef<Path>) -> Result<bool, ProtocolError> {
         if self.process.is_none() {
-            let process =
-                run_protocol(&self.ast, cgroup.as_ref()).map_err(ProtocolError::UnableToRun)?;
+            let process = run_protocol(&self.ast, cgroup.as_ref(), &self.barrier_path)
+                .map_err(ProtocolError::UnableToRun)?;
             move_process(&RealCgroupFs, cgroup.as_ref(), process.id());
             self.process = Some(process);
             Ok(true)
@@ -326,6 +312,7 @@ impl CgroupController {
         name: &str,
         protocol: &NodeProtocol,
         handle: &NodeHandle,
+        barrier_path: &Path,
     ) -> Result<ProtocolHandle, ProtocolError> {
         // Extract what we need before re-borrowing self
         let (cgroup, protocol_count) = {
@@ -341,6 +328,7 @@ impl CgroupController {
             protocol.clone(),
             handle.key.clone(),
             name.to_string(),
+            barrier_path.to_path_buf(),
         );
         proto_handle.cgroup_path = Some(cgroup.clone());
         proto_handle.run(&cgroup)?;

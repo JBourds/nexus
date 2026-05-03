@@ -2,10 +2,11 @@ use config::ast::{self, Cmd, NodeProtocol};
 use cpuutils::cpufreq::get_cpu_info;
 use std::{
     io,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Child, Command, Output, Stdio},
 };
 pub mod assignment;
+pub mod barrier;
 pub mod cgroupfs;
 pub mod cgroups;
 pub mod cli;
@@ -13,11 +14,13 @@ pub mod errors;
 use errors::*;
 
 use crate::assignment::{Affinity, AffinityBuilder, Bandwidth, Relative, RelativeBuilder};
+use crate::barrier::BarrierLock;
 pub use crate::cgroups::*;
 
 const BASH: &str = "bash";
 const UNBUFFER: &str = "stdbuf -i0 -o0 -e0";
 const ECHO: &str = "echo";
+const FLOCK: &str = "flock";
 
 #[derive(Debug)]
 pub struct RunController {
@@ -26,6 +29,21 @@ pub struct RunController {
     pub weights: Relative,
     pub bandwidth: Bandwidth,
     pub handles: Vec<ProtocolHandle>,
+    /// Cooperative startup barrier. While held, every protocol's
+    /// `flock -s` invocation blocks in the kernel. Released after FUSE
+    /// registration so all protocols proceed atomically. Replaces the
+    /// previous SIGSTOP/SIGCONT handshake which had a race window where
+    /// SIGCONT could arrive before the child SIGSTOPped itself, leaving
+    /// the protocol suspended forever.
+    pub(crate) barrier: BarrierLock,
+}
+
+impl RunController {
+    /// Drop the startup barrier so all flock-blocked protocols proceed.
+    /// Idempotent; calling twice is a no-op.
+    pub fn release_barrier(&mut self) {
+        self.barrier.release();
+    }
 }
 
 #[derive(Debug)]
@@ -43,23 +61,24 @@ struct BuildCtx<'a> {
     handle: Child,
 }
 
-fn run_protocol(p: &NodeProtocol, cgroup: &Path) -> io::Result<Child> {
+fn run_protocol(p: &NodeProtocol, cgroup: &Path, barrier_path: &Path) -> io::Result<Child> {
     let mut cmd = Command::new(BASH);
     let procs_file = cgroup.join(cgroups::PROCS);
 
-    // Enter the cgroup, then SIGSTOP self. The kernel's parent-cgroup
-    // freeze is enforced at scheduling boundaries, so it can leak the
-    // moved-in process for a few microseconds before suspending it.
+    // 1. Enter our target cgroup (`echo $$ > cgroup.procs`). The cgroup
+    //    is parent-frozen, so the kernel will suspend us at the next
+    //    scheduling boundary.
+    // 2. `exec` into `flock -s <barrier>` which `LOCK_SH`s on the barrier
+    //    file the parent created with `LOCK_EX`. flock blocks in the kernel
+    //    until the parent releases. flock then `exec`s into stdbuf, which
+    //    `exec`s into the runner. Same PID, no extra processes, and the
+    //    startup is race-free — there is no signal-ordering window for
+    //    the parent to mistime as there was with SIGSTOP/SIGCONT.
     let mut script = String::new();
     script.push_str(&format!("{ECHO} $$ > {} && ", procs_file.display()));
-    script.push_str("kill -STOP $$ && ");
-    // `exec` replaces the bash shell with stdbuf (which in turn exec's the
-    // actual runner via its libstdbuf LD_PRELOAD trampoline). Without exec,
-    // bash stays alive parenting stdbuf, and stdbuf stays alive parenting the
-    // runner, so each protocol becomes 3 processes instead of 1 — wasting
-    // pids and FDs at high N.
     script.push_str(&format!(
-        "exec {UNBUFFER} {} {}",
+        "exec {FLOCK} -s {} {UNBUFFER} {} {}",
+        barrier_path.display(),
         p.runner.cmd,
         p.runner.args.join(" ")
     ));
@@ -139,6 +158,12 @@ pub fn build(sim: &ast::Simulation) -> Result<(), errors::ProtocolError> {
 /// Execute all the protocols on every node in their own process.
 /// Returns a result with a vector of handles to refer to running processes.
 pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
+    // Acquire the startup barrier *before* spawning anything so every
+    // protocol blocks in `flock(LOCK_SH)` until the parent has finished
+    // FUSE registration. See `runner::barrier` for the rationale.
+    let barrier = BarrierLock::new().map_err(ProtocolError::UnableToRun)?;
+    let barrier_path: PathBuf = barrier.path().to_path_buf();
+
     let mut cgroup_controller = CgroupController::new()?;
     let mut handles = Vec::new();
     let mut affinity_builder = AffinityBuilder::new();
@@ -148,8 +173,12 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         relative_builder.add_node(node_name, &node.resources);
         let handle = cgroup_controller.add_node(node_name, node.resources.clone())?;
         for (protocol_name, protocol) in &node.protocols {
-            let protocol_handle =
-                cgroup_controller.add_protocol(protocol_name, protocol, &handle)?;
+            let protocol_handle = cgroup_controller.add_protocol(
+                protocol_name,
+                protocol,
+                &handle,
+                &barrier_path,
+            )?;
             let pid = protocol_handle.pid().ok_or_else(|| {
                 ProtocolError::UnableToRun(io::Error::other(format!(
                     "process not started for {node_name}/{protocol_name}"
@@ -173,5 +202,6 @@ pub fn run(sim: &ast::Simulation) -> Result<RunController, ProtocolError> {
         weights: relative_assignments,
         bandwidth: bandwidth_assignments,
         handles,
+        barrier,
     })
 }
