@@ -16,3 +16,9 @@ bincode = { workspace = true }
 rand = { workspace = true }
 mio = {version = "1.0.4", features = ["os-poll", "os-ext"] }
 trace = { path = "../trace" }
+
+[[bin]]
+name = "router_bench"
+path = "perf/router_bench.rs"
+bench = false
+test = false

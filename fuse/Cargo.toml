@@ -10,3 +10,9 @@ thiserror = { workspace = true }
 libc = { workspace = true }
 home = { workspace = true }
 tracing = { workspace = true }
+
+[[bin]]
+name = "lookup_bench"
+path = "perf/lookup_bench.rs"
+bench = false
+test = false

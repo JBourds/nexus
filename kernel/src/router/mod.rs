@@ -102,12 +102,23 @@ pub(crate) struct RoutingServer {
     /// AddressedMsgs queued to become active at a specific timestep.
     queued: MessageQueue,
     /// Mapping from channel keys used by FUSE to those used by the kernel.
-    fuse_mapping: HashMap<fuse::ChannelId, usize>,
+    /// Nested by PID so the inner map can be queried with `&str`, avoiding
+    /// the String allocation a flat `HashMap<(PID, String), usize>` requires
+    /// on every read/write request.
+    fuse_mapping: HashMap<fuse::PID, HashMap<String, usize>>,
     /// Per-handle file mailbox with buffered messages ready to be read.
     /// Also contains an optional TTL which marks it as expired if it is in the
     /// past. Uses the niche optimization that the ttl for a channel cannot be
     /// 0, which means we can use an Option<T> here with no overhead!
     mailboxes: Vec<Mailbox>,
+    /// Indices of mailboxes that currently hold ≥ 1 queued message. Lets the
+    /// per-timestep TTL sweep skip the (potentially tens of thousands of)
+    /// idle mailboxes that dominate cost at high node counts. Entries may be
+    /// stale (mailbox already drained between sweeps); the sweep prunes those
+    /// via `retain`. `mailbox_active` is the dedup bitmap that prevents the
+    /// same mailbox from being pushed twice.
+    nonempty_mailboxes: Vec<usize>,
+    mailbox_active: Vec<bool>,
     /// Random number generator to use
     rng: StdRng,
     /// Channel which router delivers messages to file system
@@ -161,6 +172,8 @@ impl RoutingServer {
                     routes,
                     queued: BinaryHeap::new(),
                     mailboxes: vec![VecDeque::new(); handles_count],
+                    nonempty_mailboxes: Vec::new(),
+                    mailbox_active: vec![false; handles_count],
                     fuse_mapping,
                     ts_config,
                     rng,
@@ -226,14 +239,16 @@ impl RoutingServer {
     /// mailboxes for affected handles, and push remaps to the shared FUSE queue.
     fn apply_pid_remaps(&mut self, pairs: &[(u32, u32)]) {
         for &(old_pid, new_pid) in pairs {
+            // Move the entire inner map under the new PID, then update the
+            // handles whose PID matches.
+            if let Some(inner) = self.fuse_mapping.remove(&old_pid) {
+                self.fuse_mapping.insert(new_pid, inner);
+            }
             for (idx, handle) in self.channels.handles.iter_mut().enumerate() {
                 if handle.0 == old_pid {
                     handle.0 = new_pid;
                     self.mailboxes[idx].clear();
-                    // Update fuse_mapping: remove old key, insert new one
-                    let channel_name = self.channels.channel_names[handle.2.0].to_string();
-                    self.fuse_mapping.remove(&(old_pid, channel_name.clone()));
-                    self.fuse_mapping.insert((new_pid, channel_name), idx);
+                    self.mailbox_active[idx] = false;
                 }
             }
         }
@@ -246,9 +261,10 @@ impl RoutingServer {
         }
     }
 
-    /// Map the ID communicated by the FUSE FS to a handle index
-    fn get_handle_index(&self, id: &fuse::ChannelId) -> Option<usize> {
-        self.fuse_mapping.get(id).copied()
+    /// Map the (PID, channel-name-as-str) pair communicated by the FUSE FS
+    /// to a handle index. The lookup is borrowed-string, no allocation.
+    fn get_handle_index(&self, pid: fuse::PID, name: &str) -> Option<usize> {
+        self.fuse_mapping.get(&pid).and_then(|m| m.get(name)).copied()
     }
 
     pub fn write_control_file(
@@ -332,14 +348,11 @@ impl RoutingServer {
     /// Receive a message from the FS and post it to the mailboxes of any
     /// nodes listening on the channel.
     pub fn receive_write(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let path = &msg.id.1;
-        // Strip "/channel" suffix for data channel writes
-        let lookup_key = if let Some(channel_name) = path.strip_suffix("/channel") {
-            (msg.id.0, channel_name.to_string())
-        } else {
-            msg.id.clone()
-        };
-        let Some(channel_index) = self.get_handle_index(&lookup_key) else {
+        let path = msg.id.1.as_str();
+        // Strip "/channel" suffix for data channel writes; the lookup is
+        // borrowed against the path slice with no allocation.
+        let lookup_name: &str = path.strip_suffix("/channel").unwrap_or(path);
+        let Some(channel_index) = self.get_handle_index(msg.id.0, lookup_name) else {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         if ControlFile::parse(path).is_some() {
@@ -418,26 +431,24 @@ impl RoutingServer {
     /// to the ID identified in the message, but will send an "Empty" message
     /// if none is found.
     pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let path = msg.id.1.clone();
+        let path = msg.id.1.as_str();
 
         // Handle signal quality reads (e.g., "lora/rssi", "lora/snr")
         if let Some(channel_name) = path.strip_suffix("/rssi") {
-            return self.read_signal_file(channel_name, msg, |si| si.rssi_dbm);
+            let name = channel_name.to_string();
+            return self.read_signal_file(&name, msg, |si| si.rssi_dbm);
         }
         if let Some(channel_name) = path.strip_suffix("/snr") {
-            return self.read_signal_file(channel_name, msg, |si| si.snr_db);
+            let name = channel_name.to_string();
+            return self.read_signal_file(&name, msg, |si| si.snr_db);
         }
 
         // Strip "/channel" suffix for data channel reads
-        let lookup_key = if let Some(channel_name) = path.strip_suffix("/channel") {
-            (msg.id.0, channel_name.to_string())
-        } else {
-            msg.id.clone()
+        let lookup_name: &str = path.strip_suffix("/channel").unwrap_or(path);
+        let Some(channel_index) = self.get_handle_index(msg.id.0, lookup_name) else {
+            return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
-        let Some(channel_index) = self.get_handle_index(&lookup_key) else {
-            return Err(RouterError::UnknownFile(path));
-        };
-        if ControlFile::parse(&path).is_some() {
+        if ControlFile::parse(path).is_some() {
             self.read_control_file(channel_index, msg)
         } else {
             self.read_channel_file(channel_index, msg)
@@ -451,8 +462,7 @@ impl RoutingServer {
         mut msg: fuse::Message,
         extractor: impl Fn(&SignalInfo) -> f64,
     ) -> Result<(), RouterError> {
-        let key = (msg.id.0, channel_name.to_string());
-        let Some(&handle_index) = self.fuse_mapping.get(&key) else {
+        let Some(handle_index) = self.get_handle_index(msg.id.0, channel_name) else {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         let value = extractor(&self.signal_info[handle_index]);
@@ -477,17 +487,29 @@ impl RoutingServer {
         self.deliver_queued_messages()
     }
 
-    /// Remove expired messages from all mailboxes.
+    /// Remove expired messages from active mailboxes only. The
+    /// `nonempty_mailboxes` index is rebuilt by `retain` so empty entries
+    /// (drained by reads between sweeps) drop out and the sweep stays O(active)
+    /// rather than O(total mailboxes).
     fn expire_messages(&mut self) {
         let timestep = self.timestep;
-        for mailbox in self.mailboxes.iter_mut() {
+        let mailboxes = &mut self.mailboxes;
+        let active = &mut self.mailbox_active;
+        self.nonempty_mailboxes.retain(|&i| {
+            let mailbox = &mut mailboxes[i];
             while mailbox
                 .front()
                 .is_some_and(|msg| msg.expiration.is_some_and(|exp| exp.get() < timestep))
             {
                 let _ = mailbox.pop_front();
             }
-        }
+            if mailbox.is_empty() {
+                active[i] = false;
+                false
+            } else {
+                true
+            }
+        });
     }
 
     /// Deliver all messages whose activation timestep has arrived.
@@ -509,7 +531,12 @@ impl RoutingServer {
                 .max_buffered()
                 .is_none_or(|n| n.get() > mailbox.len())
             {
+                let was_empty = mailbox.is_empty();
                 mailbox.push_back(frame.msg);
+                if was_empty && !self.mailbox_active[frame.handle_ptr] {
+                    self.mailbox_active[frame.handle_ptr] = true;
+                    self.nonempty_mailboxes.push(frame.handle_ptr);
+                }
 
                 // Deduct RX channel energy cost on delivery
                 energy::EnergyManager::drain_rx(
