@@ -9,6 +9,8 @@ mod status;
 mod test_utils;
 pub mod types;
 
+pub use router::RouterInput;
+
 use fuse::PID;
 use helpers::{make_handles, unzip};
 
@@ -19,7 +21,7 @@ use std::{
     sync::{
         Arc,
         atomic::{AtomicBool, AtomicU64, Ordering},
-        mpsc::{self, Receiver},
+        mpsc,
     },
     time::Duration,
 };
@@ -71,8 +73,13 @@ pub struct Kernel {
     time_dilation: Arc<AtomicU64>,
     channels: ResolvedChannels,
     runc: RunController,
+    /// Reply channel handed off to the router; replies flow kernel -> FUSE.
     tx: mpsc::Sender<fuse::KernelMessage>,
-    rx: mpsc::Receiver<fuse::FsMessage>,
+    /// Sender into the router's input channel. Cloned from the same channel
+    /// the FUSE filesystem already holds, so the kernel main thread shares
+    /// the router's wakeup queue with FUSE events.
+    router_input_tx: mpsc::Sender<RouterInput>,
+    router_input_rx: mpsc::Receiver<RouterInput>,
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
@@ -83,7 +90,8 @@ pub struct KernelBuilder {
     sim: ast::Simulation,
     runc: RunController,
     file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-    rx: mpsc::Receiver<fuse::FsMessage>,
+    router_input_tx: mpsc::Sender<RouterInput>,
+    router_input_rx: mpsc::Receiver<RouterInput>,
     tx: mpsc::Sender<fuse::KernelMessage>,
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
@@ -96,7 +104,8 @@ impl KernelBuilder {
         sim: ast::Simulation,
         runc: RunController,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-        rx: mpsc::Receiver<fuse::FsMessage>,
+        router_input_tx: mpsc::Sender<RouterInput>,
+        router_input_rx: mpsc::Receiver<RouterInput>,
         tx: mpsc::Sender<fuse::KernelMessage>,
         remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Self {
@@ -104,7 +113,8 @@ impl KernelBuilder {
             sim,
             runc,
             file_handles,
-            rx,
+            router_input_tx,
+            router_input_rx,
             tx,
             remap_tx,
             abort: None,
@@ -155,7 +165,8 @@ impl KernelBuilder {
                 .unwrap_or_else(|| Arc::new(AtomicU64::new(sim.params.time_dilation.to_bits()))),
             channels,
             runc: self.runc,
-            rx: self.rx,
+            router_input_tx: self.router_input_tx,
+            router_input_rx: self.router_input_rx,
             tx: self.tx,
             remap_tx: self.remap_tx,
             abort: self.abort,
@@ -198,7 +209,8 @@ impl Kernel {
             channels,
             runc,
             tx,
-            rx,
+            router_input_tx,
+            router_input_rx,
             remap_tx,
             abort,
             pause,
@@ -211,7 +223,7 @@ impl Kernel {
         let current_ts = Arc::new(AtomicU64::new(0));
         let (energy_tx, energy_rx) = mpsc::channel::<router::EnergyEvents>();
         let mut routing_server = {
-            let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
+            let source = Self::get_write_source(cmd).map_err(KernelError::SourceError)?;
             RoutingServer::serve(
                 tx,
                 channels,
@@ -221,6 +233,8 @@ impl Kernel {
                 remap_tx,
                 current_ts.clone(),
                 energy_tx,
+                router_input_tx,
+                router_input_rx,
             )
         }?;
         let mut status_server = StatusServer::serve(time_dilation.clone(), runc)?;
@@ -326,9 +340,9 @@ impl Kernel {
     }
 
     #[instrument(skip_all)]
-    fn get_write_source(rx: Receiver<fuse::FsMessage>, cmd: RunCmd) -> Result<Source, SourceError> {
+    fn get_write_source(cmd: RunCmd) -> Result<Source, SourceError> {
         match cmd {
-            RunCmd::Simulate { .. } => Source::simulated(rx),
+            RunCmd::Simulate { .. } => Source::simulated(),
             RunCmd::Replay { logs } => {
                 // Prefer unified trace format if available, fall back to legacy
                 let trace_file = logs.join("trace.nxs");

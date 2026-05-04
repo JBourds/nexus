@@ -20,7 +20,7 @@ pub enum RouterError {
     #[error("Error sending fuse message: {0:#?}")]
     FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]
-    KernelSendError(SendError<crate::router::KernelMessage>),
+    KernelSendError(SendError<crate::router::RouterInput>),
     #[error("Error receiving message: {0:#?}")]
     RecvError(RecvError),
     #[error("Failed to deliver queued messages.")]

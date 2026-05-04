@@ -4,7 +4,6 @@ use bincode::config;
 use bincode::error::DecodeError;
 use std::io;
 use std::path::Path;
-use std::sync::mpsc;
 use std::{fs::File, io::BufReader};
 
 use crate::log::{LogRecord, MessageRecord};
@@ -15,14 +14,17 @@ use trace::format::{TraceEvent, TraceRecord};
 use trace::reader::TraceReader;
 
 /// Different sources for write events
-/// * `Simulate`: Take actual writes from processes.
+/// * `Simulate`: FUSE events flow through `RouterInput::Fs`; this variant only
+///   tells the router to advance time on Tick.
 /// * `Replay`: Use the timesteps writes were logged at from simulation.
 /// * `ReplayTrace`: Replay from the unified trace format.
 /// * `Empty`: Stub. No messages get delivered.
 #[derive(Debug)]
 pub enum Source {
-    /// Write events come from executing processes.
-    Simulated { rx: mpsc::Receiver<fuse::FsMessage> },
+    /// Live simulation: FUSE messages arrive on the unified router input
+    /// channel rather than through the source. Only used here as a Tick
+    /// witness.
+    Simulated,
     /// Write events come from a legacy binary log. Only `Message { tx: true }` records are
     /// replayed; RX, Movement, and Battery records are skipped.
     Replay {
@@ -39,8 +41,8 @@ pub enum Source {
 }
 
 impl Source {
-    pub fn simulated(rx: mpsc::Receiver<fuse::FsMessage>) -> Result<Self, SourceError> {
-        Ok(Self::Simulated { rx })
+    pub fn simulated() -> Result<Self, SourceError> {
+        Ok(Self::Simulated)
     }
 
     pub fn replay(log: impl AsRef<Path>) -> Result<Self, SourceError> {
@@ -80,29 +82,13 @@ impl Source {
     }
 
     fn poll_simulated(
-        rx: &mut mpsc::Receiver<fuse::FsMessage>,
         router: &mut RoutingServer,
         ts_advanced: bool,
     ) -> Result<(), SourceError> {
-        // Receive all write requests from FS then let router ingest them
-        for msg in rx.try_iter() {
-            match msg {
-                fuse::FsMessage::Write(msg) => {
-                    router
-                        .receive_write(msg)
-                        .map_err(SourceError::RouterError)?;
-                }
-                fuse::FsMessage::Read(msg) => {
-                    router.request_read(msg).map_err(SourceError::RouterError)?;
-                }
-                fuse::FsMessage::Sleep(event) => {
-                    router.request_sleep(event);
-                }
-            }
-        }
-        // Only advance the simulation (energy drain, message delivery) once
-        // per timestep. The kernel polls multiple times per timestep to
-        // collect FUSE messages, but step() must run exactly once.
+        // FUSE messages now arrive at the router via `RouterInput::Fs` and
+        // are dispatched on receipt. The Tick path only needs to advance
+        // simulated time once per timestep so energy/expiry/delivery
+        // bookkeeping fires.
         if ts_advanced {
             router.step().map_err(SourceError::RouterError)?;
         }
@@ -252,7 +238,7 @@ impl Source {
     ) -> Result<(), SourceError> {
         match self {
             Self::Empty => Ok(()),
-            Self::Simulated { rx } => Self::poll_simulated(rx, router, ts_advanced),
+            Self::Simulated => Self::poll_simulated(router, ts_advanced),
             Self::Replay { src, next_log } => {
                 Self::poll_log(src, ts, router, next_log, ts_advanced)
             }

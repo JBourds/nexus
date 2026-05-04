@@ -2,7 +2,6 @@ pub mod channel;
 pub mod errors;
 pub mod file;
 pub mod fs;
-use std::sync::mpsc;
 
 use config::ast::{self, TimeUnit};
 use fuser::ReplyWrite;
@@ -11,8 +10,6 @@ pub type Mode = i32;
 pub type PID = u32;
 pub type Inode = u64;
 pub type ChannelId = (PID, ast::ChannelHandle);
-pub type KernelChannels = (mpsc::Sender<KernelMessage>, mpsc::Receiver<FsMessage>);
-pub type FsChannels = (mpsc::Sender<FsMessage>, mpsc::Receiver<KernelMessage>);
 
 pub mod ctrl_files;
 

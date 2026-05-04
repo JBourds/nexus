@@ -65,20 +65,20 @@ use table::*;
 
 type ServerHandle = JoinHandle<Result<(), KernelError>>;
 
-impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
+impl KernelServer<ServerHandle, RouterInput, RouterMessage> {
     /// Wake the router. Fire-and-forget: the router reads the current
-    /// timestep from the shared atomic and processes any pending FUSE
-    /// messages and per-step bookkeeping. Energy events are pushed
-    /// asynchronously on a separate channel.
+    /// timestep from the shared atomic and processes any per-step
+    /// bookkeeping. Energy events are pushed asynchronously on a separate
+    /// channel.
     pub fn tick(&mut self) -> Result<(), KernelError> {
         self.tx
-            .send(router::KernelMessage::Tick)
+            .send(router::RouterInput::Tick)
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
     }
 
     pub fn remap_pids(&mut self, pairs: Vec<(u32, u32)>) -> Result<RouterMessage, KernelError> {
         self.tx
-            .send(router::KernelMessage::RemapPids(pairs))
+            .send(router::RouterInput::RemapPids(pairs))
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
         self.rx
             .recv()
@@ -87,7 +87,7 @@ impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
 
     pub fn shutdown(self) -> Result<(), KernelError> {
         self.tx
-            .send(router::KernelMessage::Shutdown)
+            .send(router::RouterInput::Shutdown)
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
         self.handle.join().expect("thread panic!")
     }
@@ -161,7 +161,17 @@ impl RoutingServer {
     /// message. `energy_tx` is the asynchronous push channel for depletion
     /// and recovery events; the kernel main thread drains its receiver once
     /// per tick.
-    #[instrument(skip(tx, channels, rng, source, remap_tx, current_ts, energy_tx))]
+    #[instrument(skip(
+        tx,
+        channels,
+        rng,
+        source,
+        remap_tx,
+        current_ts,
+        energy_tx,
+        kernel_tx,
+        kernel_rx
+    ))]
     pub fn serve(
         tx: mpsc::Sender<fuse::KernelMessage>,
         channels: ResolvedChannels,
@@ -171,8 +181,9 @@ impl RoutingServer {
         remap_tx: mpsc::Sender<(u32, u32)>,
         current_ts: Arc<AtomicU64>,
         energy_tx: mpsc::Sender<EnergyEvents>,
-    ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
-        let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
+        kernel_tx: mpsc::Sender<RouterInput>,
+        kernel_rx: mpsc::Receiver<RouterInput>,
+    ) -> Result<KernelServer<ServerHandle, RouterInput, RouterMessage>, KernelError> {
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
         thread::Builder::new()
             .name("nexus_router".to_string())
@@ -206,19 +217,40 @@ impl RoutingServer {
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
                     match kernel_rx.recv() {
-                        Ok(KernelMessage::Shutdown) => {
+                        Ok(RouterInput::Shutdown) => {
                             return Ok(());
                         }
-                        Ok(KernelMessage::RemapPids(pairs)) => {
+                        Ok(RouterInput::RemapPids(pairs)) => {
                             router.apply_pid_remaps(&pairs);
                             if router_tx.send(RouterMessage::PidsRemapped).is_err() {
                                 break Err(KernelError::RouterError(RouterError::RouteError));
                             }
                         }
-                        Ok(KernelMessage::Tick) => {
+                        Ok(RouterInput::Fs(fs_msg)) => {
+                            // Direct dispatch of the FUSE event. Replaces the
+                            // try_iter drain that used to happen on each Poll;
+                            // the router now wakes on every FUSE op so reads
+                            // get their reply in one mpsc round-trip rather
+                            // than waiting for the next Tick.
+                            let res = match fs_msg {
+                                fuse::FsMessage::Write(msg) => router.receive_write(msg),
+                                fuse::FsMessage::Read(msg) => router.request_read(msg),
+                                fuse::FsMessage::Sleep(event) => {
+                                    router.request_sleep(event);
+                                    Ok(())
+                                }
+                            };
+                            if let Err(e) = res {
+                                break Err(KernelError::RouterError(e));
+                            }
+                        }
+                        Ok(RouterInput::Tick) => {
                             let timestep = current_ts.load(Ordering::Acquire);
                             let ts_advanced = timestep != last_polled_ts;
                             last_polled_ts = timestep;
+                            // Source::Simulated is now a no-op on poll
+                            // because FUSE messages flow via RouterInput::Fs;
+                            // for replay paths source.poll injects log records.
                             if let Err(e) = source.poll(&mut router, timestep, ts_advanced) {
                                 break Err(KernelError::SourceError(e));
                             }

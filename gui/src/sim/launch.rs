@@ -210,14 +210,14 @@ fn run_inner(
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
     let (remap_tx, remap_rx) = std::sync::mpsc::channel();
-    let fs = fs_root
-        .map(|root| NexusFs::new(root, remap_rx))
-        .unwrap_or_default();
+    let (router_input_tx, router_input_rx) =
+        std::sync::mpsc::channel::<kernel::RouterInput>();
+    let fs = NexusFs::<kernel::RouterInput>::new(fs_root, remap_rx, router_input_tx.clone());
 
     let file_handles = make_file_handles(&sim, &runc.handles);
     let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
 
-    let (sess, (tx, rx)) = fs
+    let (sess, tx) = fs
         .add_processes(&pids)
         .add_channels(protocol_channels)?
         .mount()
@@ -226,11 +226,19 @@ fn run_inner(
     // FUSE is mounted; unfreeze processes so they can access their files.
     runc.cgroups.start();
 
-    let kernel = KernelBuilder::new(sim, runc, file_handles, rx, tx, remap_tx)
-        .abort_flag(abort)
-        .pause_flag(pause)
-        .time_dilation(time_dilation)
-        .build()?;
+    let kernel = KernelBuilder::new(
+        sim,
+        runc,
+        file_handles,
+        router_input_tx,
+        router_input_rx,
+        tx,
+        remap_tx,
+    )
+    .abort_flag(abort)
+    .pause_flag(pause)
+    .time_dilation(time_dilation)
+    .build()?;
     let protocol_handles = kernel.run(RunCmd::Simulate {
         config: PathBuf::new(),
     })?;

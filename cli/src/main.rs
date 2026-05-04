@@ -181,7 +181,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     #[allow(unused_variables)]
     let (trace_path, _trace_handle) = setup_logging(root.as_path(), &args.cmd, &sim)?;
     runner::build(&sim)?;
-    let mut summaries = vec![];
+    let mut run_summaries: Vec<ProtocolSummary> = vec![];
     for _ in 0..args.n.unwrap_or(1) {
         let mut runc = runner::run(&sim)?;
         // Spawn reader threads to ensure protocol stdout/stderr gets written
@@ -190,15 +190,16 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             runner::output::spawn_output_readers(&mut runc.handles, &root, |_, _, _, _| {});
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
         let (remap_tx, remap_rx) = std::sync::mpsc::channel();
+        let (router_input_tx, router_input_rx) = std::sync::mpsc::channel::<kernel::RouterInput>();
         let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
-        let fs = args
-            .root
-            .clone()
-            .map(|root| NexusFs::new(root, remap_rx))
-            .unwrap_or_default();
+        let fs = NexusFs::<kernel::RouterInput>::new(
+            args.root.clone(),
+            remap_rx,
+            router_input_tx.clone(),
+        );
 
         #[allow(unused_variables)]
-        let (sess, (tx, rx)) = fs
+        let (sess, tx) = fs
             .add_processes(&pids)
             .add_channels(protocol_channels)?
             .mount()
@@ -207,27 +208,33 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         // Need to join fs thread so the other processes don't get stuck
         // in an uninterruptible sleep state.
         let file_handles = make_file_handles(&sim, &runc.handles);
-        let protocol_handles =
-            KernelBuilder::new(sim.clone(), runc, file_handles, rx, tx, remap_tx)
-                .build()?
-                .run(args.cmd.clone())?;
+        let protocol_handles = KernelBuilder::new(
+            sim.clone(),
+            runc,
+            file_handles,
+            router_input_tx,
+            router_input_rx,
+            tx,
+            remap_tx,
+        )
+        .build()?
+        .run(args.cmd.clone())?;
         // finish() kills the children; once their pipes close the reader
         // threads see EOF. Join only after kill so we don't deadlock.
-        let mut run_summaries = get_output(protocol_handles);
+        run_summaries = get_output(protocol_handles);
         for thread in reader_threads {
             let _ = thread.join();
         }
         runner::output::collect_captured_output(&root, &mut run_summaries);
-        summaries.extend(run_summaries);
     }
     match args.dest {
         OutputDestination::Stdout => {
-            to_csv(stdout(), &summaries);
+            to_csv(stdout(), &run_summaries);
         }
         OutputDestination::File => {
             let path = root.join(format!("output.{}", args.fmt.extension()));
             let f = OpenOptions::new().write(true).create_new(true).open(path)?;
-            to_csv(f, &summaries);
+            to_csv(f, &run_summaries);
         }
     }
     Ok(())

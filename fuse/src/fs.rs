@@ -1,7 +1,7 @@
 use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
 use crate::file::{NexusFile, default_attr};
-use crate::{ChannelId, FsChannels, FsMessage, KernelChannels, KernelMessage, SleepEvent};
+use crate::{ChannelId, FsMessage, KernelMessage, SleepEvent};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
@@ -45,8 +45,15 @@ struct FsEntry {
     path: String,
 }
 
+/// FUSE filesystem. Generic over the message type pushed on FUSE events so
+/// the kernel can hand in a `Sender<RouterInput>` (FUSE events arrive at the
+/// router in one mpsc hop, no forwarder thread). Defaults to `FsMessage` so
+/// tests and the in-tree default constructor work without the kernel.
 #[derive(Debug)]
-pub struct NexusFs {
+pub struct NexusFs<T = FsMessage>
+where
+    T: From<FsMessage> + Send + 'static,
+{
     root: PathBuf,
     attr: FileAttr,
     entries: Vec<FsEntry>,
@@ -58,8 +65,15 @@ pub struct NexusFs {
     /// the previous `(PID, String)` key removed an allocation on every read,
     /// write, getattr, lookup and open.
     buffers: HashMap<(u32, usize), NexusFile>,
-    fs_side: FsChannels,
-    kernel_side: Option<KernelChannels>,
+    /// `(sender into kernel/router, receiver of replies from kernel)`. The
+    /// sender is provided by the caller; for the kernel-driven flow it is a
+    /// clone of the router's input channel so FUSE events skip the forwarder
+    /// hop.
+    fs_side: (mpsc::Sender<T>, mpsc::Receiver<KernelMessage>),
+    /// Reply channel handed back to the kernel on `mount()`. Held in an
+    /// Option so `mount` can take ownership without consuming the rest of
+    /// `Self`.
+    kernel_reply_tx: Option<mpsc::Sender<KernelMessage>>,
     /// Receiver for (old_pid, new_pid) pairs sent by the router.
     remap_rx: mpsc::Receiver<(u32, u32)>,
     /// Per-instance inode counter (must not be static; the GUI reuses
@@ -70,13 +84,32 @@ pub struct NexusFs {
     tgid_cache: HashMap<u32, u32>,
 }
 
-impl NexusFs {
-    pub fn new(root: PathBuf, remap_rx: mpsc::Receiver<(u32, u32)>) -> Self {
+impl<T> NexusFs<T>
+where
+    T: From<FsMessage> + Send + 'static,
+{
+    /// Construct a NexusFs that pushes FUSE events through `fs_to_kernel_tx`.
+    /// The sender is typically a clone of the router's input channel, so the
+    /// FUSE thread reaches the router in one mpsc hop. `root` defaults to
+    /// `~/nexus` when `None`.
+    pub fn new(
+        root: Option<PathBuf>,
+        remap_rx: mpsc::Receiver<(u32, u32)>,
+        fs_to_kernel_tx: mpsc::Sender<T>,
+    ) -> Self {
+        let root = root.unwrap_or_else(|| expand_home(&PathBuf::from("~/nexus")));
+        let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
         Self {
             root,
             attr: Self::root_attr(),
+            entries: Vec::default(),
+            by_parent: HashMap::default(),
+            buffers: HashMap::default(),
+            fs_side: (fs_to_kernel_tx, fs_reply_rx),
+            kernel_reply_tx: Some(kernel_reply_tx),
             remap_rx,
-            ..Default::default()
+            inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
+            tgid_cache: HashMap::new(),
         }
     }
 
@@ -278,13 +311,19 @@ impl NexusFs {
     /// Request a message from the kernel for the channel identified by `id`.
     /// Performs blocking I/O on the channel to send a request and receive the
     /// response from the kernel.
-    fn pull_message(fs_side: &mut FsChannels, id: ChannelId) -> Result<KernelMessage, FsError> {
+    fn pull_message(
+        fs_side: &mut (mpsc::Sender<T>, mpsc::Receiver<KernelMessage>),
+        id: ChannelId,
+    ) -> Result<KernelMessage, FsError> {
         fs_side
             .0
-            .send(FsMessage::Read(Message {
-                id,
-                data: Vec::new(),
-            }))
+            .send(
+                FsMessage::Read(Message {
+                    id,
+                    data: Vec::new(),
+                })
+                .into(),
+            )
             .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
         fs_side
             .1
@@ -293,8 +332,8 @@ impl NexusFs {
     }
 
     /// Mount the filesystem without blocking, yield the background session it
-    /// is mounted in, and return the kernel's end of
-    pub fn mount(mut self) -> Result<(BackgroundSession, KernelChannels), FsError> {
+    /// is mounted in, and return the kernel's reply sender.
+    pub fn mount(mut self) -> Result<(BackgroundSession, mpsc::Sender<KernelMessage>), FsError> {
         let mut options = vec![MountOption::FSName("nexus".to_string())];
         if std::env::var_os("NEXUS_FUSE_ALLOW_OTHER").is_some() {
             options.push(MountOption::AllowOther);
@@ -306,8 +345,10 @@ impl NexusFs {
                 err,
             })?;
         }
-        let kernel_side =
-            core::mem::take(&mut self.kernel_side).expect("must have created kernel channels");
+        let kernel_reply_tx = self
+            .kernel_reply_tx
+            .take()
+            .expect("kernel reply sender already consumed");
         let sess =
             fuser::spawn_mount2(self, &root, &options).map_err(|err| FsError::MountError {
                 root: root.clone(),
@@ -321,7 +362,7 @@ impl NexusFs {
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        Ok((sess, kernel_side))
+        Ok((sess, kernel_reply_tx))
     }
 
     fn read_message(
@@ -375,19 +416,19 @@ impl NexusFs {
     }
 }
 
-impl Default for NexusFs {
+impl Default for NexusFs<FsMessage> {
     fn default() -> Self {
         let root = expand_home(&PathBuf::from("~/nexus"));
-        let (fs_tx, kernel_rx) = mpsc::channel();
-        let (kernel_tx, fs_rx) = mpsc::channel();
+        let (fs_tx, _kernel_rx) = mpsc::channel::<FsMessage>();
+        let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
         Self {
             root,
             attr: Self::root_attr(),
             entries: Vec::default(),
             by_parent: HashMap::default(),
             buffers: HashMap::default(),
-            fs_side: (fs_tx, fs_rx),
-            kernel_side: Some((kernel_tx, kernel_rx)),
+            fs_side: (fs_tx, fs_reply_rx),
+            kernel_reply_tx: Some(kernel_reply_tx),
             remap_rx: mpsc::channel().1,
             inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
             tgid_cache: HashMap::new(),
@@ -395,7 +436,10 @@ impl Default for NexusFs {
     }
 }
 
-impl Filesystem for NexusFs {
+impl<T> Filesystem for NexusFs<T>
+where
+    T: From<FsMessage> + Send + 'static,
+{
     fn setattr(
         &mut self,
         req: &Request<'_>,
@@ -617,7 +661,7 @@ impl Filesystem for NexusFs {
                         });
                         self.fs_side
                             .0
-                            .send(msg)
+                            .send(msg.into())
                             .expect("failed to send message to kernel");
                     }
                     Err(_) => {
@@ -641,7 +685,7 @@ impl Filesystem for NexusFs {
                 });
                 self.fs_side
                     .0
-                    .send(msg)
+                    .send(msg.into())
                     .expect("failed to send message to kernel");
                 let Ok(bytes_written) = data.len().try_into() else {
                     reply.error(EMSGSIZE);

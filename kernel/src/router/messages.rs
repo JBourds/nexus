@@ -1,5 +1,11 @@
+/// Single input stream into the router thread. FUSE filesystem events and
+/// kernel-side control signals are merged into one mpsc so the router
+/// blocks on exactly one `recv()` and responds to whichever arrives first.
+/// Without this merge, the router would either need a `select`-style
+/// primitive (not in std) or have to poll, both of which reintroduce
+/// latency or busy-wait the very change this enum exists to remove.
 #[derive(Debug)]
-pub enum KernelMessage {
+pub enum RouterInput {
     Shutdown,
     /// Wake the router; advance simulated time per the shared `current_ts`
     /// atomic. Replaces the old `Poll(u64)` variant whose embedded timestep
@@ -8,6 +14,17 @@ pub enum KernelMessage {
     Tick,
     /// Remap PIDs in handles and fuse_mapping after a process respawn.
     RemapPids(Vec<(u32, u32)>),
+    /// FUSE filesystem event from a protocol process. The FUSE filesystem
+    /// is generic over a `From<FsMessage>` sender type and constructs this
+    /// variant directly via `Into`, so events reach the router in one mpsc
+    /// hop with no forwarder thread.
+    Fs(fuse::FsMessage),
+}
+
+impl From<fuse::FsMessage> for RouterInput {
+    fn from(msg: fuse::FsMessage) -> Self {
+        Self::Fs(msg)
+    }
 }
 
 #[derive(Debug)]
