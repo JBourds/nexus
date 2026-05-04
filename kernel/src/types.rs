@@ -349,6 +349,11 @@ pub struct Node {
     pub protocols: Vec<NodeProtocol>,
     /// Per-channel energy costs keyed by integer channel handle.
     pub channel_energy: HashMap<ChannelHandle, ChannelEnergy>,
+    /// Set true on the first FUSE position write (write_pos, write_pos_delta,
+    /// write_pos_motion). Monotone: once true, stays true. Gates the link
+    /// parameter cache: pairs where either endpoint is `is_dynamic` are
+    /// recomputed on every send instead of consulting the cache.
+    pub is_dynamic: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -419,6 +424,7 @@ impl Node {
                 start: node.start,
                 position: node.position,
                 motion: MotionPattern::Static,
+                is_dynamic: false,
             },
             new_handles,
         ))

@@ -38,6 +38,7 @@ mod tests {
             start: SystemTime::UNIX_EPOCH,
             protocols: vec![],
             channel_energy: HashMap::new(),
+            is_dynamic: false,
         }
     }
 
@@ -63,6 +64,7 @@ mod tests {
                 subscribers,
                 publishers,
             }],
+            is_dynamic: false,
         }
     }
 
@@ -113,6 +115,7 @@ mod tests {
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); mailbox_count],
             sleep_alarms: std::collections::BinaryHeap::new(),
+            link_cache: HashMap::new(),
         };
         (router, rx)
     }
@@ -533,6 +536,7 @@ mod tests {
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
             sleep_alarms: std::collections::BinaryHeap::new(),
+            link_cache: HashMap::new(),
         };
 
         // Write "active" to ctl.energy_state
@@ -607,6 +611,7 @@ mod tests {
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
             sleep_alarms: std::collections::BinaryHeap::new(),
+            link_cache: HashMap::new(),
         };
 
         // Write unknown state
@@ -1208,6 +1213,7 @@ mod tests {
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
             sleep_alarms: std::collections::BinaryHeap::new(),
+            link_cache: HashMap::new(),
         };
 
         // Write a source and a sink via control file (nj/ts passthrough)
@@ -1312,6 +1318,7 @@ mod tests {
             next_msg_id: 0,
             signal_info: vec![SignalInfo::default(); handles.len()],
             sleep_alarms: std::collections::BinaryHeap::new(),
+            link_cache: HashMap::new(),
         };
 
         // Write "source solar 100 mw/s" — 100 mW per second with 1ms timestep

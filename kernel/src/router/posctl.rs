@@ -152,6 +152,7 @@ impl RoutingServer {
             _ => return Err(RouterError::InvalidString(msg.data)),
         }
         node.motion = MotionPattern::Static;
+        self.mark_dynamic(node_index);
         let timestep = self.timestep;
         let node = &self.channels.nodes[node_index];
         Self::emit_movement_event(node_index, node, timestep);
@@ -186,6 +187,7 @@ impl RoutingServer {
             _ => return Err(RouterError::InvalidString(msg.data)),
         }
         node.motion = MotionPattern::Static;
+        self.mark_dynamic(node_index);
         let timestep = self.timestep;
         let node = &self.channels.nodes[node_index];
         Self::emit_movement_event(node_index, node, timestep);
@@ -221,6 +223,7 @@ impl RoutingServer {
         let pattern = Self::parse_motion_spec(s.trim(), current_point, start_ts)
             .map_err(|e| RouterError::InvalidMotionPattern(e.to_string()))?;
         self.channels.nodes[node_index].motion = pattern;
+        self.mark_dynamic(node_index);
         let timestep = self.timestep;
         let spec = self.channels.nodes[node_index].motion.to_spec();
         event!(

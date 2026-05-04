@@ -143,6 +143,11 @@ pub(crate) struct RoutingServer {
     // Min-heap by `(timestep, pid)`: the `Reverse` is what makes
     // `peek`/`pop` return the *earliest* deadline first.
     sleep_alarms: BinaryHeap<Reverse<SleepAlarm>>,
+    /// Cached deterministic link parameters keyed by
+    /// `(src_node_idx, dst_node_idx, channel_idx)`. Only holds entries for
+    /// pairs where both endpoints are still Static; on Static->Dynamic
+    /// transition we evict any entry containing the node.
+    link_cache: HashMap<(usize, usize, usize), link_simulation::CachedLink>,
 }
 
 /// Last-received signal quality for a (destination_node, channel) pair.
@@ -213,6 +218,7 @@ impl RoutingServer {
                     next_msg_id: 0,
                     signal_info: vec![SignalInfo::default(); handles_count],
                     sleep_alarms: BinaryHeap::new(),
+                    link_cache: HashMap::new(),
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -284,6 +290,18 @@ impl RoutingServer {
             })
             .map_err(|e| KernelError::RouterError(RouterError::ThreadCreation(e)))
             .map(|handle| KernelServer::new(handle, kernel_tx, router_rx))
+    }
+
+    /// Flip `node_idx` to `is_dynamic = true` and evict any cached link
+    /// entries that mention it. Idempotent. Called from the three FUSE
+    /// position-write handlers in `posctl.rs`.
+    pub(super) fn mark_dynamic(&mut self, node_idx: usize) {
+        if self.channels.nodes[node_idx].is_dynamic {
+            return;
+        }
+        self.channels.nodes[node_idx].is_dynamic = true;
+        self.link_cache
+            .retain(|&(s, d, _), _| s != node_idx && d != node_idx);
     }
 
     /// Apply PID remaps: update handles and fuse_mapping entries, clear

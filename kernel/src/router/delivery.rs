@@ -90,9 +90,13 @@ impl RoutingServer {
                 &self.channels.node_names[src_node.0], &self.channels.node_names[dst_node.0]
             );
 
-            let (distance, distance_unit) = Position::distance(
-                &self.channels.nodes[src_node.0].position,
-                &self.channels.nodes[dst_node.0].position,
+            let link = Self::lookup_or_compute_link(
+                &mut self.link_cache,
+                &self.channels.nodes,
+                &self.channels.channels,
+                src_node.0,
+                dst_node.0,
+                channel_handle.0,
             );
 
             // For exclusive channels, run link simulation now; drop the
@@ -100,11 +104,10 @@ impl RoutingServer {
             let (buf, msg_bit_errors, rssi_dbm, snr_db): (Rc<[u8]>, bool, f64, f64) = if is_shared {
                 (Rc::clone(&shared_buf), false, 0.0, 0.0)
             } else {
-                match Self::send_through_channel(
+                match Self::send_through_channel_cached(
                     channel,
                     Cow::from(&msg),
-                    distance,
-                    distance_unit,
+                    &link,
                     &mut self.rng,
                 ) {
                     Some((b, be, rssi, snr)) => (b.into(), be, rssi, snr),
@@ -112,8 +115,14 @@ impl RoutingServer {
                 }
             };
 
-            let (becomes_active_at, expiration) =
-                Self::message_timesteps(channel, sz, ts_config, timestep, distance, distance_unit);
+            let (becomes_active_at, expiration) = Self::message_timesteps(
+                channel,
+                sz,
+                ts_config,
+                timestep,
+                link.distance,
+                link.distance_unit,
+            );
 
             let msg = AddressedMsg {
                 handle_ptr,
@@ -166,16 +175,19 @@ impl RoutingServer {
             std::cmp::Ordering::Less => Ok(false),
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.pop_front().unwrap();
-                let (distance, unit) = Position::distance(
-                    &self.channels.nodes[msg.src.0].position,
-                    &self.channels.nodes[node_handle.0].position,
+                let link = Self::lookup_or_compute_link(
+                    &mut self.link_cache,
+                    &self.channels.nodes,
+                    &self.channels.channels,
+                    msg.src.0,
+                    node_handle.0,
+                    channel_handle.0,
                 );
 
-                if let Some((buf, bit_errors, rssi_dbm, snr_db)) = Self::send_through_channel(
+                if let Some((buf, bit_errors, rssi_dbm, snr_db)) = Self::send_through_channel_cached(
                     channel,
                     Cow::from(msg.buf.as_ref()),
-                    distance,
-                    unit,
+                    &link,
                     &mut self.rng,
                 ) {
                     self.signal_info[index].rssi_dbm = rssi_dbm;
@@ -210,17 +222,24 @@ impl RoutingServer {
                 warn!("Detected collision on shared medium.");
                 let max_size = channel.r#type.max_size;
 
+                let cache = &mut self.link_cache;
+                let nodes = &self.channels.nodes;
+                let channels = &self.channels.channels;
+                let rng = &mut self.rng;
                 let filtered = mailbox.iter().filter_map(|msg| {
-                    let (distance, unit) = Position::distance(
-                        &self.channels.nodes[msg.src.0].position,
-                        &self.channels.nodes[node_handle.0].position,
+                    let link = Self::lookup_or_compute_link(
+                        cache,
+                        nodes,
+                        channels,
+                        msg.src.0,
+                        node_handle.0,
+                        channel_handle.0,
                     );
-                    Self::send_through_channel(
+                    Self::send_through_channel_cached(
                         channel,
                         Cow::from(msg.buf.as_ref()),
-                        distance,
-                        unit,
-                        &mut self.rng,
+                        &link,
+                        rng,
                     )
                 });
 
