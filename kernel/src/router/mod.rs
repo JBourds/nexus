@@ -24,6 +24,8 @@ use config::{
 use fuse::{SleepEvent, ctrl_files::ControlFile};
 use rand::rngs::StdRng;
 use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::thread;
 use std::{borrow::Cow, sync::mpsc};
 use std::{cmp::Reverse, collections::BinaryHeap};
@@ -64,15 +66,16 @@ use table::*;
 type ServerHandle = JoinHandle<Result<(), KernelError>>;
 
 impl KernelServer<ServerHandle, KernelMessage, RouterMessage> {
-    /// Poll the routing server for one timestep and return energy events.
-    pub fn poll(&mut self, timestep: u64) -> Result<RouterMessage, KernelError> {
+    /// Wake the router. Fire-and-forget: the router reads the current
+    /// timestep from the shared atomic and processes any pending FUSE
+    /// messages and per-step bookkeeping. Energy events are pushed
+    /// asynchronously on a separate channel.
+    pub fn tick(&mut self) -> Result<(), KernelError> {
         self.tx
-            .send(router::KernelMessage::Poll(timestep))
-            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
-        self.rx
-            .recv()
-            .map_err(|e| KernelError::RouterError(RouterError::RecvError(e)))
+            .send(router::KernelMessage::Tick)
+            .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))
     }
+
     pub fn remap_pids(&mut self, pairs: Vec<(u32, u32)>) -> Result<RouterMessage, KernelError> {
         self.tx
             .send(router::KernelMessage::RemapPids(pairs))
@@ -151,7 +154,14 @@ pub(crate) struct SignalInfo {
 
 impl RoutingServer {
     /// Build the routing table during initialization.
-    #[instrument]
+    ///
+    /// `current_ts` is shared with the kernel main thread. The kernel writes
+    /// it before sending Tick; the router reads it on Tick to learn the
+    /// current simulated timestep without needing the value embedded in the
+    /// message. `energy_tx` is the asynchronous push channel for depletion
+    /// and recovery events; the kernel main thread drains its receiver once
+    /// per tick.
+    #[instrument(skip(tx, channels, rng, source, remap_tx, current_ts, energy_tx))]
     pub fn serve(
         tx: mpsc::Sender<fuse::KernelMessage>,
         channels: ResolvedChannels,
@@ -159,6 +169,8 @@ impl RoutingServer {
         rng: StdRng,
         mut source: Source,
         remap_tx: mpsc::Sender<(u32, u32)>,
+        current_ts: Arc<AtomicU64>,
+        energy_tx: mpsc::Sender<EnergyEvents>,
     ) -> Result<KernelServer<ServerHandle, KernelMessage, RouterMessage>, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
@@ -203,32 +215,33 @@ impl RoutingServer {
                                 break Err(KernelError::RouterError(RouterError::RouteError));
                             }
                         }
-                        Ok(KernelMessage::Poll(timestep)) => {
+                        Ok(KernelMessage::Tick) => {
+                            let timestep = current_ts.load(Ordering::Acquire);
                             let ts_advanced = timestep != last_polled_ts;
                             last_polled_ts = timestep;
                             if let Err(e) = source.poll(&mut router, timestep, ts_advanced) {
                                 break Err(KernelError::SourceError(e));
                             }
-                            let depleted = router
+                            let depleted: Vec<String> = router
                                 .energy_mgr
                                 .newly_depleted
                                 .drain(..)
                                 .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
-                            let recovered = router
+                            let recovered: Vec<String> = router
                                 .energy_mgr
                                 .newly_recovered
                                 .drain(..)
                                 .map(|i| router.channels.node_names[i].to_string())
                                 .collect();
-                            if router_tx
-                                .send(RouterMessage::EnergyEvents {
+                            if !depleted.is_empty() || !recovered.is_empty() {
+                                let events = EnergyEvents {
                                     depleted,
                                     recovered,
-                                })
-                                .is_err()
-                            {
-                                break Err(KernelError::RouterError(RouterError::RouteError));
+                                };
+                                // Receiver is the kernel main thread; if it
+                                // dropped we are shutting down anyway.
+                                let _ = energy_tx.send(events);
                             }
                         }
                         Err(e) => {

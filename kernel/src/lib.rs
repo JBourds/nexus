@@ -21,7 +21,7 @@ use std::{
         atomic::{AtomicBool, AtomicU64, Ordering},
         mpsc::{self, Receiver},
     },
-    time::{Duration, SystemTime},
+    time::Duration,
 };
 
 use config::ast::{self, TimeUnit, TimestepConfig};
@@ -204,9 +204,24 @@ impl Kernel {
             pause,
         } = self;
         let mut event_queue = BTreeMap::new();
+        // Shared simulated-timestep counter. The kernel main thread writes,
+        // the router reads on Tick. Replaces the embedded timestep that used
+        // to flow in `Poll(u64)`, eliminating the synchronous reply that
+        // made every spin-loop iteration a blocking IPC round-trip.
+        let current_ts = Arc::new(AtomicU64::new(0));
+        let (energy_tx, energy_rx) = mpsc::channel::<router::EnergyEvents>();
         let mut routing_server = {
             let source = Self::get_write_source(rx, cmd).map_err(KernelError::SourceError)?;
-            RoutingServer::serve(tx, channels, timestep, rng, source, remap_tx)
+            RoutingServer::serve(
+                tx,
+                channels,
+                timestep,
+                rng,
+                source,
+                remap_tx,
+                current_ts.clone(),
+                energy_tx,
+            )
         }?;
         let mut status_server = StatusServer::serve(time_dilation.clone(), runc)?;
         queue_event(
@@ -220,6 +235,7 @@ impl Kernel {
         let mut last_health_check = std::time::Instant::now()
             .checked_sub(HEALTH_CHECK_INTERVAL)
             .unwrap_or_else(std::time::Instant::now);
+        let mut next_tick_at = std::time::Instant::now();
         'outer: for timestep in 0..self.timestep.count.into() {
             if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                 break;
@@ -237,53 +253,51 @@ impl Kernel {
 
             let speed = f64::from_bits(time_dilation.load(Ordering::Relaxed));
             let delta = base_delta.div_f64(speed.max(MIN_DILATION));
-            let start = SystemTime::now();
-            while start.elapsed().is_ok_and(|elapsed| elapsed < delta) {
-                if let Some(events) = dequeue(&mut event_queue, timestep) {
-                    for event in events {
-                        match event {
-                            Event::UpdateResources => {
-                                status_server.update_resources()?;
-                                queue_event(
-                                    &mut event_queue,
-                                    timestep + RESOURCE_UPDATE_INTERVAL,
-                                    Event::UpdateResources,
-                                );
-                            }
+
+            if let Some(events) = dequeue(&mut event_queue, timestep) {
+                for event in events {
+                    match event {
+                        Event::UpdateResources => {
+                            status_server.update_resources()?;
+                            queue_event(
+                                &mut event_queue,
+                                timestep + RESOURCE_UPDATE_INTERVAL,
+                                Event::UpdateResources,
+                            );
                         }
                     }
-                } else if speed != prev_speed {
-                    status_server.update_resources()?;
-                    prev_speed = speed;
                 }
+            } else if speed != prev_speed {
+                status_server.update_resources()?;
+                prev_speed = speed;
+            }
 
-                // Throttled health check: at high N, the synchronous
-                // round-trip + N try_wait() syscalls dominates the spin loop
-                // and starves the router. Bound it to once per HEALTH_CHECK_INTERVAL
-                // wall-clock.
-                if last_health_check.elapsed() >= HEALTH_CHECK_INTERVAL {
-                    last_health_check = std::time::Instant::now();
-                    match status_server.check_health()? {
-                        status::messages::StatusMessage::Ok => {}
-                        status::messages::StatusMessage::PrematureExit => {
-                            break 'outer;
-                        }
-                        status::messages::StatusMessage::Respawned { .. } => {}
+            // Throttled health check: at high N, the synchronous round-trip
+            // plus N `try_wait()` syscalls dominates the kernel main loop.
+            // Bound it to once per HEALTH_CHECK_INTERVAL wall-clock.
+            if last_health_check.elapsed() >= HEALTH_CHECK_INTERVAL {
+                last_health_check = std::time::Instant::now();
+                match status_server.check_health()? {
+                    status::messages::StatusMessage::Ok => {}
+                    status::messages::StatusMessage::PrematureExit => {
+                        break 'outer;
                     }
+                    status::messages::StatusMessage::Respawned { .. } => {}
                 }
+            }
 
-                let router::RouterMessage::EnergyEvents {
-                    depleted,
-                    recovered,
-                } = routing_server.poll(timestep)?
-                else {
-                    continue;
-                };
-                for name in depleted {
+            // Publish the new timestep, then signal the router. The router
+            // reads `current_ts` to learn the value; we do not wait for a
+            // reply.
+            current_ts.store(timestep, Ordering::Release);
+            routing_server.tick()?;
+
+            // Drain any energy events the router has pushed since last tick.
+            for events in energy_rx.try_iter() {
+                for name in events.depleted {
                     status_server.freeze_node(name)?;
                 }
-                for name in recovered {
-                    // Kill the frozen process and respawn a fresh one
+                for name in events.recovered {
                     if let status::messages::StatusMessage::Respawned { pid_changes, .. } =
                         status_server.respawn_node(name)?
                         && !pid_changes.is_empty()
@@ -292,8 +306,15 @@ impl Kernel {
                     }
                 }
             }
-            if start.elapsed().is_err() {
-                return Err(KernelError::TimestepError(timestep));
+
+            // Pace simulated time to wall-clock time. Catch up missed ticks
+            // (no sleep) if we have already fallen behind.
+            next_tick_at += delta;
+            let now = std::time::Instant::now();
+            if next_tick_at > now {
+                std::thread::sleep(next_tick_at - now);
+            } else {
+                next_tick_at = now;
             }
         }
 
