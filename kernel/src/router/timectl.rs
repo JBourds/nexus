@@ -96,6 +96,7 @@ impl RoutingServer {
             .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
         let s = String::from_utf8_lossy(&msg.data);
         let val: u64 = s
+            .trim()
             .parse()
             .map_err(|_| RouterError::InvalidString(msg.data.clone()))?;
         Ok((val, unit))
