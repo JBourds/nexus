@@ -1,9 +1,7 @@
 use std::collections::HashSet;
-use std::io::{BufRead, BufReader, Write as _};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU64};
 use std::sync::{Arc, OnceLock};
-use std::thread::JoinHandle;
 use std::time::SystemTime;
 
 use anyhow::{Context, Result};
@@ -23,7 +21,7 @@ use runner::cli::RunCmd;
 use trace::format::TraceHeader;
 use trace::writer::TraceWriter;
 
-use crate::sim::bridge::{GuiEvent, OutputStream, ReloadableSimLayer, SimSinks};
+use crate::sim::bridge::{GuiEvent, ReloadableSimLayer, SimSinks};
 use crate::sim::controller::SimController;
 
 /// Global sinks handle, initialised once on first simulation launch.
@@ -191,9 +189,24 @@ fn run_inner(
     runc.cgroups.freeze_nodes();
 
     // Take stdout/stderr from child processes before the kernel consumes the
-    // handles. Spawn per-stream reader threads that send lines to the GUI and
-    // write them to per-node files in the simulation output directory.
-    let reader_threads = spawn_output_readers(&mut runc.handles, &sim_dir, &gui_tx);
+    // handles. The runner-side helper drains each pipe into per-node files
+    // in `sim_dir`; the closure additionally fans each line out to the GUI
+    // event channel so the inspector panel can show live output.
+    let reader_threads = {
+        let gui_tx_for_lines = gui_tx.clone();
+        runner::output::spawn_output_readers(
+            &mut runc.handles,
+            &sim_dir,
+            move |node, protocol, stream, line| {
+                let _ = gui_tx_for_lines.send(GuiEvent::ProcessOutputLine {
+                    node: node.to_string(),
+                    protocol: protocol.to_string(),
+                    stream,
+                    line: line.to_string(),
+                });
+            },
+        )
+    };
 
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
     let (remap_tx, remap_rx) = std::sync::mpsc::channel();
@@ -234,75 +247,6 @@ fn run_inner(
 
     drop(sess);
     Ok(())
-}
-
-/// Take stdout/stderr from each child process and spawn reader threads that
-/// send lines to the GUI and write them to per-node files in `sim_dir`.
-fn spawn_output_readers(
-    handles: &mut [ProtocolHandle],
-    sim_dir: &Path,
-    gui_tx: &Sender<GuiEvent>,
-) -> Vec<JoinHandle<()>> {
-    let mut threads = Vec::new();
-
-    for handle in handles.iter_mut() {
-        let process = match handle.process.as_mut() {
-            Some(p) => p,
-            None => continue,
-        };
-        let node = handle.node.clone();
-        let protocol = handle.protocol.clone();
-
-        // Stdout reader
-        if let Some(stdout) = process.stdout.take() {
-            let tx = gui_tx.clone();
-            let node = node.clone();
-            let protocol = protocol.clone();
-            let path = sim_dir.join(format!("{node}.stdout.txt"));
-            threads.push(std::thread::spawn(move || {
-                read_stream(stdout, &path, &tx, &node, &protocol, OutputStream::Stdout);
-            }));
-        }
-
-        // Stderr reader
-        if let Some(stderr) = process.stderr.take() {
-            let tx = gui_tx.clone();
-            let node = node.clone();
-            let protocol = protocol.clone();
-            let path = sim_dir.join(format!("{node}.stderr.txt"));
-            threads.push(std::thread::spawn(move || {
-                read_stream(stderr, &path, &tx, &node, &protocol, OutputStream::Stderr);
-            }));
-        }
-    }
-
-    threads
-}
-
-/// Read lines from a stream, writing each to a file and sending to the GUI.
-fn read_stream<R: std::io::Read>(
-    stream: R,
-    file_path: &Path,
-    gui_tx: &Sender<GuiEvent>,
-    node: &str,
-    protocol: &str,
-    output_stream: OutputStream,
-) {
-    let reader = BufReader::new(stream);
-    let mut file = std::fs::File::create(file_path).ok();
-
-    for line in reader.lines() {
-        let Ok(line) = line else { break };
-        if let Some(ref mut f) = file {
-            let _ = writeln!(f, "{line}");
-        }
-        let _ = gui_tx.send(GuiEvent::ProcessOutputLine {
-            node: node.to_string(),
-            protocol: protocol.to_string(),
-            stream: output_stream,
-            line,
-        });
-    }
 }
 
 fn make_sim_dir(sim_root: &Path) -> Result<PathBuf> {

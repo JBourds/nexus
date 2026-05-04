@@ -11,6 +11,7 @@ pub mod cgroupfs;
 pub mod cgroups;
 pub mod cli;
 pub mod errors;
+pub mod output;
 use errors::*;
 
 use crate::assignment::{Affinity, AffinityBuilder, Bandwidth, Relative, RelativeBuilder};

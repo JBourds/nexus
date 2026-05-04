@@ -10,3 +10,5 @@ sysinfo = "0.36.1"
 thiserror = { workspace = true }
 clap = { workspace = true, features = ["derive"] }
 tempfile = "3.27.0"
+mio = { version = "1.0", features = ["os-poll", "os-ext"] }
+libc = "0.2"

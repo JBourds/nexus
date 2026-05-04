@@ -183,7 +183,11 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     runner::build(&sim)?;
     let mut summaries = vec![];
     for _ in 0..args.n.unwrap_or(1) {
-        let runc = runner::run(&sim)?;
+        let mut runc = runner::run(&sim)?;
+        // Spawn reader threads to ensure protocol stdout/stderr gets written
+        // to file
+        let reader_threads =
+            runner::output::spawn_output_readers(&mut runc.handles, &root, |_, _, _, _| {});
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
         let (remap_tx, remap_rx) = std::sync::mpsc::channel();
         let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
@@ -207,7 +211,14 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             KernelBuilder::new(sim.clone(), runc, file_handles, rx, tx, remap_tx)
                 .build()?
                 .run(args.cmd.clone())?;
-        summaries.extend(get_output(protocol_handles));
+        // finish() kills the children; once their pipes close the reader
+        // threads see EOF. Join only after kill so we don't deadlock.
+        let mut run_summaries = get_output(protocol_handles);
+        for thread in reader_threads {
+            let _ = thread.join();
+        }
+        runner::output::collect_captured_output(&root, &mut run_summaries);
+        summaries.extend(run_summaries);
     }
     match args.dest {
         OutputDestination::Stdout => {

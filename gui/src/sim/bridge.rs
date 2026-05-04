@@ -29,12 +29,10 @@ pub enum GuiEvent {
     },
 }
 
-/// Which output stream a line came from.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum OutputStream {
-    Stdout,
-    Stderr,
-}
+/// Which output stream a line came from. Re-exported from `runner` so
+/// the bridge events and the runner-side capture machinery agree on a
+/// single type.
+pub use runner::output::OutputStream;
 
 /// Shared, swappable sinks for the simulation tracing layer.
 ///

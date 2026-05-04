@@ -3167,6 +3167,8 @@ dependencies = [
  "clap",
  "config",
  "cpuutils",
+ "libc",
+ "mio",
  "sysinfo",
  "tempfile",
  "thiserror 2.0.12",
