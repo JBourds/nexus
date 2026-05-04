@@ -183,6 +183,11 @@ impl Kernel {
         const RESOURCE_UPDATE_INTERVAL: u64 = 100;
         const MIN_DILATION: f64 = 0.01;
         const FLAG_PAUSE_LEN: u64 = 10;
+        // Health checks iterate every protocol PID via try_wait(); at high N
+        // this dominates the kernel main loop and starves the routing server
+        // of poll opportunities. Premature exits don't need millisecond
+        // detection. 50ms wall is plenty.
+        const HEALTH_CHECK_INTERVAL: Duration = Duration::from_millis(50);
 
         let base_delta = self.time_delta();
         let Self {
@@ -212,6 +217,9 @@ impl Kernel {
 
         let ts_update_interval = Self::update_interval(timestep.unit);
         let mut prev_speed = f64::from_bits(time_dilation.load(Ordering::Relaxed));
+        let mut last_health_check = std::time::Instant::now()
+            .checked_sub(HEALTH_CHECK_INTERVAL)
+            .unwrap_or_else(std::time::Instant::now);
         'outer: for timestep in 0..self.timestep.count.into() {
             if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                 break;
@@ -249,13 +257,19 @@ impl Kernel {
                     prev_speed = speed;
                 }
 
-                // send all commands
-                match status_server.check_health()? {
-                    status::messages::StatusMessage::Ok => {}
-                    status::messages::StatusMessage::PrematureExit => {
-                        break 'outer;
+                // Throttled health check: at high N, the synchronous
+                // round-trip + N try_wait() syscalls dominates the spin loop
+                // and starves the router. Bound it to once per HEALTH_CHECK_INTERVAL
+                // wall-clock.
+                if last_health_check.elapsed() >= HEALTH_CHECK_INTERVAL {
+                    last_health_check = std::time::Instant::now();
+                    match status_server.check_health()? {
+                        status::messages::StatusMessage::Ok => {}
+                        status::messages::StatusMessage::PrematureExit => {
+                            break 'outer;
+                        }
+                        status::messages::StatusMessage::Respawned { .. } => {}
                     }
-                    status::messages::StatusMessage::Respawned { .. } => {}
                 }
 
                 let router::RouterMessage::EnergyEvents {
