@@ -258,13 +258,6 @@ pub(crate) const POS_SUBFILES: [(&str, ChannelMode, FsEntryKind); 10] = [
     ),
 ];
 
-/// Sub-files under each channel directory (e.g., `lora/`).
-pub(crate) const CHANNEL_SUBFILES: [(&str, ChannelMode); 3] = [
-    ("channel", ChannelMode::ReadWrite), // mode overridden per channel
-    ("rssi", ChannelMode::ReadOnly),
-    ("snr", ChannelMode::ReadOnly),
-];
-
 #[cfg(test)]
 mod tests {
     use config::ast::TimeUnit;

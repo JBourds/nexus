@@ -253,39 +253,24 @@ impl NexusFs {
                 return Err(ChannelError::DuplicateChannel);
             }
 
-            // Create "rssi" sub-file (read-only)
-            let rssi_path = format!("{channel}/rssi");
-            let (rssi_inode, rssi_idx) = self.get_or_make_entry(
-                "rssi".to_string(),
-                dir_inode,
-                FsEntryKind::RegularFile,
-                rssi_path,
-            );
-            self.buffers.insert(
-                (pid, rssi_idx),
-                NexusFile::new(
-                    NonZeroUsize::new(64).unwrap(),
-                    ChannelMode::ReadOnly,
-                    rssi_inode,
-                ),
-            );
-
-            // Create "snr" sub-file (read-only)
-            let snr_path = format!("{channel}/snr");
-            let (snr_inode, snr_idx) = self.get_or_make_entry(
-                "snr".to_string(),
-                dir_inode,
-                FsEntryKind::RegularFile,
-                snr_path,
-            );
-            self.buffers.insert(
-                (pid, snr_idx),
-                NexusFile::new(
-                    NonZeroUsize::new(64).unwrap(),
-                    ChannelMode::ReadOnly,
-                    snr_inode,
-                ),
-            );
+            // Both these files are read-only
+            for name in ["rssi", "snr"] {
+                let subfile_path = format!("{channel}/{name}");
+                let (subfile_inode, subfile_idx) = self.get_or_make_entry(
+                    name.to_string(),
+                    dir_inode,
+                    FsEntryKind::RegularFile,
+                    subfile_path,
+                );
+                self.buffers.insert(
+                    (pid, subfile_idx),
+                    NexusFile::new(
+                        NonZeroUsize::new(64).unwrap(),
+                        ChannelMode::ReadOnly,
+                        subfile_inode,
+                    ),
+                );
+            }
         }
         Ok(self)
     }
