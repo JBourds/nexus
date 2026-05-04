@@ -225,14 +225,13 @@ impl NexusApp {
             );
             // Write back dragged node positions to the AST
             for ns in &nodes {
-                if let Some(ast_node) = state.sim.nodes.get_mut(&ns.name) {
-                    if (ast_node.position.point.x - ns.x).abs() > f64::EPSILON
-                        || (ast_node.position.point.y - ns.y).abs() > f64::EPSILON
-                    {
-                        ast_node.position.point.x = ns.x;
-                        ast_node.position.point.y = ns.y;
-                        state.dirty = true;
-                    }
+                if let Some(ast_node) = state.sim.nodes.get_mut(&ns.name)
+                    && ((ast_node.position.point.x - ns.x).abs() > f64::EPSILON
+                        || (ast_node.position.point.y - ns.y).abs() > f64::EPSILON)
+                {
+                    ast_node.position.point.x = ns.x;
+                    ast_node.position.point.y = ns.y;
+                    state.dirty = true;
                 }
             }
             if let Some(clicked) = clicked {
@@ -418,7 +417,7 @@ impl NexusApp {
                                 let insp_action = inspector::show_inspector(
                                     ui,
                                     &state.sim,
-                                    &mut state.node_states,
+                                    &state.node_states,
                                     &state.selected_node,
                                     &mut state.expanded_nodes,
                                     &state.messages,
@@ -1016,7 +1015,7 @@ impl NexusApp {
                                 let insp_action = inspector::show_inspector(
                                     ui,
                                     &state.sim,
-                                    &mut state.node_states,
+                                    &state.node_states,
                                     &state.selected_node,
                                     &mut state.expanded_nodes,
                                     &state.messages,
@@ -2293,10 +2292,9 @@ fn rebuild_live_state_at(state: &mut LiveSimState, egui_time: f64) {
             if let TraceEvent::MessageSent {
                 src_node, channel, ..
             } = &record.event
+                && let Some(slot) = state.last_sender.get_mut(*channel as usize)
             {
-                if let Some(slot) = state.last_sender.get_mut(*channel as usize) {
-                    *slot = Some(*src_node as usize);
-                }
+                *slot = Some(*src_node as usize);
             }
             continue;
         }

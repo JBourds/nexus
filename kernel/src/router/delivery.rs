@@ -97,21 +97,20 @@ impl RoutingServer {
 
             // For exclusive channels, run link simulation now; drop the
             // message if it doesn't survive.
-            let (buf, msg_bit_errors, rssi_dbm, snr_db): (Rc<[u8]>, bool, f64, f64) =
-                if is_shared {
-                    (Rc::clone(&shared_buf), false, 0.0, 0.0)
-                } else {
-                    match Self::send_through_channel(
-                        channel,
-                        Cow::from(&msg),
-                        distance,
-                        distance_unit,
-                        &mut self.rng,
-                    ) {
-                        Some((b, be, rssi, snr)) => (b.into(), be, rssi, snr),
-                        None => continue,
-                    }
-                };
+            let (buf, msg_bit_errors, rssi_dbm, snr_db): (Rc<[u8]>, bool, f64, f64) = if is_shared {
+                (Rc::clone(&shared_buf), false, 0.0, 0.0)
+            } else {
+                match Self::send_through_channel(
+                    channel,
+                    Cow::from(&msg),
+                    distance,
+                    distance_unit,
+                    &mut self.rng,
+                ) {
+                    Some((b, be, rssi, snr)) => (b.into(), be, rssi, snr),
+                    None => continue,
+                }
+            };
 
             let (becomes_active_at, expiration) =
                 Self::message_timesteps(channel, sz, ts_config, timestep, distance, distance_unit);

@@ -106,9 +106,10 @@ pub fn show_messages(
 
                             // Click row to jump to this event
                             if resp.response.clicked()
-                                && let Some(rec_idx) = msg.record_index {
-                                    action = MessagesAction::JumpToEvent(rec_idx);
-                                }
+                                && let Some(rec_idx) = msg.record_index
+                            {
+                                action = MessagesAction::JumpToEvent(rec_idx);
+                            }
 
                             if !msg.data_preview.is_empty() {
                                 ui.indent(msg.timestep, |ui| {

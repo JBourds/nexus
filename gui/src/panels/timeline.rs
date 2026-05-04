@@ -14,6 +14,7 @@ pub struct TimelineAction {
 ///
 /// `event_stepping` / `event_cursor` / `total_records` enable event-level controls.
 /// `breakpoints` renders timestep breakpoint markers on the scrubber.
+#[allow(clippy::too_many_arguments)]
 pub fn show_timeline(
     ui: &mut Ui,
     current_timestep: &mut u64,

@@ -27,17 +27,32 @@ fn build_entries(nodes: usize, channels_per_node: usize) -> Vec<Entry> {
         "ctl.pos",
     ];
     for n in ctl_names.iter() {
-        entries.push(Entry { name: n.to_string(), parent_inode: 1 });
+        entries.push(Entry {
+            name: n.to_string(),
+            parent_inode: 1,
+        });
     }
     // Per-channel directories and 3 sub-files
     for n in 0..nodes {
         for c in 0..channels_per_node {
             let dir = format!("n{n}_ch{c}");
             let parent = entries.len() as u64 + 2;
-            entries.push(Entry { name: dir.clone(), parent_inode: 1 });
-            entries.push(Entry { name: "channel".into(), parent_inode: parent });
-            entries.push(Entry { name: "rssi".into(), parent_inode: parent });
-            entries.push(Entry { name: "snr".into(), parent_inode: parent });
+            entries.push(Entry {
+                name: dir.clone(),
+                parent_inode: 1,
+            });
+            entries.push(Entry {
+                name: "channel".into(),
+                parent_inode: parent,
+            });
+            entries.push(Entry {
+                name: "rssi".into(),
+                parent_inode: parent,
+            });
+            entries.push(Entry {
+                name: "snr".into(),
+                parent_inode: parent,
+            });
         }
     }
     entries

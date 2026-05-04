@@ -254,9 +254,10 @@ fn show_node_events(
                             });
                             // Click to jump to this event
                             if resp.response.clicked()
-                                && let Some(ri) = msg.record_index {
-                                    action = InspectorAction::JumpToEvent(ri);
-                                }
+                                && let Some(ri) = msg.record_index
+                            {
+                                action = InspectorAction::JumpToEvent(ri);
+                            }
                         });
                         if is_current {
                             frame_resp.response.scroll_to_me(Some(egui::Align::Center));

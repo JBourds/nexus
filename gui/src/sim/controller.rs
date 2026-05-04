@@ -31,6 +31,7 @@ impl SimController {
     }
 
     /// Non-blocking drain of all pending events.
+    #[allow(dead_code)]
     pub fn poll_events(&self) -> Vec<GuiEvent> {
         self.rx.try_iter().collect()
     }

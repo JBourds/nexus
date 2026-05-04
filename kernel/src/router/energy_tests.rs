@@ -843,7 +843,12 @@ mod tests {
 
         // Verify initial state
         assert_eq!(router.channels.handles[0].0, 100);
-        assert!(router.fuse_mapping.get(&100u32).is_some_and(|m| m.contains_key("ch_0")));
+        assert!(
+            router
+                .fuse_mapping
+                .get(&100u32)
+                .is_some_and(|m| m.contains_key("ch_0"))
+        );
 
         // Remap PID 100 → 200
         router.apply_pid_remaps(&[(100, 200)]);
@@ -852,7 +857,12 @@ mod tests {
         assert_eq!(router.channels.handles[0].0, 200);
         // fuse_mapping should reflect new PID
         assert!(!router.fuse_mapping.contains_key(&100u32));
-        assert!(router.fuse_mapping.get(&200u32).is_some_and(|m| m.contains_key("ch_0")));
+        assert!(
+            router
+                .fuse_mapping
+                .get(&200u32)
+                .is_some_and(|m| m.contains_key("ch_0"))
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -999,8 +1009,18 @@ mod tests {
 
         assert_eq!(router.channels.handles[0].0, 200);
         assert_eq!(router.channels.handles[1].0, 201);
-        assert!(router.fuse_mapping.get(&200u32).is_some_and(|m| m.contains_key("ch_0")));
-        assert!(router.fuse_mapping.get(&201u32).is_some_and(|m| m.contains_key("ch_0")));
+        assert!(
+            router
+                .fuse_mapping
+                .get(&200u32)
+                .is_some_and(|m| m.contains_key("ch_0"))
+        );
+        assert!(
+            router
+                .fuse_mapping
+                .get(&201u32)
+                .is_some_and(|m| m.contains_key("ch_0"))
+        );
     }
 
     // -----------------------------------------------------------------------

@@ -593,12 +593,13 @@ impl Filesystem for NexusFs {
         match entry.kind {
             FsEntryKind::Directory => {
                 reply.error(EISDIR);
-                return;
             }
             FsEntryKind::ControlFile(ControlFile::SleepRelative(unit))
             | FsEntryKind::ControlFile(ControlFile::SleepAbsolute(unit)) => {
-                let is_relative =
-                    matches!(entry.kind, FsEntryKind::ControlFile(ControlFile::SleepRelative(_)));
+                let is_relative = matches!(
+                    entry.kind,
+                    FsEntryKind::ControlFile(ControlFile::SleepRelative(_))
+                );
                 let Ok(bytes_consumed) = data.len().try_into() else {
                     reply.error(EMSGSIZE);
                     return;

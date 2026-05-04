@@ -17,6 +17,7 @@ pub enum BreakpointsAction {
 /// `run_until` is `None` when in config editor mode (no run-until available).
 /// `node_names` and `channel_names` are sorted lists for the searchable lists.
 /// `input` holds persistent text buffer state across frames.
+#[allow(clippy::too_many_arguments)]
 pub fn show_breakpoints(
     ui: &mut Ui,
     breakpoints: &mut Vec<Breakpoint>,
@@ -269,9 +270,10 @@ pub fn check_timestep_breakpoints(breakpoints: &[Breakpoint], timestep: u64) -> 
             continue;
         }
         if let BreakpointKind::Timestep(ts) = &bp.kind
-            && timestep == *ts {
-                return true;
-            }
+            && timestep == *ts
+        {
+            return true;
+        }
     }
     false
 }

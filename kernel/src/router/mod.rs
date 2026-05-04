@@ -22,7 +22,6 @@ use config::{
     units::DecimalScaled,
 };
 use fuse::{SleepEvent, ctrl_files::ControlFile};
-use fuser::ReplyWrite;
 use rand::rngs::StdRng;
 use std::rc::Rc;
 use std::thread;

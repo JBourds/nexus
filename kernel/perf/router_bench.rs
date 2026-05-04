@@ -64,8 +64,8 @@ fn mailbox_sweep_bench() {
         let dirty_idx: Vec<usize> = vec![0, count / 2, count - 1]; // representative active set
         let sweeps = 1_000;
         let full_ns = bench_full_sweep(&mut full, 100, sweeps) / sweeps as u128;
-        let dirty_ns = bench_dirty_sweep(&mut dirty_buf, &dirty_idx, 100, sweeps).max(1)
-            / sweeps as u128;
+        let dirty_ns =
+            bench_dirty_sweep(&mut dirty_buf, &dirty_idx, 100, sweeps).max(1) / sweeps as u128;
         let speedup = full_ns as f64 / dirty_ns.max(1) as f64;
         println!("  {count:>9}  {full_ns:>13}  {dirty_ns:>14}  {speedup:>6.1}x");
     }

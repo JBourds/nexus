@@ -104,6 +104,7 @@ impl ReplayController {
     }
 
     /// Get a record by flat index into all_records.
+    #[allow(dead_code)]
     pub fn record_at_index(&self, idx: usize) -> Option<&TraceRecord> {
         self.all_records.get(idx)
     }

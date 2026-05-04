@@ -209,10 +209,7 @@ pub fn show_sequence_diagram(
                         painter.circle_stroke(
                             center,
                             SEQ_SELECTION_RING_RADIUS,
-                            Stroke::new(
-                                SEQ_SELECTION_RING_STROKE,
-                                egui::Color32::WHITE,
-                            ),
+                            Stroke::new(SEQ_SELECTION_RING_STROKE, egui::Color32::WHITE),
                         );
                     }
                 }
@@ -232,8 +229,7 @@ pub fn show_sequence_diagram(
                         painter.circle_filled(Pos2::new(src_x, y), dot_r, COLOR_TX_OK);
 
                         for recv in &msg.receivers {
-                            let Some(dst_x_idx) =
-                                sorted_names.iter().position(|n| n == &recv.node)
+                            let Some(dst_x_idx) = sorted_names.iter().position(|n| n == &recv.node)
                             else {
                                 continue;
                             };
@@ -332,40 +328,37 @@ pub fn show_sequence_diagram(
                         let thickness = if is_current { 2.5 } else { 1.5 };
 
                         // Draw arrow from sender to receiver (if sender known)
-                        if let Some(ref sender) = msg.dst_node {
-                            if let Some(sender_idx) =
-                                sorted_names.iter().position(|n| n == sender)
-                            {
-                                let sender_x = lifeline_x[sender_idx];
-                                // Dashed arrow line from sender to receiver
-                                let dash_len = 4.0;
-                                let gap_len = 3.0;
-                                let total_dist = (rx_x - sender_x).abs();
-                                let dir = if rx_x > sender_x { 1.0_f32 } else { -1.0 };
-                                let mut drawn = 0.0;
-                                while drawn < total_dist {
-                                    let seg_start = sender_x + dir * drawn;
-                                    let seg_end = sender_x
-                                        + dir * (drawn + dash_len).min(total_dist);
-                                    painter.line_segment(
-                                        [Pos2::new(seg_start, y), Pos2::new(seg_end, y)],
-                                        Stroke::new(thickness, COLOR_RX),
-                                    );
-                                    drawn += dash_len + gap_len;
-                                }
-                                // Arrowhead at receiver
-                                let tip = Pos2::new(rx_x, y);
-                                let base_x = tip.x - dir * SEQ_ARROW_HEAD_LENGTH;
-                                painter.add(egui::Shape::convex_polygon(
-                                    vec![
-                                        tip,
-                                        Pos2::new(base_x, y - SEQ_ARROW_HEAD_WIDTH),
-                                        Pos2::new(base_x, y + SEQ_ARROW_HEAD_WIDTH),
-                                    ],
-                                    COLOR_RX,
-                                    Stroke::NONE,
-                                ));
+                        if let Some(ref sender) = msg.dst_node
+                            && let Some(sender_idx) = sorted_names.iter().position(|n| n == sender)
+                        {
+                            let sender_x = lifeline_x[sender_idx];
+                            // Dashed arrow line from sender to receiver
+                            let dash_len = 4.0;
+                            let gap_len = 3.0;
+                            let total_dist = (rx_x - sender_x).abs();
+                            let dir = if rx_x > sender_x { 1.0_f32 } else { -1.0 };
+                            let mut drawn = 0.0;
+                            while drawn < total_dist {
+                                let seg_start = sender_x + dir * drawn;
+                                let seg_end = sender_x + dir * (drawn + dash_len).min(total_dist);
+                                painter.line_segment(
+                                    [Pos2::new(seg_start, y), Pos2::new(seg_end, y)],
+                                    Stroke::new(thickness, COLOR_RX),
+                                );
+                                drawn += dash_len + gap_len;
                             }
+                            // Arrowhead at receiver
+                            let tip = Pos2::new(rx_x, y);
+                            let base_x = tip.x - dir * SEQ_ARROW_HEAD_LENGTH;
+                            painter.add(egui::Shape::convex_polygon(
+                                vec![
+                                    tip,
+                                    Pos2::new(base_x, y - SEQ_ARROW_HEAD_WIDTH),
+                                    Pos2::new(base_x, y + SEQ_ARROW_HEAD_WIDTH),
+                                ],
+                                COLOR_RX,
+                                Stroke::NONE,
+                            ));
                         }
 
                         // Filled circle on receiver lifeline
@@ -376,26 +369,18 @@ pub fn show_sequence_diagram(
                     // Drop (standalone): X on the dropping node's lifeline
                     // ========================================================
                     MessageKind::Dropped(reason) => {
-                        let Some(idx) = sorted_names.iter().position(|n| n == &msg.src_node)
-                        else {
+                        let Some(idx) = sorted_names.iter().position(|n| n == &msg.src_node) else {
                             continue;
                         };
                         let x = lifeline_x[idx];
                         let half = SEQ_DROP_X_HALF;
-                        let stroke =
-                            Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
+                        let stroke = Stroke::new(if is_current { 2.5 } else { 1.5 }, COLOR_DROP);
                         painter.line_segment(
-                            [
-                                Pos2::new(x - half, y - half),
-                                Pos2::new(x + half, y + half),
-                            ],
+                            [Pos2::new(x - half, y - half), Pos2::new(x + half, y + half)],
                             stroke,
                         );
                         painter.line_segment(
-                            [
-                                Pos2::new(x - half, y + half),
-                                Pos2::new(x + half, y - half),
-                            ],
+                            [Pos2::new(x - half, y + half), Pos2::new(x + half, y - half)],
                             stroke,
                         );
 
@@ -407,10 +392,7 @@ pub fn show_sequence_diagram(
                         if ui.rect_contains_pointer(hover_rect) {
                             egui::containers::popup::show_tooltip_at_pointer(
                                 ui.ctx(),
-                                egui::LayerId::new(
-                                    egui::Order::Tooltip,
-                                    ui.id().with("drop_tip"),
-                                ),
+                                egui::LayerId::new(egui::Order::Tooltip, ui.id().with("drop_tip")),
                                 ui.id().with(("drop_tip", msg.timestep, &msg.src_node)),
                                 |ui| {
                                     ui.label(format!("Dropped: {reason}"));
@@ -429,8 +411,7 @@ pub fn show_sequence_diagram(
                             Pos2::new(x, y),
                             Vec2::new(lifeline_spacing, row_height),
                         );
-                        if ui.rect_contains_pointer(hit_rect)
-                            && ui.input(|i| i.pointer.any_click())
+                        if ui.rect_contains_pointer(hit_rect) && ui.input(|i| i.pointer.any_click())
                         {
                             action = SequenceAction::JumpToEvent {
                                 record_index: record_idx,

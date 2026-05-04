@@ -12,6 +12,7 @@ use crate::state::{ArrowAnimation, NodeState};
 ///
 /// `node_highlights` maps node name -> ring color (e.g. green for received, red for dropped).
 /// `draggable` enables click-and-drag repositioning of nodes (only in config editor).
+#[allow(clippy::too_many_arguments)]
 pub fn show_grid_panel(
     ui: &mut Ui,
     grid: &mut GridView,
@@ -50,12 +51,12 @@ pub fn show_grid_panel(
         if delta.x != 0.0 || delta.y != 0.0 {
             let dragged_name: Option<String> =
                 ui.data(|d| d.get_temp(dragged_node_id)).unwrap_or(None);
-            if let Some(ref name) = dragged_name {
-                if let Some(node) = nodes.iter_mut().find(|n| &n.name == name) {
-                    // Convert screen delta to world delta (Y is inverted in world coords)
-                    node.x += (delta.x / grid.zoom) as f64;
-                    node.y -= (delta.y / grid.zoom) as f64;
-                }
+            if let Some(ref name) = dragged_name
+                && let Some(node) = nodes.iter_mut().find(|n| &n.name == name)
+            {
+                // Convert screen delta to world delta (Y is inverted in world coords)
+                node.x += (delta.x / grid.zoom) as f64;
+                node.y -= (delta.y / grid.zoom) as f64;
             }
         }
     }

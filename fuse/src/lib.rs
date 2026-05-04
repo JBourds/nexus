@@ -2,7 +2,7 @@ pub mod channel;
 pub mod errors;
 pub mod file;
 pub mod fs;
-use std::{sync::mpsc, time::Instant};
+use std::sync::mpsc;
 
 use config::ast::{self, TimeUnit};
 use fuser::ReplyWrite;
