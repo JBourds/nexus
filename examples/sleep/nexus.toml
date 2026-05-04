@@ -1,0 +1,29 @@
+# Demonstrates both sleep control-file variants:
+#   ctl.sleep.relative/<unit>   -- block until sim time advances by N
+#   ctl.sleep.absolute/<unit>   -- block until sim time reaches N
+#
+# A single 16 MHz node prints `<elapsed_us>,<phase>` lines on a known
+# cadence, alternating between the two sleep mechanisms each iteration.
+# Compare the elapsed deltas against the requested sleep durations to
+# validate the dispatcher is firing wakeups at the right simulated time.
+
+[params]
+timestep.length = 1
+timestep.unit = "ms"
+timestep.count = 5000
+root = "~/simulations"
+
+[nodes]
+
+[nodes.main]
+deployments = [ {} ]
+
+[nodes.main.resources]
+clock_rate = 16
+clock_units = "Mhz"
+
+[[nodes.main.protocols]]
+name = "main"
+build = "make"
+build_args = ["build"]
+runner = "./bin/main"
