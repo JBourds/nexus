@@ -9,6 +9,7 @@ use std::time::SystemTime;
 use anyhow::{Context, Result};
 use chrono::{DateTime, Utc};
 use crossbeam_channel::Sender;
+use fuse::ctrl_files::control_files;
 use tracing_subscriber::prelude::*;
 use tracing_subscriber::{EnvFilter, filter, fmt};
 

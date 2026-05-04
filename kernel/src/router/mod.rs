@@ -11,13 +11,18 @@ use crate::{
     KernelServer, ResolvedChannels,
     errors::KernelError,
     helpers::{flip_bits, format_u8_buf},
-    router,
+    router::{self, timectl::SleepAlarm},
     sources::Source,
     types::{Channel, NodeHandle},
 };
 #[allow(unused_imports)] // Position is used by delivery.rs via `use super::*`
 use config::ast::Position;
-use config::ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig};
+use config::{
+    ast::{ChannelKind, DataUnit, DistanceUnit, TimeUnit, TimestepConfig},
+    units::DecimalScaled,
+};
+use fuse::{SleepEvent, ctrl_files::ControlFile};
+use fuser::ReplyWrite;
 use rand::rngs::StdRng;
 use std::rc::Rc;
 use std::thread;
@@ -27,14 +32,12 @@ use std::{collections::HashMap, thread::JoinHandle};
 use std::{collections::VecDeque, num::NonZeroU64};
 use tracing::{Level, debug, event, info, instrument, warn};
 
-mod control;
 mod energy;
 mod energy_tests;
 mod posctl;
 mod powerctl;
 mod timectl;
 use crate::types::{ChannelHandle, ChannelIdx};
-use control::ControlFile;
 
 pub type Timestep = u64;
 // Tuple ordering: (Reverse<Timestep>, Reverse<usize>, AddressedMsg).
@@ -135,6 +138,9 @@ pub(crate) struct RoutingServer {
     next_msg_id: u64,
     /// Per-handle signal quality from the last RX on each channel endpoint.
     signal_info: Vec<SignalInfo>,
+    // Min-heap by `(timestep, pid)`: the `Reverse` is what makes
+    // `peek`/`pop` return the *earliest* deadline first.
+    sleep_alarms: BinaryHeap<Reverse<SleepAlarm>>,
 }
 
 /// Last-received signal quality for a (destination_node, channel) pair.
@@ -184,6 +190,7 @@ impl RoutingServer {
                     sequence: 0,
                     next_msg_id: 0,
                     signal_info: vec![SignalInfo::default(); handles_count],
+                    sleep_alarms: BinaryHeap::new(),
                 };
                 let mut last_polled_ts: u64 = u64::MAX;
                 loop {
@@ -264,7 +271,10 @@ impl RoutingServer {
     /// Map the (PID, channel-name-as-str) pair communicated by the FUSE FS
     /// to a handle index. The lookup is borrowed-string, no allocation.
     fn get_handle_index(&self, pid: fuse::PID, name: &str) -> Option<usize> {
-        self.fuse_mapping.get(&pid).and_then(|m| m.get(name)).copied()
+        self.fuse_mapping
+            .get(&pid)
+            .and_then(|m| m.get(name))
+            .copied()
     }
 
     pub fn write_control_file(
@@ -278,9 +288,7 @@ impl RoutingServer {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         match ctl {
-            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS | ControlFile::TimeNs => {
-                self.update_time(ni, msg)
-            }
+            ControlFile::Time(_) => self.update_time(ni, msg),
             ControlFile::EnergyState => {
                 let state = String::from_utf8_lossy(&msg.data).trim().to_string();
                 if let Some(energy) = &mut self.channels.nodes[ni].energy {
@@ -300,11 +308,17 @@ impl RoutingServer {
             | ControlFile::PosRoll => self.write_pos(ni, msg),
             ControlFile::PowerFlows => self.write_power_flows(ni, msg),
             // Read-only files cannot be written
-            ControlFile::EnergyLeft
-            | ControlFile::ElapsedUs
-            | ControlFile::ElapsedMs
-            | ControlFile::ElapsedS
-            | ControlFile::ElapsedNs => Err(RouterError::UnknownFile(msg.id.1.clone())),
+            ControlFile::EnergyLeft | ControlFile::Elapsed(_) => {
+                Err(RouterError::UnknownFile(msg.id.1.clone()))
+            }
+            // Sleep variants are routed through `FsMessage::Sleep` rather
+            // than the control-write path because they need to defer the
+            // FUSE reply until the deadline. If we ever land here it means
+            // the FS routed incorrectly; report unknown-file rather than
+            // panicking the routing thread.
+            ControlFile::SleepRelative(_) | ControlFile::SleepAbsolute(_) => {
+                Err(RouterError::UnknownFile(msg.id.1.clone()))
+            }
         }
     }
 
@@ -373,13 +387,8 @@ impl RoutingServer {
             return Err(RouterError::UnknownFile(msg.id.1.clone()));
         };
         match ctl {
-            ControlFile::TimeUs | ControlFile::TimeMs | ControlFile::TimeS | ControlFile::TimeNs => {
-                self.send_time(ni, msg)
-            }
-            ControlFile::ElapsedUs
-            | ControlFile::ElapsedMs
-            | ControlFile::ElapsedS
-            | ControlFile::ElapsedNs => self.send_elapsed(msg),
+            ControlFile::Time(_) => self.send_time(ni, msg),
+            ControlFile::Elapsed(_) => self.send_elapsed(msg),
             ControlFile::EnergyLeft => {
                 let charge_nj = energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
                 let mut msg = msg;
@@ -406,9 +415,11 @@ impl RoutingServer {
             | ControlFile::PosRoll => self.read_pos(ni, msg),
             ControlFile::PowerFlows => self.read_power_flows(ni, msg),
             // Write-only files cannot be read
-            ControlFile::PosDx | ControlFile::PosDy | ControlFile::PosDz => {
-                Err(RouterError::UnknownFile(msg.id.1.clone()))
-            }
+            ControlFile::PosDx
+            | ControlFile::PosDy
+            | ControlFile::PosDz
+            | ControlFile::SleepAbsolute(_)
+            | ControlFile::SleepRelative(_) => Err(RouterError::UnknownFile(msg.id.1.clone())),
         }
     }
 
@@ -455,6 +466,35 @@ impl RoutingServer {
         }
     }
 
+    pub fn request_sleep(&mut self, req: SleepEvent) {
+        // Convert the user-supplied value into the simulator's timestep unit.
+        let (should_scale_down, ratio) = TimeUnit::ratio(req.unit, self.ts_config.unit);
+        let scalar = 10u64
+            .checked_pow(ratio.try_into().unwrap())
+            .expect("Exponentiation overflow.");
+        let sleep_val = if should_scale_down {
+            req.val / scalar
+        } else {
+            req.val * scalar
+        };
+        let wakeup_timestep = if req.is_relative {
+            sleep_val.saturating_add(self.timestep)
+        } else {
+            sleep_val
+        };
+
+        if wakeup_timestep <= self.timestep {
+            req.reply.written(req.bytes_consumed);
+        } else {
+            self.sleep_alarms.push(Reverse(SleepAlarm {
+                timestep: wakeup_timestep,
+                pid: req.pid,
+                bytes_consumed: req.bytes_consumed,
+                reply: req.reply,
+            }));
+        }
+    }
+
     /// Read the last-received signal quality value for a channel endpoint.
     fn read_signal_file(
         &mut self,
@@ -484,6 +524,7 @@ impl RoutingServer {
             .tick(&mut self.channels.nodes, self.timestep, self.timestep_ns);
         self.apply_all_motions_and_log();
         self.expire_messages();
+        self.send_wakeups();
         self.deliver_queued_messages()
     }
 
@@ -510,6 +551,15 @@ impl RoutingServer {
                 true
             }
         });
+    }
+
+    fn send_wakeups(&mut self) {
+        while let Some(Reverse(alarm)) = self.sleep_alarms.peek()
+            && alarm.timestep <= self.timestep
+        {
+            let Reverse(alarm) = self.sleep_alarms.pop().unwrap();
+            alarm.reply.written(alarm.bytes_consumed);
+        }
     }
 
     /// Deliver all messages whose activation timestep has arrived.

@@ -1,11 +1,42 @@
 //! timectl.rs
 //! Functionality for time-based control files.
 
+use std::cmp::Ordering;
 use std::time::{Duration, SystemTime};
 
 use config::ast::TimeUnit;
+use fuser::ReplyWrite;
 
 use crate::router::{RouterError, RoutingServer};
+
+#[derive(Debug)]
+pub(crate) struct SleepAlarm {
+    pub timestep: u64,
+    pub pid: fuse::PID,
+    pub bytes_consumed: u32,
+    pub reply: ReplyWrite,
+}
+
+impl PartialEq for SleepAlarm {
+    fn eq(&self, other: &Self) -> bool {
+        self.timestep == other.timestep && self.pid == other.pid
+    }
+}
+impl Eq for SleepAlarm {}
+
+impl Ord for SleepAlarm {
+    fn cmp(&self, other: &Self) -> Ordering {
+        self.timestep
+            .cmp(&other.timestep)
+            .then_with(|| self.pid.cmp(&other.pid))
+    }
+}
+
+impl PartialOrd for SleepAlarm {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
 
 impl RoutingServer {
     pub fn update_time(

@@ -95,6 +95,9 @@ impl Source {
                 fuse::FsMessage::Read(msg) => {
                     router.request_read(msg).map_err(SourceError::RouterError)?;
                 }
+                fuse::FsMessage::Sleep(event) => {
+                    router.request_sleep(event);
+                }
             }
         }
         // Only advance the simulation (energy drain, message delivery) once

@@ -1,5 +1,6 @@
 use chrono::{DateTime, Utc};
 use fuse::channel::{ChannelMode, NexusChannel};
+use fuse::ctrl_files::control_files;
 use kernel::{self, KernelBuilder, sources::Source};
 use runner::cli::OutputDestination;
 use runner::{ProtocolHandle, ProtocolSummary};

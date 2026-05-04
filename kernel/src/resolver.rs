@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use config::ast;
-use fuse::{PID, fs::control_files};
+use fuse::{PID, ctrl_files::control_files};
 
 use crate::{
     errors::{ConversionError, KernelError},
