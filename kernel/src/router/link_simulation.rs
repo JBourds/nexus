@@ -1,4 +1,3 @@
-use config::ast::Link;
 use config::units::DecimalScaled;
 
 use super::*;

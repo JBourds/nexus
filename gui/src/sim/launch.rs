@@ -211,7 +211,7 @@ fn run_inner(
     let protocol_channels = make_fs_channels(&sim, &runc.handles)?;
     let (remap_tx, remap_rx) = std::sync::mpsc::channel();
     let (router_input_tx, router_input_rx) =
-        std::sync::mpsc::channel::<kernel::RouterInput>();
+        crossbeam_channel::unbounded::<kernel::RouterInput>();
     let fs = NexusFs::<kernel::RouterInput>::new(fs_root, remap_rx, router_input_tx.clone());
 
     let file_handles = make_file_handles(&sim, &runc.handles);

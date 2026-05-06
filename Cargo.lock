@@ -840,6 +840,7 @@ dependencies = [
  "chrono",
  "clap",
  "config",
+ "crossbeam-channel",
  "csv",
  "ctrlc",
  "fuse",
@@ -1470,6 +1471,7 @@ name = "fuse"
 version = "0.1.0"
 dependencies = [
  "config",
+ "crossbeam-channel",
  "fuser",
  "home",
  "libc",
@@ -2039,6 +2041,7 @@ dependencies = [
  "bincode",
  "config",
  "cpuutils",
+ "crossbeam-channel",
  "fuse",
  "fuser",
  "mio",

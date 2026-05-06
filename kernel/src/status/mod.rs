@@ -28,7 +28,15 @@ use messages::*;
 type HandleInner = Result<Vec<ProtocolHandle>, KernelError>;
 type ServerHandle = JoinHandle<HandleInner>;
 
-impl KernelServer<ServerHandle, KernelMessage, StatusMessage> {
+/// Status server uses `std::sync::mpsc` on both sides; traffic is one
+/// request per ~50 ms, so the channel transport is not on the hot path.
+pub(crate) type StatusKernelServer = KernelServer<
+    ServerHandle,
+    mpsc::Sender<KernelMessage>,
+    mpsc::Receiver<StatusMessage>,
+>;
+
+impl StatusKernelServer {
     pub fn check_health(&mut self) -> Result<StatusMessage, KernelError> {
         self.tx
             .send(KernelMessage::HealthCheck)
@@ -165,7 +173,7 @@ impl StatusServer {
     pub fn serve(
         time_dilation: Arc<AtomicU64>,
         mut runc: RunController,
-    ) -> Result<KernelServer<ServerHandle, KernelMessage, StatusMessage>, KernelError> {
+    ) -> Result<StatusKernelServer, KernelError> {
         let (kernel_tx, kernel_rx) = mpsc::channel::<KernelMessage>();
         let (status_tx, status_rx) = mpsc::channel::<StatusMessage>();
 

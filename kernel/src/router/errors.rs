@@ -1,8 +1,6 @@
-use std::{
-    io,
-    sync::mpsc::{RecvError, SendError},
-};
+use std::{io, sync::mpsc::SendError};
 
+use crossbeam_channel::{RecvError, SendError as CrossbeamSendError};
 use thiserror::Error;
 
 #[derive(Error, Debug)]
@@ -20,7 +18,7 @@ pub enum RouterError {
     #[error("Error sending fuse message: {0:#?}")]
     FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]
-    KernelSendError(SendError<crate::router::RouterInput>),
+    KernelSendError(CrossbeamSendError<crate::router::RouterInput>),
     #[error("Error receiving message: {0:#?}")]
     RecvError(RecvError),
     #[error("Failed to deliver queued messages.")]

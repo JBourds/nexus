@@ -51,17 +51,19 @@ pub type FileHandles = Vec<(u32, String, String)>;
 
 /// Basic interface for any server.
 /// - handle: Controlling handle (typically join handle) for server
-/// - tx: Channel to send messages to.
-/// - rx: Channel to receive messages from.
+/// - tx: Channel to send messages to. Concrete sender type so the router
+///   can use `crossbeam_channel::Sender` while the status server stays on
+///   `std::sync::mpsc::Sender` without forcing one transport on the other.
+/// - rx: Channel to receive messages from. Same reasoning as `tx`.
 #[derive(Debug)]
-struct KernelServer<H, S, R> {
+struct KernelServer<H, Tx, Rx> {
     handle: H,
-    tx: mpsc::Sender<S>,
-    rx: mpsc::Receiver<R>,
+    tx: Tx,
+    rx: Rx,
 }
 
-impl<H, S, R> KernelServer<H, S, R> {
-    fn new(handle: H, tx: mpsc::Sender<S>, rx: mpsc::Receiver<R>) -> Self {
+impl<H, Tx, Rx> KernelServer<H, Tx, Rx> {
+    fn new(handle: H, tx: Tx, rx: Rx) -> Self {
         Self { handle, tx, rx }
     }
 }
@@ -77,9 +79,11 @@ pub struct Kernel {
     tx: mpsc::Sender<fuse::KernelMessage>,
     /// Sender into the router's input channel. Cloned from the same channel
     /// the FUSE filesystem already holds, so the kernel main thread shares
-    /// the router's wakeup queue with FUSE events.
-    router_input_tx: mpsc::Sender<RouterInput>,
-    router_input_rx: mpsc::Receiver<RouterInput>,
+    /// the router's wakeup queue with FUSE events. Crossbeam-backed: the
+    /// router consumes ~2N+1 messages/tick at high N, where `std::sync::mpsc`
+    /// (boxed enum + mutex/condvar per send) was the dominant cost.
+    router_input_tx: crossbeam_channel::Sender<RouterInput>,
+    router_input_rx: crossbeam_channel::Receiver<RouterInput>,
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
@@ -90,8 +94,8 @@ pub struct KernelBuilder {
     sim: ast::Simulation,
     runc: RunController,
     file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-    router_input_tx: mpsc::Sender<RouterInput>,
-    router_input_rx: mpsc::Receiver<RouterInput>,
+    router_input_tx: crossbeam_channel::Sender<RouterInput>,
+    router_input_rx: crossbeam_channel::Receiver<RouterInput>,
     tx: mpsc::Sender<fuse::KernelMessage>,
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
@@ -104,8 +108,8 @@ impl KernelBuilder {
         sim: ast::Simulation,
         runc: RunController,
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
-        router_input_tx: mpsc::Sender<RouterInput>,
-        router_input_rx: mpsc::Receiver<RouterInput>,
+        router_input_tx: crossbeam_channel::Sender<RouterInput>,
+        router_input_rx: crossbeam_channel::Receiver<RouterInput>,
         tx: mpsc::Sender<fuse::KernelMessage>,
         remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Self {

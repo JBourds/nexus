@@ -101,9 +101,30 @@ fn mpsc_roundtrip_bench() {
         println!("  std::mpsc  {iters}  {ns}");
     }
 
-    // crossbeam-channel: not available in kernel deps, but we can show the
-    // expected difference at the design level by skipping. (Handled by the
-    // implementation switch.)
+    // crossbeam-channel: round-trip on the same SPSC pattern.
+    {
+        let (req_tx, req_rx) = crossbeam_channel::unbounded::<u64>();
+        let (rep_tx, rep_rx) = crossbeam_channel::unbounded::<u64>();
+        let h = thread::spawn(move || {
+            for v in req_rx.iter() {
+                if v == u64::MAX {
+                    break;
+                }
+                let _ = rep_tx.send(v + 1);
+            }
+        });
+        let iters = 200_000u32;
+        let t0 = Instant::now();
+        for i in 0..iters {
+            req_tx.send(i as u64).unwrap();
+            let _ = rep_rx.recv().unwrap();
+        }
+        let dt = t0.elapsed();
+        let _ = req_tx.send(u64::MAX);
+        let _ = h.join();
+        let ns = dt.as_nanos() / iters as u128;
+        println!("  crossbeam  {iters}  {ns}");
+    }
     let _ = Duration::from_nanos(1);
 }
 

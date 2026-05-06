@@ -61,15 +61,16 @@ where
     /// the previous O(N) linear scan of `entries`. With thousands of nodes
     /// and channels, the scan dominated every FUSE syscall.
     by_parent: HashMap<u64, HashMap<String, usize>>,
-    /// Per-process file buffers keyed by `(PID, entry_index)`. Switching from
-    /// the previous `(PID, String)` key removed an allocation on every read,
-    /// write, getattr, lookup and open.
+    /// Per-process file buffers keyed by `(PID, entry_index)`. 
     buffers: HashMap<(u32, usize), NexusFile>,
     /// `(sender into kernel/router, receiver of replies from kernel)`. The
     /// sender is provided by the caller; for the kernel-driven flow it is a
-    /// clone of the router's input channel so FUSE events skip the forwarder
-    /// hop.
-    fs_side: (mpsc::Sender<T>, mpsc::Receiver<KernelMessage>),
+    /// clone of the router's input channel so FUSE events go directly to the
+    /// router rather than incurring another hop at the kernel.
+    fs_side: (
+        crossbeam_channel::Sender<T>,
+        mpsc::Receiver<KernelMessage>,
+    ),
     /// Reply channel handed back to the kernel on `mount()`. Held in an
     /// Option so `mount` can take ownership without consuming the rest of
     /// `Self`.
@@ -95,7 +96,7 @@ where
     pub fn new(
         root: Option<PathBuf>,
         remap_rx: mpsc::Receiver<(u32, u32)>,
-        fs_to_kernel_tx: mpsc::Sender<T>,
+        fs_to_kernel_tx: crossbeam_channel::Sender<T>,
     ) -> Self {
         let root = root.unwrap_or_else(|| expand_home(&PathBuf::from("~/nexus")));
         let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
@@ -312,7 +313,10 @@ where
     /// Performs blocking I/O on the channel to send a request and receive the
     /// response from the kernel.
     fn pull_message(
-        fs_side: &mut (mpsc::Sender<T>, mpsc::Receiver<KernelMessage>),
+        fs_side: &mut (
+            crossbeam_channel::Sender<T>,
+            mpsc::Receiver<KernelMessage>,
+        ),
         id: ChannelId,
     ) -> Result<KernelMessage, FsError> {
         fs_side
@@ -419,7 +423,7 @@ where
 impl Default for NexusFs<FsMessage> {
     fn default() -> Self {
         let root = expand_home(&PathBuf::from("~/nexus"));
-        let (fs_tx, _kernel_rx) = mpsc::channel::<FsMessage>();
+        let (fs_tx, _kernel_rx) = crossbeam_channel::unbounded::<FsMessage>();
         let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
         Self {
             root,

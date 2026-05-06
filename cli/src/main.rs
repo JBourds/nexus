@@ -190,7 +190,8 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             runner::output::spawn_output_readers(&mut runc.handles, &root, |_, _, _, _| {});
         let protocol_channels = make_fs_channels(&sim, &runc.handles, &args.cmd)?;
         let (remap_tx, remap_rx) = std::sync::mpsc::channel();
-        let (router_input_tx, router_input_rx) = std::sync::mpsc::channel::<kernel::RouterInput>();
+        let (router_input_tx, router_input_rx) =
+            crossbeam_channel::unbounded::<kernel::RouterInput>();
         let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
         let fs = NexusFs::<kernel::RouterInput>::new(
             args.root.clone(),

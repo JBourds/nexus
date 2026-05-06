@@ -65,7 +65,15 @@ use table::*;
 
 type ServerHandle = JoinHandle<Result<(), KernelError>>;
 
-impl KernelServer<ServerHandle, RouterInput, RouterMessage> {
+/// The router uses crossbeam for its input channel (FUSE+Tick traffic, hot)
+/// and `std::sync::mpsc` for its reply channel (RemapPids only, cold).
+pub(crate) type RouterServer = KernelServer<
+    ServerHandle,
+    crossbeam_channel::Sender<RouterInput>,
+    mpsc::Receiver<RouterMessage>,
+>;
+
+impl RouterServer {
     /// Wake the router. Fire-and-forget: the router reads the current
     /// timestep from the shared atomic and processes any per-step
     /// bookkeeping. Energy events are pushed asynchronously on a separate
@@ -80,9 +88,11 @@ impl KernelServer<ServerHandle, RouterInput, RouterMessage> {
         self.tx
             .send(router::RouterInput::RemapPids(pairs))
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
+        // Reply channel is mpsc; both RecvError types are unit structs so
+        // the conversion only signals "channel disconnected".
         self.rx
             .recv()
-            .map_err(|e| KernelError::RouterError(RouterError::RecvError(e)))
+            .map_err(|_| KernelError::RouterError(RouterError::RecvError(crossbeam_channel::RecvError)))
     }
 
     pub fn shutdown(self) -> Result<(), KernelError> {
@@ -186,9 +196,9 @@ impl RoutingServer {
         remap_tx: mpsc::Sender<(u32, u32)>,
         current_ts: Arc<AtomicU64>,
         energy_tx: mpsc::Sender<EnergyEvents>,
-        kernel_tx: mpsc::Sender<RouterInput>,
-        kernel_rx: mpsc::Receiver<RouterInput>,
-    ) -> Result<KernelServer<ServerHandle, RouterInput, RouterMessage>, KernelError> {
+        kernel_tx: crossbeam_channel::Sender<RouterInput>,
+        kernel_rx: crossbeam_channel::Receiver<RouterInput>,
+    ) -> Result<RouterServer, KernelError> {
         let (router_tx, router_rx) = mpsc::channel::<RouterMessage>();
         thread::Builder::new()
             .name("nexus_router".to_string())

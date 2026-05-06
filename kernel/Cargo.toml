@@ -17,6 +17,7 @@ rand = { workspace = true }
 mio = {version = "1.0.4", features = ["os-poll", "os-ext"] }
 trace = { path = "../trace" }
 fuser.workspace = true
+crossbeam-channel = { workspace = true }
 
 [[bin]]
 name = "router_bench"
