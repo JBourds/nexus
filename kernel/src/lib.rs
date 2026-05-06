@@ -318,13 +318,17 @@ impl Kernel {
                 }
             }
 
-            // Pace simulated time to wall-clock time. Catch up missed ticks
-            // (no sleep) if we have already fallen behind.
+            // Pace simulated time to wall-clock time. If we have fallen
+            // behind by less than CATCHUP_GUARD, skip this tick's sleep so
+            // the next iter's tighter sleep absorbs the slip; otherwise
+            // re-anchor next_tick_at so we don't tight-loop forever after a
+            // pathological stall (e.g. swap, GC pause).
+            const CATCHUP_GUARD: Duration = Duration::from_millis(100);
             next_tick_at += delta;
             let now = std::time::Instant::now();
             if next_tick_at > now {
                 std::thread::sleep(next_tick_at - now);
-            } else {
+            } else if now.duration_since(next_tick_at) > CATCHUP_GUARD {
                 next_tick_at = now;
             }
         }
