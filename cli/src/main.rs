@@ -8,6 +8,8 @@ use std::collections::HashSet;
 use std::fs::OpenOptions;
 use std::io::stdout;
 use std::path::Path;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::SystemTime;
 use tracing_subscriber::{EnvFilter, filter, fmt, prelude::*};
 
@@ -175,7 +177,12 @@ fn list_modules(dir: &Path, category: Option<&str>, prefix: &str) -> Result<()> 
 }
 
 fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
-    ctrlc::set_handler(|| {}).expect("Error setting signal termination handler");
+    let abort = Arc::new(AtomicBool::new(false));
+    {
+        let abort = abort.clone();
+        ctrlc::set_handler(move || abort.store(true, Ordering::Relaxed))
+            .expect("Error setting signal termination handler");
+    }
 
     println!("Simulation Root: {}", root.to_string_lossy());
     #[allow(unused_variables)]
@@ -217,6 +224,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             router_input_rx,
             remap_tx,
         )
+        .abort_flag(abort.clone())
         .build()?
         .run(args.cmd.clone())?;
         // finish() kills the children; once their pipes close the reader

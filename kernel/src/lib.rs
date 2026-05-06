@@ -246,6 +246,7 @@ impl Kernel {
             .checked_sub(HEALTH_CHECK_INTERVAL)
             .unwrap_or_else(std::time::Instant::now);
         let mut next_tick_at = std::time::Instant::now();
+        let loop_start = next_tick_at;
         'outer: for timestep in 0..self.timestep.count.into() {
             if abort.as_ref().is_some_and(|a| a.load(Ordering::Relaxed)) {
                 break;
@@ -327,6 +328,21 @@ impl Kernel {
                 next_tick_at = now;
             }
         }
+
+        // Telemetry consumed by the scalability runner to compute RTF without
+        // per-tick instrumentation. Format is stable: single line on stderr
+        // with key=value pairs. Fires on every termination path (normal
+        // completion, abort flag, premature exit) but not SIGKILL.
+        // base_delta = timestep.length * timestep.unit, i.e. the simulated
+        // duration of one tick. Computed from base_delta rather than
+        // TimestepConfig::elapsed because the latter does not account for
+        // `length` and would underreport when length > 1.
+        let final_ticks = current_ts.load(Ordering::Relaxed);
+        let elapsed_ns = final_ticks.saturating_mul(base_delta.as_nanos() as u64);
+        let loop_wall_ns = loop_start.elapsed().as_nanos() as u64;
+        eprintln!(
+            "RTF_FINAL ticks={final_ticks} elapsed_ns={elapsed_ns} loop_wall_ns={loop_wall_ns}"
+        );
 
         // Handle any outstanding FS requests so it can be cleanly unmounted
         let run_handles = status_server.shutdown()?;
