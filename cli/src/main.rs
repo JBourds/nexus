@@ -181,7 +181,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
     #[allow(unused_variables)]
     let (trace_path, _trace_handle) = setup_logging(root.as_path(), &args.cmd, &sim)?;
     runner::build(&sim)?;
-    let mut run_summaries: Vec<ProtocolSummary> = vec![];
+    let mut summaries: Vec<ProtocolSummary> = vec![];
     for _ in 0..args.n.unwrap_or(1) {
         let mut runc = runner::run(&sim)?;
         // Spawn reader threads to ensure protocol stdout/stderr gets written
@@ -221,20 +221,21 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         .run(args.cmd.clone())?;
         // finish() kills the children; once their pipes close the reader
         // threads see EOF. Join only after kill so we don't deadlock.
-        run_summaries = get_output(protocol_handles);
+        let mut run_summaries = get_output(protocol_handles);
         for thread in reader_threads {
             let _ = thread.join();
         }
         runner::output::collect_captured_output(&root, &mut run_summaries);
+        summaries.extend(run_summaries);
     }
     match args.dest {
         OutputDestination::Stdout => {
-            to_csv(stdout(), &run_summaries);
+            to_csv(stdout(), &summaries);
         }
         OutputDestination::File => {
             let path = root.join(format!("output.{}", args.fmt.extension()));
             let f = OpenOptions::new().write(true).create_new(true).open(path)?;
-            to_csv(f, &run_summaries);
+            to_csv(f, &summaries);
         }
     }
     Ok(())
