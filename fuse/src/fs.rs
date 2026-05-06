@@ -1,7 +1,7 @@
 use crate::channel::{ChannelMode, NexusChannel};
 use crate::errors::{ChannelError, FsError};
 use crate::file::{NexusFile, default_attr};
-use crate::{ChannelId, FsMessage, KernelMessage, SleepEvent};
+use crate::{ChannelId, FsMessage, ReadRequest, SleepEvent};
 use fuser::ReplyWrite;
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
@@ -14,7 +14,6 @@ use fuser::{
 };
 use libc::{EACCES, EISDIR, EMSGSIZE, ENOENT, O_APPEND};
 use libc::{O_ACCMODE, O_RDONLY, O_WRONLY};
-use std::cmp::min;
 use std::ffi::OsStr;
 use std::fs;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -63,18 +62,12 @@ where
     by_parent: HashMap<u64, HashMap<String, usize>>,
     /// Per-process file buffers keyed by `(PID, entry_index)`. 
     buffers: HashMap<(u32, usize), NexusFile>,
-    /// `(sender into kernel/router, receiver of replies from kernel)`. The
-    /// sender is provided by the caller; for the kernel-driven flow it is a
-    /// clone of the router's input channel so FUSE events go directly to the
-    /// router rather than incurring another hop at the kernel.
-    fs_side: (
-        crossbeam_channel::Sender<T>,
-        mpsc::Receiver<KernelMessage>,
-    ),
-    /// Reply channel handed back to the kernel on `mount()`. Held in an
-    /// Option so `mount` can take ownership without consuming the rest of
-    /// `Self`.
-    kernel_reply_tx: Option<mpsc::Sender<KernelMessage>>,
+    /// Sender into the kernel/router. The send side is crossbeam-backed
+    /// because every FUSE syscall in the hot path drives one send.
+    /// There is no reply channel: the router invokes the per-request
+    /// `ReplyData` (carried in `FsMessage::Read`) directly when it has the
+    /// answer, so the FUSE worker thread never blocks waiting for replies.
+    fs_to_kernel_tx: crossbeam_channel::Sender<T>,
     /// Receiver for (old_pid, new_pid) pairs sent by the router.
     remap_rx: mpsc::Receiver<(u32, u32)>,
     /// Per-instance inode counter (must not be static; the GUI reuses
@@ -99,15 +92,13 @@ where
         fs_to_kernel_tx: crossbeam_channel::Sender<T>,
     ) -> Self {
         let root = root.unwrap_or_else(|| expand_home(&PathBuf::from("~/nexus")));
-        let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
         Self {
             root,
             attr: Self::root_attr(),
             entries: Vec::default(),
             by_parent: HashMap::default(),
             buffers: HashMap::default(),
-            fs_side: (fs_to_kernel_tx, fs_reply_rx),
-            kernel_reply_tx: Some(kernel_reply_tx),
+            fs_to_kernel_tx,
             remap_rx,
             inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
             tgid_cache: HashMap::new(),
@@ -309,35 +300,11 @@ where
         Ok(self)
     }
 
-    /// Request a message from the kernel for the channel identified by `id`.
-    /// Performs blocking I/O on the channel to send a request and receive the
-    /// response from the kernel.
-    fn pull_message(
-        fs_side: &mut (
-            crossbeam_channel::Sender<T>,
-            mpsc::Receiver<KernelMessage>,
-        ),
-        id: ChannelId,
-    ) -> Result<KernelMessage, FsError> {
-        fs_side
-            .0
-            .send(
-                FsMessage::Read(Message {
-                    id,
-                    data: Vec::new(),
-                })
-                .into(),
-            )
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))?;
-        fs_side
-            .1
-            .recv()
-            .map_err(|e| FsError::KernelShutdown(Box::new(e)))
-    }
-
-    /// Mount the filesystem without blocking, yield the background session it
-    /// is mounted in, and return the kernel's reply sender.
-    pub fn mount(mut self) -> Result<(BackgroundSession, mpsc::Sender<KernelMessage>), FsError> {
+    /// Mount the filesystem without blocking and yield the background session.
+    /// Replies flow directly from the router back to the kernel via the
+    /// per-request `ReplyData` token (carried in `FsMessage::Read`), so there
+    /// is no longer a separate reply channel to hand back.
+    pub fn mount(self) -> Result<BackgroundSession, FsError> {
         let mut options = vec![MountOption::FSName("nexus".to_string())];
         if std::env::var_os("NEXUS_FUSE_ALLOW_OTHER").is_some() {
             options.push(MountOption::AllowOther);
@@ -349,10 +316,6 @@ where
                 err,
             })?;
         }
-        let kernel_reply_tx = self
-            .kernel_reply_tx
-            .take()
-            .expect("kernel reply sender already consumed");
         let sess =
             fuser::spawn_mount2(self, &root, &options).map_err(|err| FsError::MountError {
                 root: root.clone(),
@@ -366,57 +329,32 @@ where
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
 
-        Ok((sess, kernel_reply_tx))
+        Ok(sess)
     }
 
+    /// Forward a read request to the router. Returns immediately; the router
+    /// invokes `reply.data(...)` on the carried `ReplyData` once a message
+    /// is available (or `reply.data(&[])` if the channel is empty). On
+    /// channel send failure (kernel shutting down) the `ReplyData` stored
+    /// inside the dropped `FsMessage` will trigger `Drop`'s EIO fallback,
+    /// so the syscall never hangs.
     fn read_message(
         &mut self,
         reply: ReplyData,
-        size: usize,
+        size: u32,
         buf_key: (u32, usize),
         msg_id: ChannelId,
     ) {
-        // Get the file containing all message buffers
-        let Some(file) = self.buffers.get_mut(&buf_key) else {
+        if !self.buffers.contains_key(&buf_key) {
             reply.error(EACCES);
             return;
-        };
-
-        // Serve unread parts of previous message first
-        if let Some((read_ptr, buf)) = &mut file.unread_msg {
-            // EOF
-            if *read_ptr == buf.len() {
-                file.unread_msg = None;
-                reply.data(&[]);
-                return;
-            }
-            let remaining = buf.len() - *read_ptr;
-            let read_size = min(remaining, size);
-            let end = *read_ptr + read_size;
-            reply.data(&buf.as_slice()[*read_ptr..end]);
-            file.unread_msg = Some((end, std::mem::take(buf)));
-            return;
         }
-
-        // See if there is anything for client to read
-        if let Ok(msg) = Self::pull_message(&mut self.fs_side, msg_id) {
-            let (allow_incremental_reads, msg) = match msg {
-                KernelMessage::Exclusive(msg) => (true, msg.data),
-                KernelMessage::Shared(msg) => (false, msg.data),
-                KernelMessage::Empty(_) => {
-                    reply.data(&[]);
-                    return;
-                }
-            };
-            let read_size = min(msg.len(), size);
-            reply.data(&msg[..read_size as usize]);
-            if allow_incremental_reads && read_size < msg.len() {
-                // need to buffer remaining parts of the message
-                file.unread_msg = Some((read_size, msg));
-            }
-        } else {
-            reply.data(&[]);
-        }
+        let req = FsMessage::Read(ReadRequest {
+            id: msg_id,
+            size,
+            reply,
+        });
+        let _ = self.fs_to_kernel_tx.send(req.into());
     }
 }
 
@@ -424,15 +362,13 @@ impl Default for NexusFs<FsMessage> {
     fn default() -> Self {
         let root = expand_home(&PathBuf::from("~/nexus"));
         let (fs_tx, _kernel_rx) = crossbeam_channel::unbounded::<FsMessage>();
-        let (kernel_reply_tx, fs_reply_rx) = mpsc::channel::<KernelMessage>();
         Self {
             root,
             attr: Self::root_attr(),
             entries: Vec::default(),
             by_parent: HashMap::default(),
             buffers: HashMap::default(),
-            fs_side: (fs_tx, fs_reply_rx),
-            kernel_reply_tx: Some(kernel_reply_tx),
+            fs_to_kernel_tx: fs_tx,
             remap_rx: mpsc::channel().1,
             inode_gen: AtomicU64::new(FUSE_ROOT_ID + 1),
             tgid_cache: HashMap::new(),
@@ -605,7 +541,7 @@ where
         // Path is only cloned for the kernel-bound message id; the buffer
         // lookup uses the entry index directly.
         let msg_id = (pid, entry.path.clone());
-        self.read_message(reply, size as usize, (pid, index), msg_id);
+        self.read_message(reply, size, (pid, index), msg_id);
     }
 
     #[instrument(skip_all)]
@@ -663,8 +599,7 @@ where
                             bytes_consumed,
                             reply,
                         });
-                        self.fs_side
-                            .0
+                        self.fs_to_kernel_tx
                             .send(msg.into())
                             .expect("failed to send message to kernel");
                     }
@@ -687,8 +622,7 @@ where
                     id: (pid, entry.path.clone()),
                     data: data.to_vec(),
                 });
-                self.fs_side
-                    .0
+                self.fs_to_kernel_tx
                     .send(msg.into())
                     .expect("failed to send message to kernel");
                 let Ok(bytes_written) = data.len().try_into() else {

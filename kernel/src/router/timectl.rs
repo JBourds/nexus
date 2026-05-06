@@ -66,29 +66,31 @@ impl RoutingServer {
     pub fn send_time(
         &mut self,
         node_index: usize,
-        mut msg: fuse::Message,
+        req: fuse::ReadRequest,
     ) -> Result<(), RouterError> {
         let node_start = &self.channels.nodes[node_index].start;
-        let unit = Self::suffix_to_time(msg.id.1.as_str())
-            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
+        let Some(unit) = Self::suffix_to_time(req.id.1.as_str()) else {
+            let path = req.id.1.clone();
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path));
+        };
         let s = self
             .ts_config
             .time_from(self.timestep, unit, node_start)
             .to_string();
-        msg.data = s.bytes().collect();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        Self::reply_capped(req.reply, req.size, s.as_bytes());
+        Ok(())
     }
 
-    pub fn send_elapsed(&mut self, mut msg: fuse::Message) -> Result<(), RouterError> {
-        let unit = Self::suffix_to_time(msg.id.1.as_str())
-            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
+    pub fn send_elapsed(&mut self, req: fuse::ReadRequest) -> Result<(), RouterError> {
+        let Some(unit) = Self::suffix_to_time(req.id.1.as_str()) else {
+            let path = req.id.1.clone();
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path));
+        };
         let s = self.ts_config.elapsed(self.timestep, unit).to_string();
-        msg.data = s.bytes().collect();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        Self::reply_capped(req.reply, req.size, s.as_bytes());
+        Ok(())
     }
 
     fn msg_to_time_units(msg: &fuse::Message) -> Result<(u64, TimeUnit), RouterError> {

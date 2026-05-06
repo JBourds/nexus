@@ -47,16 +47,18 @@ pub(crate) fn default_attr(
     }
 }
 
-/// Struct containing file system metadata and all queued messages
-/// for a single virtual file corresponding to the view of one process on a
-/// given channel.
+/// Struct containing file system metadata for a single virtual file
+/// corresponding to the view of one process on a given channel.
+///
+/// Per-handle "leftover bytes from a partial read" state used to live here
+/// (`unread_msg`) but moved to the router once read replies became
+/// non-blocking — only the router has the message buffer to slice.
 #[derive(Debug)]
 pub(crate) struct NexusFile {
     pub mode: ChannelMode,
     pub attr: FileAttr,
     #[allow(unused)]
     pub max_msg_size: NonZeroUsize,
-    pub unread_msg: Option<(usize, Vec<u8>)>,
 }
 
 impl NexusFile {
@@ -65,7 +67,6 @@ impl NexusFile {
             mode,
             attr: default_attr(ino, FileType::RegularFile, 0o644, u16::MAX as u64, 1),
             max_msg_size,
-            unread_msg: None,
         }
     }
 }

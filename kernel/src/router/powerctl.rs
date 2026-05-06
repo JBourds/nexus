@@ -19,12 +19,11 @@ use crate::router::{RouterError, RoutingServer};
 use crate::types::PowerFlowState;
 
 impl RoutingServer {
-    /// Read handler: format all power sources and sinks as text.
-    pub fn read_power_flows(
-        &mut self,
-        node_index: usize,
-        mut msg: fuse::Message,
-    ) -> Result<(), RouterError> {
+    /// Format all power sources and sinks as text. Pure-logic helper so
+    /// tests can assert on the formatted output without needing to mock a
+    /// `fuser::ReplyData` (the underlying `ReplySender` trait is not in
+    /// fuser's public API).
+    pub(crate) fn format_power_flows(&self, node_index: usize) -> String {
         let mut output = String::new();
         let timestep_ns = self.ts_config.length.get() * self.ts_config.unit.to_ns_factor();
         let current_time_us = self.timestep * timestep_ns / 1000;
@@ -38,10 +37,18 @@ impl RoutingServer {
                 output.push_str(&format!("sink {name} {nj} nj/ts\n"));
             }
         }
-        msg.data = output.into_bytes();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        output
+    }
+
+    /// Read handler: format all power sources and sinks as text.
+    pub fn read_power_flows(
+        &mut self,
+        node_index: usize,
+        req: fuse::ReadRequest,
+    ) -> Result<(), RouterError> {
+        let output = self.format_power_flows(node_index);
+        Self::reply_capped(req.reply, req.size, output.as_bytes());
+        Ok(())
     }
 
     /// Write handler: parse commands to add/modify/remove flows.

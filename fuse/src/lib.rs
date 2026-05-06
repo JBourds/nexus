@@ -4,7 +4,7 @@ pub mod file;
 pub mod fs;
 
 use config::ast::{self, TimeUnit};
-use fuser::ReplyWrite;
+use fuser::{ReplyData, ReplyWrite};
 
 pub type Mode = i32;
 pub type PID = u32;
@@ -13,19 +13,33 @@ pub type ChannelId = (PID, ast::ChannelHandle);
 
 pub mod ctrl_files;
 
-#[derive(Clone, Debug)]
-pub enum KernelMessage {
-    Exclusive(Message),
-    Shared(Message),
-    Empty(Message),
+/// Read request from FUSE to the kernel/router. The router calls
+/// `reply.data(buf)` (or `reply.error(e)`) directly when it has the answer,
+/// so the FUSE worker thread never blocks waiting for a reply. This is the
+/// "top-half / bottom-half" split: the FUSE worker just dispatches a
+/// `FsMessage::Read` and returns immediately; the router does the work and
+/// calls the reply token from its own thread.
+#[derive(Debug)]
+pub struct ReadRequest {
+    pub id: ChannelId,
+    /// Bytes the syscall asked for. The router slices its message to this
+    /// size and stashes any remainder in per-handle `unread_msg` state for
+    /// the next read.
+    pub size: u32,
+    pub reply: ReplyData,
 }
 
 #[derive(Debug)]
 pub enum FsMessage {
     Write(Message),
-    Read(Message),
+    Read(ReadRequest),
     Sleep(SleepEvent),
 }
+
+// `KernelMessage` (Exclusive/Shared/Empty) used to carry replies back from
+// the kernel to the FUSE filesystem. It is gone now: the router invokes
+// the per-request `ReplyData` token directly, so there is no separate
+// reply channel and no reply enum.
 
 #[derive(Clone, Debug)]
 pub struct Message {

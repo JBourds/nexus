@@ -1,4 +1,4 @@
-use std::{io, sync::mpsc::SendError};
+use std::io;
 
 use crossbeam_channel::{RecvError, SendError as CrossbeamSendError};
 use thiserror::Error;
@@ -15,8 +15,6 @@ pub enum RouterError {
     InvalidFloat(Vec<u8>),
     #[error("Invalid motion pattern: {0}")]
     InvalidMotionPattern(String),
-    #[error("Error sending fuse message: {0:#?}")]
-    FuseSendError(SendError<fuse::KernelMessage>),
     #[error("Error sending kernel message: {0:#?}")]
     KernelSendError(CrossbeamSendError<crate::router::RouterInput>),
     #[error("Error receiving message: {0:#?}")]

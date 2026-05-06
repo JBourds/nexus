@@ -217,7 +217,7 @@ fn run_inner(
     let file_handles = make_file_handles(&sim, &runc.handles);
     let pids: Vec<u32> = runc.handles.iter().filter_map(|h| h.pid()).collect();
 
-    let (sess, tx) = fs
+    let sess = fs
         .add_processes(&pids)
         .add_channels(protocol_channels)?
         .mount()
@@ -232,7 +232,6 @@ fn run_inner(
         file_handles,
         router_input_tx,
         router_input_rx,
-        tx,
         remap_tx,
     )
     .abort_flag(abort)

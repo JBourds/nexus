@@ -200,7 +200,7 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
         );
 
         #[allow(unused_variables)]
-        let (sess, tx) = fs
+        let sess = fs
             .add_processes(&pids)
             .add_channels(protocol_channels)?
             .mount()
@@ -215,7 +215,6 @@ fn run(args: Cli, sim: ast::Simulation, root: PathBuf) -> Result<()> {
             file_handles,
             router_input_tx,
             router_input_rx,
-            tx,
             remap_tx,
         )
         .build()?

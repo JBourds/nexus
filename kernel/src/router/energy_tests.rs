@@ -69,13 +69,11 @@ mod tests {
     }
 
     /// Build a RoutingServer with the given nodes and optional channel setup.
-    /// Returns the server and fuse receiver (for draining messages).
     fn make_router(
         nodes: Vec<types::Node>,
         channels: Vec<types::Channel>,
         handles: Vec<(u32, NodeIdx, ChannelIdx)>,
-    ) -> (RoutingServer, mpsc::Receiver<fuse::KernelMessage>) {
-        let (tx, rx) = mpsc::channel();
+    ) -> RoutingServer {
         let node_names: Vec<Arc<str>> = (0..nodes.len())
             .map(|i| Arc::from(format!("node_{i}").as_str()))
             .collect();
@@ -93,7 +91,7 @@ mod tests {
         let routes = RoutingTable::new(&resolved);
         let mailbox_count = handles.len();
         let energy_mgr = EnergyManager::new(&resolved.nodes);
-        let router = RoutingServer {
+        RoutingServer {
             timestep: 1,
             ts_config: test_ts_config(),
             channels: resolved,
@@ -103,8 +101,8 @@ mod tests {
             mailboxes: vec![VecDeque::new(); mailbox_count],
             nonempty_mailboxes: Vec::new(),
             mailbox_active: vec![false; mailbox_count],
+            unread_msg: vec![None; mailbox_count],
             rng: StdRng::seed_from_u64(42),
-            tx,
             energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
@@ -116,14 +114,11 @@ mod tests {
             signal_info: vec![SignalInfo::default(); mailbox_count],
             sleep_alarms: std::collections::BinaryHeap::new(),
             link_cache: HashMap::new(),
-        };
-        (router, rx)
+        }
     }
 
     /// Simple router with a single node, no channels.
-    fn make_single_node_router(
-        energy: EnergyState,
-    ) -> (RoutingServer, mpsc::Receiver<fuse::KernelMessage>) {
+    fn make_single_node_router(energy: EnergyState) -> RoutingServer {
         make_router(vec![make_node(Some(energy))], vec![], vec![])
     }
 
@@ -159,7 +154,7 @@ mod tests {
     #[test]
     fn test_power_source_generation() {
         let energy = energy_with_source(500, 10_000, 100);
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -174,7 +169,7 @@ mod tests {
         let mut energy = basic_energy(1000, 10_000);
         energy.power_states_nj = HashMap::from([("active".into(), 150)]);
         energy.current_state = Some("active".into());
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -189,7 +184,7 @@ mod tests {
         let mut energy = energy_with_source(1000, 10_000, 50);
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -203,7 +198,7 @@ mod tests {
     #[test]
     fn test_charge_capped_at_max() {
         let energy = energy_with_source(9950, 10_000, 200);
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -219,7 +214,7 @@ mod tests {
         let mut energy = basic_energy(100, 10_000);
         energy.power_states_nj = HashMap::from([("active".into(), 150)]);
         energy.current_state = Some("active".into());
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let e = router.channels.nodes[0].energy.as_ref().unwrap();
@@ -238,7 +233,7 @@ mod tests {
         let mut energy = basic_energy(100, 10_000);
         energy.power_states_nj = HashMap::from([("active".into(), 150)]);
         energy.current_state = Some("active".into());
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         // step() pushes to newly_depleted but doesn't drain it
         router.step().unwrap();
@@ -259,7 +254,7 @@ mod tests {
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         energy.is_dead = true;
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -279,7 +274,7 @@ mod tests {
         energy.is_dead = true;
         // restart at 50% = 5000 nJ — won't trigger yet
         energy.restart_threshold_nj = Some(5000);
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         // Step 1: 0 + 100 = 100, still below 5000
         router.step().unwrap();
@@ -306,7 +301,7 @@ mod tests {
         let mut energy = energy_with_source(0, 10_000, 10_000);
         energy.is_dead = true;
         energy.restart_threshold_nj = None; // no restart
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         // Even with massive source, node stays dead
         router.step().unwrap();
@@ -324,7 +319,7 @@ mod tests {
     // -----------------------------------------------------------------------
     #[test]
     fn test_no_battery_node() {
-        let (mut router, _rx) = make_router(vec![make_node(None)], vec![], vec![]);
+        let mut router = make_router(vec![make_node(None)], vec![], vec![]);
         // Should not panic
         router.step().unwrap();
         assert!(router.channels.nodes[0].energy.is_none());
@@ -338,7 +333,7 @@ mod tests {
         let mut energy = energy_with_source(1000, 10_000, 10);
         energy.power_states_nj = HashMap::from([("idle".into(), 3)]);
         energy.current_state = Some("idle".into());
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         for _ in 0..100 {
             router.step().unwrap();
@@ -356,7 +351,7 @@ mod tests {
         let mut energy = basic_energy(1000, 10_000);
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = None; // no state selected
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -400,7 +395,7 @@ mod tests {
 
         // Handle: PID=1, node=0, channel=0
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
-        let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
+        let mut router = make_router(vec![node], vec![channel], handles);
 
         // Simulate a write
         let msg = fuse::Message {
@@ -462,7 +457,7 @@ mod tests {
             (1u32, NodeIdx(0), ChannelIdx(0)),
             (2u32, NodeIdx(1), ChannelIdx(0)),
         ];
-        let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+        let mut router = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         let initial_charge = router.channels.nodes[1].energy.as_ref().unwrap().charge_nj;
 
@@ -495,7 +490,6 @@ mod tests {
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
         // We need a control file handle. The channel_names need to include the control prefix.
-        let (tx, _rx) = mpsc::channel();
         let node_names = vec![Arc::from("node_0")];
         let channel_names = vec![Arc::from("ctl.energy_state")];
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
@@ -524,8 +518,8 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             nonempty_mailboxes: Vec::new(),
             mailbox_active: vec![false; handles.len()],
+            unread_msg: vec![None; handles.len()],
             rng: StdRng::seed_from_u64(42),
-            tx,
             energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
@@ -572,7 +566,6 @@ mod tests {
         let node =
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
-        let (tx, _rx) = mpsc::channel();
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
@@ -599,8 +592,8 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             nonempty_mailboxes: Vec::new(),
             mailbox_active: vec![false; handles.len()],
+            unread_msg: vec![None; handles.len()],
             rng: StdRng::seed_from_u64(42),
-            tx,
             energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
@@ -640,7 +633,7 @@ mod tests {
         energy.power_states_nj = HashMap::from([("active".into(), 200)]);
         energy.current_state = Some("active".into());
         energy.restart_threshold_nj = Some(500);
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         // Step 1: 300 + 50 - 200 = 150 (alive)
         router.step().unwrap();
@@ -807,7 +800,7 @@ mod tests {
             e
         };
         let energy_b = energy_with_source(500, 5000, 200);
-        let (mut router, _rx) = make_router(
+        let mut router = make_router(
             vec![make_node(Some(energy_a)), make_node(Some(energy_b))],
             vec![],
             vec![],
@@ -844,7 +837,7 @@ mod tests {
         };
         // Handle: PID=100, node=0, channel=0
         let handles = vec![(100u32, NodeIdx(0), ChannelIdx(0))];
-        let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
+        let mut router = make_router(vec![node], vec![channel], handles);
 
         // Verify initial state
         assert_eq!(router.channels.handles[0].0, 100);
@@ -901,7 +894,7 @@ mod tests {
             (1u32, NodeIdx(0), ChannelIdx(0)),
             (2u32, NodeIdx(1), ChannelIdx(0)),
         ];
-        let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+        let mut router = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Queue a message and deliver it
         router
@@ -958,7 +951,7 @@ mod tests {
             (10u32, NodeIdx(0), ChannelIdx(0)),
             (20u32, NodeIdx(1), ChannelIdx(0)),
         ];
-        let (mut router, _rx) = make_router(vec![node_a, node_b], vec![channel], handles);
+        let mut router = make_router(vec![node_a, node_b], vec![channel], handles);
 
         // Only remap PID 10 → 11
         router.apply_pid_remaps(&[(10, 11)]);
@@ -975,7 +968,7 @@ mod tests {
     #[test]
     fn test_pid_remap_sends_to_channel() {
         let (remap_tx, remap_rx) = std::sync::mpsc::channel();
-        let (mut router, _rx) = make_single_node_router(basic_energy(1000, 10_000));
+        let mut router = make_single_node_router(basic_energy(1000, 10_000));
         router.remap_tx = remap_tx;
 
         router.apply_pid_remaps(&[(5, 6), (7, 8)]);
@@ -1007,7 +1000,7 @@ mod tests {
             (100u32, NodeIdx(0), ChannelIdx(0)),
             (101u32, NodeIdx(0), ChannelIdx(0)),
         ];
-        let (mut router, _rx) = make_router(vec![node], vec![channel], handles);
+        let mut router = make_router(vec![node], vec![channel], handles);
 
         // Batch remap both
         router.apply_pid_remaps(&[(100, 200), (101, 201)]);
@@ -1057,7 +1050,7 @@ mod tests {
             (1u32, NodeIdx(0), ChannelIdx(0)),
             (2u32, NodeIdx(1), ChannelIdx(0)),
         ];
-        let (mut router, _rx) = make_router(vec![pub_node, sub_node], vec![channel], handles);
+        let mut router = make_router(vec![pub_node, sub_node], vec![channel], handles);
 
         // Remap subscriber's PID before any message delivery
         router.apply_pid_remaps(&[(2, 42)]);
@@ -1141,7 +1134,7 @@ mod tests {
             ("mcu".into(), PowerFlowState::Constant { nj_per_ts: 30 }),
             ("radio".into(), PowerFlowState::Constant { nj_per_ts: 20 }),
         ];
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -1157,7 +1150,7 @@ mod tests {
         let mut energy = basic_energy(0, 10_000);
         energy.power_sinks = vec![("mcu".into(), PowerFlowState::Constant { nj_per_ts: 100 })];
         energy.is_dead = true;
-        let (mut router, _rx) = make_single_node_router(energy);
+        let mut router = make_single_node_router(energy);
 
         router.step().unwrap();
         let charge = router.channels.nodes[0].energy.as_ref().unwrap().charge_nj;
@@ -1174,7 +1167,6 @@ mod tests {
         let node =
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
-        let (tx, rx) = mpsc::channel();
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
@@ -1201,8 +1193,8 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             nonempty_mailboxes: Vec::new(),
             mailbox_active: vec![false; handles.len()],
+            unread_msg: vec![None; handles.len()],
             rng: StdRng::seed_from_u64(42),
-            tx,
             energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {
@@ -1232,20 +1224,14 @@ mod tests {
         assert_eq!(e.power_sinks[0].0, "mcu");
         assert_eq!(e.power_sinks[0].1.nj_per_timestep(0), 50);
 
-        // Read the flows back
-        let read_msg = fuse::Message {
-            id: (1, "ctl.power_flows".to_string()),
-            data: vec![],
-        };
-        router.read_control_file(0, read_msg).unwrap();
-
-        let response = rx.recv().unwrap();
-        let data = match response {
-            fuse::KernelMessage::Exclusive(msg) => String::from_utf8(msg.data).unwrap(),
-            _ => panic!("Expected Exclusive message"),
-        };
-        assert!(data.contains("source solar 200 nj/ts"));
-        assert!(data.contains("sink mcu 50 nj/ts"));
+        // Read the flows back. The production read handler calls
+        // `reply.data(...)` directly via FUSE's `ReplyData`; tests can't
+        // mock that token (fuser's `ReplySender` trait is private), so
+        // assert on `format_power_flows` which is the same logic minus
+        // the I/O side effect.
+        let formatted = router.format_power_flows(0);
+        assert!(formatted.contains("source solar 200 nj/ts"));
+        assert!(formatted.contains("sink mcu 50 nj/ts"));
 
         // Step and verify sources/sinks are applied
         router.step().unwrap();
@@ -1279,7 +1265,6 @@ mod tests {
         let node =
             make_node_with_protocol(Some(energy), HashSet::new(), HashSet::new(), HashMap::new());
 
-        let (tx, _rx) = mpsc::channel();
         let handles = vec![(1u32, NodeIdx(0), ChannelIdx(0))];
         let resolved = ResolvedChannels {
             nodes: vec![node],
@@ -1306,8 +1291,8 @@ mod tests {
             mailboxes: vec![VecDeque::new(); handles.len()],
             nonempty_mailboxes: Vec::new(),
             mailbox_active: vec![false; handles.len()],
+            unread_msg: vec![None; handles.len()],
             rng: StdRng::seed_from_u64(42),
-            tx,
             energy_mgr,
             remap_tx: std::sync::mpsc::channel().0,
             timestep_ns: {

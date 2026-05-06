@@ -146,16 +146,27 @@ impl RoutingServer {
         Ok(())
     }
 
-    pub fn deliver_msg(&mut self, index: usize) -> Result<bool, RouterError> {
+    /// Deliver any pending message to the FUSE caller via `req.reply`.
+    /// Returns `Ok(true)` if a real message was sent, `Ok(false)` if the
+    /// channel was empty (and an empty reply was already sent).
+    pub fn deliver_msg(
+        &mut self,
+        index: usize,
+        req: fuse::ReadRequest,
+    ) -> Result<bool, RouterError> {
         let (_, _, channel_handle) = self.channels.handles[index];
         let channel = &mut self.channels.channels[channel_handle.0];
         match &channel.r#type.kind {
-            ChannelKind::Shared => self.deliver_shared_msg(index),
-            ChannelKind::Exclusive { .. } => self.deliver_exclusive_msg(index),
+            ChannelKind::Shared => self.deliver_shared_msg(index, req),
+            ChannelKind::Exclusive { .. } => self.deliver_exclusive_msg(index, req),
         }
     }
 
-    fn deliver_shared_msg(&mut self, index: usize) -> Result<bool, RouterError> {
+    fn deliver_shared_msg(
+        &mut self,
+        index: usize,
+        req: fuse::ReadRequest,
+    ) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
         let channel = &self.channels.channels[channel_handle.0];
         let channel_name = &self.channels.channel_names[channel_handle.0];
@@ -172,7 +183,10 @@ impl RoutingServer {
         }
 
         match mailbox.len().cmp(&1) {
-            std::cmp::Ordering::Less => Ok(false),
+            std::cmp::Ordering::Less => {
+                req.reply.data(&[]);
+                Ok(false)
+            }
             std::cmp::Ordering::Equal => {
                 let msg = mailbox.pop_front().unwrap();
                 let link = Self::lookup_or_compute_link(
@@ -206,15 +220,12 @@ impl RoutingServer {
                         target: "rx", Level::INFO, timestep, channel = channel_handle.0,
                         node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = buf.as_ref()
                     );
-                    let msg = fuse::Message {
-                        id: (pid, node_name.to_string()),
-                        data: buf.to_vec(),
-                    };
-                    self.tx
-                        .send(fuse::KernelMessage::Shared(msg))
-                        .map(|_| true)
-                        .map_err(RouterError::FuseSendError)
+                    // Shared channels do not allow incremental reads; cap to
+                    // the syscall's requested size and reply directly.
+                    Self::reply_capped(req.reply, req.size, buf.as_ref());
+                    Ok(true)
                 } else {
+                    req.reply.data(&[]);
                     Ok(false)
                 }
             }
@@ -271,19 +282,17 @@ impl RoutingServer {
                     target: "rx", Level::INFO, timestep, channel = channel_handle.0,
                     node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = buf.as_slice()
                 );
-                let msg = fuse::Message {
-                    id: (pid, node_name.to_string()),
-                    data: buf,
-                };
-                self.tx
-                    .send(fuse::KernelMessage::Shared(msg))
-                    .map(|_| true)
-                    .map_err(RouterError::FuseSendError)
+                Self::reply_capped(req.reply, req.size, buf.as_slice());
+                Ok(true)
             }
         }
     }
 
-    fn deliver_exclusive_msg(&mut self, index: usize) -> Result<bool, RouterError> {
+    fn deliver_exclusive_msg(
+        &mut self,
+        index: usize,
+        req: fuse::ReadRequest,
+    ) -> Result<bool, RouterError> {
         let (pid, node_handle, channel_handle) = self.channels.handles[index];
         let mailbox = &mut self.mailboxes[index];
         if let Some(msg) = mailbox.pop_front() {
@@ -304,6 +313,7 @@ impl RoutingServer {
                     msg_id = msg.msg_id,
                     reason = "ttl_expired"
                 );
+                req.reply.data(&[]);
                 return Ok(false);
             }
             let node_name = &self.channels.node_names[node_handle.0];
@@ -319,20 +329,26 @@ impl RoutingServer {
             }
             let bit_errors = msg.bit_errors;
             let mid = msg.msg_id;
-            let msg = fuse::Message {
-                id: (pid, self.channels.node_names[node_handle.0].to_string()),
-                data: msg.buf.to_vec(),
-            };
+            let buf = msg.buf.to_vec();
             event!(
                 target: "rx", Level::INFO, timestep = self.timestep, channel = channel_handle.0,
-                node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = msg.data.as_slice()
+                node = node_handle.0, tx = false, bit_errors, msg_id = mid, data = buf.as_slice()
             );
 
-            self.tx
-                .send(fuse::KernelMessage::Exclusive(msg))
-                .map(|_| true)
-                .map_err(RouterError::FuseSendError)
+            // Exclusive channels allow incremental reads: serve the first
+            // chunk now, stash any remainder for the next read on this handle.
+            let n = std::cmp::min(buf.len(), req.size as usize);
+            req.reply.data(&buf[..n]);
+            if n < buf.len() {
+                self.unread_msg[index] = Some((n, buf));
+            }
+            // Suppress unused-variable warning: pid is bound earlier for
+            // the tracing path in `info!`, but if Level::INFO is disabled
+            // it would otherwise be flagged.
+            let _ = pid;
+            Ok(true)
         } else {
+            req.reply.data(&[]);
             Ok(false)
         }
     }

@@ -136,8 +136,15 @@ pub(crate) struct RoutingServer {
     mailbox_active: Vec<bool>,
     /// Random number generator to use
     rng: StdRng,
-    /// Channel which router delivers messages to file system
-    tx: mpsc::Sender<fuse::KernelMessage>,
+    /// Per-handle leftover bytes from a previous read. When an exclusive
+    /// channel's mailbox produces a message larger than the syscall's
+    /// requested size, the remainder is stashed here keyed by handle index;
+    /// the next read on the same handle drains it before pulling the next
+    /// message. Lives in the router (not the FUSE side) because reads are
+    /// non-blocking now: the FUSE worker dispatches an `FsMessage::Read`
+    /// carrying its `ReplyData` token and returns immediately, so only the
+    /// router has the message buffer to slice.
+    unread_msg: Vec<Option<(usize, Vec<u8>)>>,
     /// Energy subsystem: tracks battery nodes, death/recovery transitions.
     energy_mgr: energy::EnergyManager,
     /// Sender for (old_pid, new_pid) pairs consumed by the FUSE filesystem.
@@ -177,7 +184,6 @@ impl RoutingServer {
     /// and recovery events; the kernel main thread drains its receiver once
     /// per tick.
     #[instrument(skip(
-        tx,
         channels,
         rng,
         source,
@@ -188,7 +194,6 @@ impl RoutingServer {
         kernel_rx
     ))]
     pub fn serve(
-        tx: mpsc::Sender<fuse::KernelMessage>,
         channels: ResolvedChannels,
         ts_config: TimestepConfig,
         rng: StdRng,
@@ -217,10 +222,10 @@ impl RoutingServer {
                     mailboxes: vec![VecDeque::new(); handles_count],
                     nonempty_mailboxes: Vec::new(),
                     mailbox_active: vec![false; handles_count],
+                    unread_msg: vec![None; handles_count],
                     fuse_mapping,
                     ts_config,
                     rng,
-                    tx,
                     energy_mgr,
                     remap_tx,
                     timestep_ns,
@@ -451,91 +456,115 @@ impl RoutingServer {
     pub fn read_control_file(
         &mut self,
         handle_index: usize,
-        msg: fuse::Message,
+        req: fuse::ReadRequest,
     ) -> Result<(), RouterError> {
         let (_, node_index, _) = self.channels.handles[handle_index];
         let ni = node_index.0;
-        let Some(ctl) = ControlFile::parse(&msg.id.1) else {
-            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        let Some(ctl) = ControlFile::parse(&req.id.1) else {
+            let path = req.id.1.clone();
+            // Drop on ReplyData fires EIO so the syscall doesn't hang.
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path));
         };
         match ctl {
-            ControlFile::Time(_) => self.send_time(ni, msg),
-            ControlFile::Elapsed(_) => self.send_elapsed(msg),
+            ControlFile::Time(_) => self.send_time(ni, req),
+            ControlFile::Elapsed(_) => self.send_elapsed(req),
             ControlFile::EnergyLeft => {
                 let charge_nj = energy::EnergyManager::charge_nj(&self.channels.nodes, ni);
-                let mut msg = msg;
-                msg.data = charge_nj.to_string().into_bytes();
-                self.tx
-                    .send(fuse::KernelMessage::Exclusive(msg))
-                    .map_err(RouterError::FuseSendError)
+                Self::reply_capped(req.reply, req.size, charge_nj.to_string().as_bytes());
+                Ok(())
             }
             ControlFile::EnergyState => {
                 let state = energy::EnergyManager::current_state(&self.channels.nodes, ni)
                     .unwrap_or_default();
-                let mut msg = msg;
-                msg.data = state.into_bytes();
-                self.tx
-                    .send(fuse::KernelMessage::Exclusive(msg))
-                    .map_err(RouterError::FuseSendError)
+                Self::reply_capped(req.reply, req.size, state.as_bytes());
+                Ok(())
             }
-            ControlFile::PosMotion => self.read_pos_motion(ni, msg),
+            ControlFile::PosMotion => self.read_pos_motion(ni, req),
             ControlFile::PosX
             | ControlFile::PosY
             | ControlFile::PosZ
             | ControlFile::PosAz
             | ControlFile::PosEl
-            | ControlFile::PosRoll => self.read_pos(ni, msg),
-            ControlFile::PowerFlows => self.read_power_flows(ni, msg),
+            | ControlFile::PosRoll => self.read_pos(ni, req),
+            ControlFile::PowerFlows => self.read_power_flows(ni, req),
             // Write-only files cannot be read
             ControlFile::PosDx
             | ControlFile::PosDy
             | ControlFile::PosDz
             | ControlFile::SleepAbsolute(_)
-            | ControlFile::SleepRelative(_) => Err(RouterError::UnknownFile(msg.id.1.clone())),
+            | ControlFile::SleepRelative(_) => {
+                let path = req.id.1.clone();
+                drop(req.reply);
+                Err(RouterError::UnknownFile(path))
+            }
         }
     }
 
     pub fn read_channel_file(
         &mut self,
         index: usize,
-        msg: fuse::Message,
+        req: fuse::ReadRequest,
     ) -> Result<(), RouterError> {
-        match self.deliver_msg(index) {
+        // Serve any leftover bytes from a previous partial read first.
+        if let Some((read_ptr, buf)) = &mut self.unread_msg[index] {
+            if *read_ptr >= buf.len() {
+                self.unread_msg[index] = None;
+                req.reply.data(&[]);
+                return Ok(());
+            }
+            let remaining = buf.len() - *read_ptr;
+            let n = std::cmp::min(remaining, req.size as usize);
+            let end = *read_ptr + n;
+            req.reply.data(&buf.as_slice()[*read_ptr..end]);
+            *read_ptr = end;
+            return Ok(());
+        }
+        match self.deliver_msg(index, req) {
             Ok(true) => Ok(()),
-            Ok(false) => self
-                .tx
-                .send(fuse::KernelMessage::Empty(msg))
-                .map_err(RouterError::FuseSendError),
+            Ok(false) => Ok(()), // Empty: deliver_msg already replied with &[]
             Err(e) => Err(e),
         }
     }
 
-    /// Wrapper function which will attempt to deliver any available messages
-    /// to the ID identified in the message, but will send an "Empty" message
-    /// if none is found.
-    pub fn request_read(&mut self, msg: fuse::Message) -> Result<(), RouterError> {
-        let path = msg.id.1.as_str();
+    /// Top-level read dispatch. Non-blocking: takes ownership of the
+    /// `ReplyData` token from FUSE, routes the request to the right
+    /// reply path, and either replies inline (control files) or hands
+    /// the token to the delivery code (channel reads).
+    pub fn request_read(&mut self, req: fuse::ReadRequest) -> Result<(), RouterError> {
+        let path = req.id.1.as_str();
 
         // Handle signal quality reads (e.g., "lora/rssi", "lora/snr")
         if let Some(channel_name) = path.strip_suffix("/rssi") {
             let name = channel_name.to_string();
-            return self.read_signal_file(&name, msg, |si| si.rssi_dbm);
+            return self.read_signal_file(&name, req, |si| si.rssi_dbm);
         }
         if let Some(channel_name) = path.strip_suffix("/snr") {
             let name = channel_name.to_string();
-            return self.read_signal_file(&name, msg, |si| si.snr_db);
+            return self.read_signal_file(&name, req, |si| si.snr_db);
         }
 
         // Strip "/channel" suffix for data channel reads
         let lookup_name: &str = path.strip_suffix("/channel").unwrap_or(path);
-        let Some(channel_index) = self.get_handle_index(msg.id.0, lookup_name) else {
-            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        let Some(channel_index) = self.get_handle_index(req.id.0, lookup_name) else {
+            let path_str = req.id.1.clone();
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path_str));
         };
         if ControlFile::parse(path).is_some() {
-            self.read_control_file(channel_index, msg)
+            self.read_control_file(channel_index, req)
         } else {
-            self.read_channel_file(channel_index, msg)
+            self.read_channel_file(channel_index, req)
         }
+    }
+
+    /// Reply helper: cap the response to `size` bytes (the read syscall's
+    /// requested size). Control-file responses are always small enough that
+    /// we never need to store a remainder. Used by the `reply.data(...)`
+    /// sites that used to send `KernelMessage::Exclusive(msg)`.
+    pub(crate) fn reply_capped(reply: fuser::ReplyData, size: u32, data: &[u8]) {
+        let n = std::cmp::min(data.len(), size as usize);
+        reply.data(&data[..n]);
     }
 
     pub fn request_sleep(&mut self, req: SleepEvent) {
@@ -571,17 +600,17 @@ impl RoutingServer {
     fn read_signal_file(
         &mut self,
         channel_name: &str,
-        mut msg: fuse::Message,
+        req: fuse::ReadRequest,
         extractor: impl Fn(&SignalInfo) -> f64,
     ) -> Result<(), RouterError> {
-        let Some(handle_index) = self.get_handle_index(msg.id.0, channel_name) else {
-            return Err(RouterError::UnknownFile(msg.id.1.clone()));
+        let Some(handle_index) = self.get_handle_index(req.id.0, channel_name) else {
+            let path = req.id.1.clone();
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path));
         };
         let value = extractor(&self.signal_info[handle_index]);
-        msg.data = format!("{value:.2}").into_bytes();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        Self::reply_capped(req.reply, req.size, format!("{value:.2}").as_bytes());
+        Ok(())
     }
 
     /// Microseconds per simulation step (derived from cached `timestep_ns`).

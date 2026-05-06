@@ -75,8 +75,6 @@ pub struct Kernel {
     time_dilation: Arc<AtomicU64>,
     channels: ResolvedChannels,
     runc: RunController,
-    /// Reply channel handed off to the router; replies flow kernel -> FUSE.
-    tx: mpsc::Sender<fuse::KernelMessage>,
     /// Sender into the router's input channel. Cloned from the same channel
     /// the FUSE filesystem already holds, so the kernel main thread shares
     /// the router's wakeup queue with FUSE events. Crossbeam-backed: the
@@ -96,7 +94,6 @@ pub struct KernelBuilder {
     file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
     router_input_tx: crossbeam_channel::Sender<RouterInput>,
     router_input_rx: crossbeam_channel::Receiver<RouterInput>,
-    tx: mpsc::Sender<fuse::KernelMessage>,
     remap_tx: mpsc::Sender<(u32, u32)>,
     abort: Option<Arc<AtomicBool>>,
     pause: Option<Arc<AtomicBool>>,
@@ -110,7 +107,6 @@ impl KernelBuilder {
         file_handles: Vec<(PID, ast::NodeHandle, ast::ChannelHandle)>,
         router_input_tx: crossbeam_channel::Sender<RouterInput>,
         router_input_rx: crossbeam_channel::Receiver<RouterInput>,
-        tx: mpsc::Sender<fuse::KernelMessage>,
         remap_tx: mpsc::Sender<(u32, u32)>,
     ) -> Self {
         Self {
@@ -119,7 +115,6 @@ impl KernelBuilder {
             file_handles,
             router_input_tx,
             router_input_rx,
-            tx,
             remap_tx,
             abort: None,
             pause: None,
@@ -171,7 +166,6 @@ impl KernelBuilder {
             runc: self.runc,
             router_input_tx: self.router_input_tx,
             router_input_rx: self.router_input_rx,
-            tx: self.tx,
             remap_tx: self.remap_tx,
             abort: self.abort,
             pause: self.pause,
@@ -212,7 +206,6 @@ impl Kernel {
             time_dilation,
             channels,
             runc,
-            tx,
             router_input_tx,
             router_input_rx,
             remap_tx,
@@ -229,7 +222,6 @@ impl Kernel {
         let mut routing_server = {
             let source = Self::get_write_source(cmd).map_err(KernelError::SourceError)?;
             RoutingServer::serve(
-                tx,
                 channels,
                 timestep,
                 rng,

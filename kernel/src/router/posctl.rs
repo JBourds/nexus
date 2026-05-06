@@ -89,15 +89,15 @@ impl RoutingServer {
     pub fn read_pos(
         &mut self,
         node_index: usize,
-        mut msg: fuse::Message,
+        req: fuse::ReadRequest,
     ) -> Result<(), RouterError> {
         self.apply_motion(node_index);
         let node = &self.channels.nodes[node_index];
-        let component = msg
-            .id
-            .1
-            .strip_prefix("ctl.pos/")
-            .ok_or_else(|| RouterError::UnknownFile(msg.id.1.clone()))?;
+        let Some(component) = req.id.1.strip_prefix("ctl.pos/") else {
+            let path = req.id.1.clone();
+            drop(req.reply);
+            return Err(RouterError::UnknownFile(path));
+        };
         let val: f64 = match component {
             "x" => node.position.point.x,
             "y" => node.position.point.y,
@@ -105,25 +105,25 @@ impl RoutingServer {
             "az" => node.position.orientation.az,
             "el" => node.position.orientation.el,
             "roll" => node.position.orientation.roll,
-            _ => return Err(RouterError::InvalidString(msg.id.1.into_bytes())),
+            _ => {
+                let bytes = req.id.1.clone().into_bytes();
+                drop(req.reply);
+                return Err(RouterError::InvalidString(bytes));
+            }
         };
-        msg.data = val.to_string().into_bytes();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        Self::reply_capped(req.reply, req.size, val.to_string().as_bytes());
+        Ok(())
     }
 
     /// Read handler for `ctl.pos/motion`.
     pub fn read_pos_motion(
         &mut self,
         node_index: usize,
-        mut msg: fuse::Message,
+        req: fuse::ReadRequest,
     ) -> Result<(), RouterError> {
         let spec = self.channels.nodes[node_index].motion.to_spec();
-        msg.data = spec.into_bytes();
-        self.tx
-            .send(fuse::KernelMessage::Exclusive(msg))
-            .map_err(RouterError::FuseSendError)
+        Self::reply_capped(req.reply, req.size, spec.as_bytes());
+        Ok(())
     }
 
     /// Write handler for `ctl.pos/x/y/z/az/el/roll` (absolute set).
