@@ -265,6 +265,93 @@ mod tests {
         assert!(((loss_2m / loss_1m - 2.0) as f64).abs() < 0.2);
     }
 
+    /// Reference Friis path-loss formula, written out independently of the
+    /// implementation under test. Matches the closed form documented in
+    /// implementation.typ:
+    ///     RSSI(d) = tx + gain - 20*log10(4*pi*d / lambda)
+    fn friis_reference(tx_dbm: f64, gain_dbi: f64, wavelength_m: f64, d_m: f64) -> f64 {
+        if d_m <= f64::EPSILON {
+            return tx_dbm + gain_dbi;
+        }
+        let path_loss = 20.0 * (4.0 * std::f64::consts::PI * d_m / wavelength_m).log10();
+        tx_dbm + gain_dbi - path_loss
+    }
+
+    /// Reference RLGC attenuation formula, written out independently of the
+    /// implementation. Matches @rlgc_propagation_eq:
+    ///     gamma = sqrt((R + jwL)(G + jwC));  alpha = Re(gamma)
+    ///     loss_dB = 8.686 * alpha * d
+    fn rlgc_reference(tx_dbm: f64, r: f64, l: f64, c: f64, g: f64, f: f64, d_m: f64) -> f64 {
+        if d_m <= f64::EPSILON {
+            return tx_dbm;
+        }
+        let omega = 2.0 * std::f64::consts::PI * f;
+        // (R + jwL)(G + jwC) = (RG - w^2 LC) + j(RwC + GwL)
+        let re = r * g - omega * omega * l * c;
+        let im = r * omega * c + g * omega * l;
+        let mag = (re * re + im * im).sqrt();
+        let alpha = ((mag + re) / 2.0).sqrt();
+        tx_dbm - 8.686 * alpha * d_m
+    }
+
+    /// Cross-check the Wireless RSSI implementation against the independent
+    /// closed-form Friis expression across a grid of distances. Within the
+    /// clamping range, the two should agree to machine precision.
+    #[test]
+    fn wireless_matches_closed_form_friis() {
+        let wavelength = 0.125; // 2.4 GHz
+        let gain = 0.0;
+        let medium = Medium::Wireless {
+            shape: SignalShape::Omnidirectional,
+            wavelength_meters: wavelength,
+            gain_dbi: gain,
+            rx_min_dbm: -120.0,
+            tx_min_dbm: -50.0,
+            tx_max_dbm: 50.0,
+        };
+        let tx = 0.0;
+        for &d in &[0.0, 1.0, 2.0, 5.0, 10.0, 100.0, 1_000.0, 10_000.0] {
+            let observed = medium.rssi(tx, d);
+            let expected = friis_reference(tx, gain, wavelength, d);
+            assert!(
+                (observed - expected).abs() < 1e-9,
+                "Friis mismatch at d={d}: observed={observed}, expected={expected}"
+            );
+        }
+    }
+
+    /// Cross-check the Wired RSSI implementation against the independent
+    /// closed-form RLGC expression. The implementation reuses some
+    /// intermediate quantities so the agreement is not bit-for-bit, but it
+    /// must be tight (well below the 0.1 dB measurement floor).
+    #[test]
+    fn wired_matches_closed_form_rlgc() {
+        let r = 0.1;
+        let l = 1e-6;
+        let c = 1e-12;
+        let g = 0.01;
+        let f = 1e6;
+        let medium = Medium::Wired {
+            rx_min_dbm: -120.0,
+            tx_min_dbm: -50.0,
+            tx_max_dbm: 50.0,
+            r,
+            l,
+            c,
+            g,
+            f,
+        };
+        let tx = 0.0;
+        for &d in &[0.0, 1.0, 2.0, 5.0, 10.0, 100.0, 1_000.0] {
+            let observed = medium.rssi(tx, d);
+            let expected = rlgc_reference(tx, r, l, c, g, f, d);
+            assert!(
+                (observed - expected).abs() < 1e-9,
+                "RLGC mismatch at d={d}: observed={observed}, expected={expected}"
+            );
+        }
+    }
+
     #[test]
     fn wired_frequency_increases_loss() {
         let base = Medium::Wired {
