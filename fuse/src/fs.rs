@@ -599,9 +599,12 @@ where
                             bytes_consumed,
                             reply,
                         });
-                        self.fs_to_kernel_tx
-                            .send(msg.into())
-                            .expect("failed to send message to kernel");
+                        // Ignore SendError: it only fires once the kernel
+                        // has dropped its receiver, which happens at
+                        // shutdown after the simulation has already
+                        // completed. Panicking here would abort the FUSE
+                        // worker mid-teardown for no observable effect.
+                        let _ = self.fs_to_kernel_tx.send(msg.into());
                     }
                     Err(_) => {
                         // Acknowledge the bytes so the caller's write loop
@@ -622,9 +625,11 @@ where
                     id: (pid, entry.path.clone()),
                     data: data.to_vec(),
                 });
-                self.fs_to_kernel_tx
-                    .send(msg.into())
-                    .expect("failed to send message to kernel");
+                // See the matching note in the Sleep arm above: shutdown
+                // races drop the kernel receiver before this thread
+                // drains, so a SendError here is informational, not
+                // fatal.
+                let _ = self.fs_to_kernel_tx.send(msg.into());
                 let Ok(bytes_written) = data.len().try_into() else {
                     reply.error(EMSGSIZE);
                     return;
