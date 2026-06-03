@@ -90,9 +90,9 @@ impl RouterServer {
             .map_err(|e| KernelError::RouterError(RouterError::KernelSendError(e)))?;
         // Reply channel is mpsc; both RecvError types are unit structs so
         // the conversion only signals "channel disconnected".
-        self.rx
-            .recv()
-            .map_err(|_| KernelError::RouterError(RouterError::RecvError(crossbeam_channel::RecvError)))
+        self.rx.recv().map_err(|_| {
+            KernelError::RouterError(RouterError::RecvError(crossbeam_channel::RecvError))
+        })
     }
 
     pub fn shutdown(self) -> Result<(), KernelError> {
@@ -184,14 +184,7 @@ impl RoutingServer {
     /// and recovery events; the kernel main thread drains its receiver once
     /// per tick.
     #[instrument(skip(
-        channels,
-        rng,
-        source,
-        remap_tx,
-        current_ts,
-        energy_tx,
-        kernel_tx,
-        kernel_rx
+        channels, rng, source, remap_tx, current_ts, energy_tx, kernel_tx, kernel_rx
     ))]
     pub fn serve(
         channels: ResolvedChannels,

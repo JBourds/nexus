@@ -81,10 +81,7 @@ impl Source {
         Ok(())
     }
 
-    fn poll_simulated(
-        router: &mut RoutingServer,
-        ts_advanced: bool,
-    ) -> Result<(), SourceError> {
+    fn poll_simulated(router: &mut RoutingServer, ts_advanced: bool) -> Result<(), SourceError> {
         // FUSE messages now arrive at the router via `RouterInput::Fs` and
         // are dispatched on receipt. The Tick path only needs to advance
         // simulated time once per timestep so energy/expiry/delivery

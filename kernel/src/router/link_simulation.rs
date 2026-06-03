@@ -107,10 +107,7 @@ impl RoutingServer {
             return None;
         }
         if channel.link.packet_loss.sample_unchecked(link.pl_prob, rng) {
-            warn!(
-                "Packet dropped (packet_loss, rssi = {})",
-                link.pl_rssi
-            );
+            warn!("Packet dropped (packet_loss, rssi = {})", link.pl_rssi);
             return None;
         }
         let mut had_bit_errors = false;
@@ -167,5 +164,4 @@ impl RoutingServer {
         });
         (becomes_active_at, expiration)
     }
-
 }

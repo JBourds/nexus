@@ -30,11 +30,8 @@ type ServerHandle = JoinHandle<HandleInner>;
 
 /// Status server uses `std::sync::mpsc` on both sides; traffic is one
 /// request per ~50 ms, so the channel transport is not on the hot path.
-pub(crate) type StatusKernelServer = KernelServer<
-    ServerHandle,
-    mpsc::Sender<KernelMessage>,
-    mpsc::Receiver<StatusMessage>,
->;
+pub(crate) type StatusKernelServer =
+    KernelServer<ServerHandle, mpsc::Sender<KernelMessage>, mpsc::Receiver<StatusMessage>>;
 
 impl StatusKernelServer {
     pub fn check_health(&mut self) -> Result<StatusMessage, KernelError> {

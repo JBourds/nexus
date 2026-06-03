@@ -60,7 +60,7 @@ where
     /// the previous O(N) linear scan of `entries`. With thousands of nodes
     /// and channels, the scan dominated every FUSE syscall.
     by_parent: HashMap<u64, HashMap<String, usize>>,
-    /// Per-process file buffers keyed by `(PID, entry_index)`. 
+    /// Per-process file buffers keyed by `(PID, entry_index)`.
     buffers: HashMap<(u32, usize), NexusFile>,
     /// Sender into the kernel/router. The send side is crossbeam-backed
     /// because every FUSE syscall in the hot path drives one send.
