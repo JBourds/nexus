@@ -51,6 +51,8 @@ pub struct CgroupController {
     fs: Box<dyn CgroupFs>,
     /// Directory used to place lockfiles
     lockdir: TempDir,
+    /// Lockfile to drain bash script time quantum before starting
+    lockfile: PathBuf,
 }
 
 #[derive(Clone, Debug)]
@@ -223,13 +225,16 @@ impl CgroupController {
         let nodes_unlimited = NodeBucket::new(&*fs, root.join(NODES_UNLIMITED))?;
         let nodes_limited = NodeBucket::new(&*fs, root.join(NODES_LIMITED))?;
 
-        let lockdir = TempDir::new().expect("couldn't create temp file");
+        let lockdir = TempDir::new().expect("couldn't create temp dir");
+        let lockfile = lockdir.path().join("lock");
+        std::fs::File::create(&lockfile).expect("couldn't create lockfile");
         let mut obj = Self {
             root,
             nodes_limited,
             nodes_unlimited,
             fs,
             lockdir,
+            lockfile,
         };
         obj.freeze_nodes();
         Ok(obj)
@@ -250,7 +255,7 @@ impl CgroupController {
     /// One-time function which releases lockfile and unfreezes nodes
     pub fn start(&mut self) {
         self.unfreeze_nodes();
-        std::fs::remove_file(self.lockdir.path().join("lock")).expect("couldn't release lockfile");
+        std::fs::remove_file(&self.lockfile).expect("couldn't release lockfile");
     }
 
     /// Set the frozen state of a single node's cgroup by name.
